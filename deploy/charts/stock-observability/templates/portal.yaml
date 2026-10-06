@@ -1,0 +1,73 @@
+{{- $name := include "so.fullname" (list . "portal") -}}
+{{- $v := .Values.portal -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "so.labels" (list . "portal") | nindent 4 }}
+spec:
+  replicas: {{ $v.replicas }}
+  selector:
+    matchLabels:
+      {{- include "so.selectorLabels" (list . "portal") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "so.labels" (list . "portal") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/portal-configmap.yaml") . | sha256sum }}
+    spec:
+      {{- include "so.podSpecCommon" . | nindent 6 }}
+      containers:
+        - name: nginx
+          image: {{ include "so.image" $v.image }}
+          imagePullPolicy: {{ $v.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            {{- toYaml $v.resources | nindent 12 }}
+          securityContext:
+            {{- include "so.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - name: conf
+              mountPath: /etc/nginx/conf.d
+            {{- if $v.auth.enabled }}
+            - name: auth
+              mountPath: /etc/nginx/auth
+            {{- end }}
+      volumes:
+        - name: conf
+          configMap:
+            name: {{ $name }}
+        {{- if $v.auth.enabled }}
+        - name: auth
+          secret:
+            secretName: {{ include "so.fullname" (list . "portal-auth") }}
+            items:
+              - key: htpasswd
+                path: htpasswd
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "so.labels" (list . "portal") | nindent 4 }}
+spec:
+  selector:
+    {{- include "so.selectorLabels" (list . "portal") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

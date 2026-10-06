@@ -1,0 +1,59 @@
+# Prometheus configuration for stock observability.
+#
+# Ingestion budget (default watchlist, see stock_exporter/examples/watchlist.yml):
+#   stock_core  : NIFTY 200 + indices, all collectors, 1s  -> ~3,200 samples/s
+#   stock_broad : every other NSE EQ symbol, quote+circuit, 5s -> ~6,000 samples/s
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  # Exposes scrape_timeout_seconds / scrape_sample_limit used by StockScrapeUnhealthy.
+  extra_scrape_metrics: true
+  external_labels:
+    system: stock-observability
+
+storage:
+  tsdb:
+    retention:
+      time: 90d
+      size: 60GB
+
+rule_files:
+  - /etc/prometheus/rules/*.rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: stock_core
+    scrape_interval: 1s
+    scrape_timeout: 900ms
+    sample_limit: 20000
+    label_limit: 16
+    scrape_protocols: [PrometheusProto, OpenMetricsText1.0.0, PrometheusText0.0.4]
+    params:
+      tier: [core]
+    static_configs:
+      - targets: ["stock_exporter:9101"]
+
+  - job_name: stock_broad
+    scrape_interval: 5s
+    scrape_timeout: 4s
+    sample_limit: 80000
+    label_limit: 16
+    scrape_protocols: [PrometheusProto, OpenMetricsText1.0.0, PrometheusText0.0.4]
+    params:
+      tier: [broad]
+      collect[]: [quote, circuit]
+    static_configs:
+      - targets: ["stock_exporter:9101"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]

@@ -1,0 +1,27 @@
+{{/* Shared message templates for stock alerts; used by receivers once integrations are added. */}}
+
+{{ define "stock.title" -}}
+[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }}{{ with .CommonLabels.symbol }} {{ . }}{{ end }}
+{{- end }}
+
+{{ define "stock.alert" -}}
+{{ if eq .Status "firing" }}[FIRING]{{ else }}[RESOLVED]{{ end }} {{ .Annotations.summary }}
+{{- with .Labels.exchange }}
+  Instrument: {{ . }}:{{ $.Labels.symbol }}{{ with $.Labels.sector }} ({{ . }}){{ end }}
+{{- end }}
+  Severity: {{ .Labels.severity }} | Category: {{ .Labels.category }}
+  Since: {{ .StartsAt | tz "Asia/Kolkata" | date "02 Jan 15:04:05 IST" }}
+{{- with .Annotations.description }}
+  {{ . }}
+{{- end }}
+{{- with .Annotations.link }}
+  {{ . }}
+{{- end }}
+{{- end }}
+
+{{ define "stock.text" -}}
+{{ range .Alerts.Firing }}{{ template "stock.alert" . }}
+{{ end }}
+{{- range .Alerts.Resolved }}{{ template "stock.alert" . }}
+{{ end }}
+{{- end }}

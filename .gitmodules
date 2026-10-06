@@ -1,0 +1,35 @@
+[submodule "alertmanager"]
+	path = alertmanager
+	url = https://github.com/stock-observability/alertmanager.git
+	branch = main
+	ignore = dirty
+[submodule "blackbox_exporter"]
+	path = blackbox_exporter
+	url = https://github.com/stock-observability/blackbox_exporter.git
+	branch = master
+[submodule "client_golang"]
+	path = client_golang
+	url = https://github.com/stock-observability/client_golang.git
+	branch = main
+[submodule "grafana"]
+	path = grafana
+	url = https://github.com/stock-observability/grafana.git
+	branch = main
+	shallow = true
+[submodule "node_exporter"]
+	path = node_exporter
+	url = https://github.com/stock-observability/node_exporter.git
+	branch = master
+[submodule "prometheus"]
+	path = prometheus
+	url = https://github.com/stock-observability/prometheus.git
+	branch = main
+	ignore = dirty
+[submodule "proposals"]
+	path = proposals
+	url = https://github.com/stock-observability/proposals.git
+	branch = main
+[submodule "test-infra"]
+	path = test-infra
+	url = https://github.com/stock-observability/test-infra.git
+	branch = master

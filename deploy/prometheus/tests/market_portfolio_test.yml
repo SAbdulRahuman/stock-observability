@@ -1,0 +1,116 @@
+# promtool test rules prometheus/tests/market_portfolio_test.yml
+rule_files:
+  - ../rules/stock_recording.rules.yml
+  - ../rules/stock_alerts.rules.yml
+
+evaluation_interval: 15s
+
+tests:
+  - name: benchmark index sharp fall
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x40'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '25000x20 24700x20'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY IT",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '40000x20 39000x20'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: IndexSharpFall
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: NIFTY 50, sector: Index, instrument_type: INDEX, tier: core, severity: critical, category: market}
+            exp_annotations:
+              summary: NIFTY 50 5m return -1.20%
+              description: Benchmark index NIFTY 50 fell more than 1% within five minutes.
+
+  - name: India VIX level spike
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x40'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INDIA VIX",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '14x20 21x20'
+    alert_rule_test:
+      - eval_time: 5m30s
+        alertname: IndiaVIXSpike
+      - eval_time: 7m
+        alertname: IndiaVIXSpike
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: INDIA VIX, sector: Index, instrument_type: INDEX, tier: core, reason: level, severity: warning, category: market}
+            exp_annotations:
+              summary: INDIA VIX at 21.00
+              description: India VIX is above 20 or rose more than 10% in 15 minutes; expect high volatility.
+
+  - name: weak breadth and sector selloff
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x60'
+      - series: 'stock_change_percent{job="stock_core",instance="se",exchange="NSE",symbol="A",sector="Energy",instrument_type="EQ",tier="core"}'
+        values: '1x60'
+      - series: 'stock_change_percent{job="stock_core",instance="se",exchange="NSE",symbol="B",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '-3x60'
+      - series: 'stock_change_percent{job="stock_core",instance="se",exchange="NSE",symbol="C",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '-2.5x60'
+      - series: 'stock_change_percent{job="stock_broad",instance="se",exchange="NSE",symbol="D",sector="unknown",instrument_type="EQ",tier="broad"}'
+        values: '-5x60'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: MarketBreadthWeak
+        exp_alerts:
+          - exp_labels: {severity: warning, category: market}
+            exp_annotations:
+              summary: "Market breadth weak: advance/decline ratio 0.33"
+              description: Fewer than one stock is advancing for every two declining across tracked NSE equities.
+      - eval_time: 7m
+        alertname: SectorSelloff
+        exp_alerts:
+          - exp_labels: {sector: IT, severity: warning, category: market}
+            exp_annotations:
+              summary: IT sector average change -2.75%
+              description: The average day change of NIFTY 200 stocks in IT is below -2%.
+
+  - name: portfolio loss, stop loss and margin
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x20'
+      - series: 'stock_portfolio_holding_quantity{job="stock_core",instance="se",exchange="NSE",symbol="INFY"}'
+        values: '10x20'
+      - series: 'stock_portfolio_holding_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY"}'
+        values: '1000x20'
+      - series: 'stock_portfolio_holding_day_change{job="stock_core",instance="se",exchange="NSE",symbol="INFY"}'
+        values: '-300x20'
+      - series: 'stock_portfolio_position_pnl{job="stock_core",instance="se",exchange="NSE",symbol="TCS",product="MIS"}'
+        values: '-300x20'
+      - series: 'stock_portfolio_position_quantity{job="stock_core",instance="se",exchange="NSE",symbol="TCS",product="MIS"}'
+        values: '-5x20'
+      - series: 'stock_portfolio_position_average_price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",product="MIS"}'
+        values: '2000x20'
+      - series: 'stock_portfolio_margin_utilised{job="stock_core",instance="se",segment="equity"}'
+        values: '85000x20'
+      - series: 'stock_portfolio_margin_total{job="stock_core",instance="se",segment="equity"}'
+        values: '100000x20'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: PortfolioDailyLoss
+        exp_alerts:
+          - exp_labels: {severity: critical, category: portfolio}
+            exp_annotations:
+              summary: Portfolio day change -3.00%
+              description: Holdings have lost more than 2% of their value today.
+      - eval_time: 2m
+        alertname: PositionStopLossBreach
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: TCS, product: MIS, severity: critical, category: portfolio}
+            exp_annotations:
+              summary: TCS MIS position return -3.00%
+              description: Open position NSE:TCS (MIS) has lost more than 2% of its value.
+      - eval_time: 2m
+        alertname: MarginUtilisationHigh
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, segment: equity, severity: warning, category: portfolio}
+            exp_annotations:
+              summary: equity margin 85% utilised
+              description: More than 80% of the equity margin is in use; new orders may be rejected.

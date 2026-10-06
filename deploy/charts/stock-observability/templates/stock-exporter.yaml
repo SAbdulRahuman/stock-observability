@@ -1,0 +1,106 @@
+{{- $name := include "so.fullname" (list . "stock-exporter") -}}
+{{- $v := .Values.stockExporter -}}
+{{- $kite := eq $v.feed.source "kite" -}}
+{{- if not (has $v.feed.source (list "kite" "sim")) }}
+{{- fail "stockExporter.feed.source must be kite or sim" }}
+{{- end }}
+{{ include "so.pvc" (list . "stock-exporter" $v.persistence) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "so.labels" (list . "stock-exporter") | nindent 4 }}
+spec:
+  # Kite login state lives in memory and the token PVC is RWO.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "so.selectorLabels" (list . "stock-exporter") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "so.labels" (list . "stock-exporter") | nindent 8 }}
+    spec:
+      {{- include "so.podSpecCommon" . | nindent 6 }}
+      containers:
+        - name: stock-exporter
+          image: {{ include "so.image" $v.image }}
+          imagePullPolicy: {{ $v.image.pullPolicy }}
+          args:
+            - --feed.source={{ $v.feed.source }}
+            - --stock.watchlist-file=/etc/stock_exporter/watchlist.yml
+            - --market.holidays-file=/etc/stock_exporter/holidays.yml
+            - --kite.token-file=/var/lib/stock_exporter/kite_session.json
+            {{- if $v.feed.forceOpen }}
+            - --market.force-open
+            {{- end }}
+            {{- if $kite }}
+            - --kite.api-key=$(KITE_API_KEY)
+            - --kite.api-secret-file=/run/secrets/kite/api-secret
+            {{- end }}
+            {{- with $v.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- if $kite }}
+          env:
+            - name: KITE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $v.kite.existingSecret }}
+                  key: api-key
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 9101
+          readinessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+          resources:
+            {{- toYaml $v.resources | nindent 12 }}
+          securityContext:
+            {{- include "so.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/stock_exporter
+            {{- if $kite }}
+            - name: kite
+              mountPath: /run/secrets/kite
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $name }}-data
+        {{- if $kite }}
+        - name: kite
+          secret:
+            secretName: {{ $v.kite.existingSecret }}
+            defaultMode: 0440
+            items:
+              - key: api-secret
+                path: api-secret
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "so.labels" (list . "stock-exporter") | nindent 4 }}
+spec:
+  selector:
+    {{- include "so.selectorLabels" (list . "stock-exporter") | nindent 4 }}
+  ports:
+    - name: http
+      port: 9101
+      targetPort: http

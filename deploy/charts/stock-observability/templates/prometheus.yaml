@@ -1,0 +1,83 @@
+{{- $name := include "so.fullname" (list . "prometheus") -}}
+{{- $v := .Values.prometheus -}}
+{{ include "so.pvc" (list . "prometheus" $v.persistence) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "so.labels" (list . "prometheus") | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "so.selectorLabels" (list . "prometheus") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "so.labels" (list . "prometheus") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/prometheus-configmap.yaml") . | sha256sum }}
+    spec:
+      {{- include "so.podSpecCommon" . | nindent 6 }}
+      containers:
+        - name: prometheus
+          image: {{ include "so.image" $v.image }}
+          imagePullPolicy: {{ $v.image.pullPolicy }}
+          args:
+            - --config.file=/etc/prometheus/config/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time={{ $v.retention.time }}
+            - --storage.tsdb.retention.size={{ $v.retention.size }}
+            - --web.external-url={{ include "so.externalURL" . }}/prometheus/
+            - --web.route-prefix=/prometheus
+          ports:
+            - name: http
+              containerPort: 9090
+          readinessProbe:
+            httpGet:
+              path: /prometheus/-/ready
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /prometheus/-/healthy
+              port: http
+          resources:
+            {{- toYaml $v.resources | nindent 12 }}
+          securityContext:
+            {{- include "so.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus/config
+            - name: rules
+              mountPath: /etc/prometheus/rules
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+        - name: rules
+          configMap:
+            name: {{ include "so.fullname" (list . "prometheus-rules") }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $name }}-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "so.labels" (list . "prometheus") | nindent 4 }}
+spec:
+  selector:
+    {{- include "so.selectorLabels" (list . "prometheus") | nindent 4 }}
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http

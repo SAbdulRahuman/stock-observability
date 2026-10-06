@@ -1,0 +1,6 @@
+ui/dist/*
+!ui/dist/.gitkeep
+web/node_modules
+web/.next
+web/out
+web/*.tsbuildinfo

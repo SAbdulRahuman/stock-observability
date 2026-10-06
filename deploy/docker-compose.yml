@@ -1,0 +1,63 @@
+# Local stock observability stack. Cloud deployment is planned for a later release.
+#
+# Live Kite feed:   mkdir -p secrets && printf '%s' "<api secret>" > secrets/kite_api_secret
+#                   KITE_API_KEY=<api key> docker compose up -d --build
+#                   then open http://127.0.0.1:9101/login once per trading day.
+# Simulated feed:   docker compose -f docker-compose.yml -f docker-compose.sim.yml up -d --build
+#
+# The Kite app redirect URL must be http://127.0.0.1:9101/kite/callback for local use.
+name: stock-observability
+
+services:
+  stock_exporter:
+    build: ../stock_exporter
+    restart: unless-stopped
+    command:
+      - --feed.source=kite
+      - --kite.api-key=${KITE_API_KEY:-}
+      - --kite.api-secret-file=/run/secrets/kite_api_secret
+      - --kite.token-file=/var/lib/stock_exporter/kite_session.json
+      - --stock.watchlist-file=/etc/stock_exporter/watchlist.yml
+      - --market.holidays-file=/etc/stock_exporter/holidays.yml
+    secrets: [kite_api_secret]
+    volumes:
+      - exporter-data:/var/lib/stock_exporter
+    ports:
+      - "127.0.0.1:9101:9101"
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.14.0}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on: [stock_exporter, alertmanager]
+
+  alertmanager:
+    image: ${ALERTMANAGER_IMAGE:-prom/alertmanager:v0.34.1}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./alertmanager/templates:/etc/alertmanager/templates:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+
+secrets:
+  kite_api_secret:
+    file: ./secrets/kite_api_secret
+
+volumes:
+  exporter-data:
+  prometheus-data:
+  alertmanager-data:

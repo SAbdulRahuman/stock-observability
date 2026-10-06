@@ -1,0 +1,90 @@
+PROM_SRC ?= ../prometheus
+AM_SRC   ?= ../alertmanager
+
+.PHONY: all
+all: check test
+
+.PHONY: tools
+tools: bin/promtool bin/amtool bin/prometheus bin/alertmanager
+
+bin/promtool:
+	cd $(PROM_SRC) && go build -o $(CURDIR)/bin/promtool ./cmd/promtool
+
+bin/prometheus:
+	cd $(PROM_SRC) && go build -o $(CURDIR)/bin/prometheus ./cmd/prometheus
+
+bin/amtool:
+	cd $(AM_SRC) && go build -o $(CURDIR)/bin/amtool ./cmd/amtool
+
+# Alertmanager embeds its UI; build from a scratch copy with placeholder assets.
+bin/alertmanager:
+	rm -rf .build/am && mkdir -p .build/am
+	tar -C $(AM_SRC) --exclude=.git --exclude=node_modules -cf - . | tar -xf - -C .build/am
+	mkdir -p .build/am/ui/app/dist/elm .build/am/ui/app/dist/mantine
+	echo '<html>UI not built</html>' > .build/am/ui/app/dist/elm/index.html
+	echo '<html>UI not built</html>' > .build/am/ui/app/dist/mantine/index.html
+	cd .build/am && go build -o $(CURDIR)/bin/alertmanager ./cmd/alertmanager
+
+.PHONY: check
+check: bin/promtool bin/amtool
+	bin/promtool check rules prometheus/rules/*.yml
+	bin/amtool check-config alertmanager/alertmanager.yml
+
+.PHONY: test
+test: test-rules test-routes
+
+.PHONY: test-rules
+test-rules: bin/promtool
+	bin/promtool test rules prometheus/tests/*.yml
+
+.PHONY: test-routes
+test-routes: bin/amtool
+	tests/alertmanager_routes_test.sh
+
+.PHONY: e2e
+e2e: tools
+	$(MAKE) -C ../stock_exporter build
+	tests/e2e_local.sh
+
+.PHONY: up-sim
+up-sim:
+	docker compose -f docker-compose.yml -f docker-compose.sim.yml up -d --build
+
+.PHONY: up
+up:
+	docker compose up -d --build
+
+.PHONY: down
+down:
+	docker compose down
+
+# --- Helm / OpenShift --------------------------------------------------------
+
+CHART        := charts/stock-observability
+RELEASE      ?= stock
+NAMESPACE    ?= abdul
+HELM_VALUES  ?= $(CHART)/values-ocp-dev.yaml
+EXPORTER_VERSION ?= $(shell cat ../stock_exporter/VERSION)
+HOME_VERSION ?= $(shell cat ../stock_home/VERSION)
+PROM_VERSION ?= $(shell cat ../prometheus/VERSION)
+AM_VERSION   ?= $(shell cat ../alertmanager/VERSION)
+
+# Images are built and pushed by the top-level Makefile (../Makefile).
+.PHONY: ocp-images
+ocp-images:
+	$(MAKE) -C .. build docker-build docker-push NAMESPACE=$(NAMESPACE)
+
+.PHONY: helm-lint
+helm-lint:
+	helm lint $(CHART) -f $(HELM_VALUES)
+
+.PHONY: helm-template
+helm-template:
+	helm template $(RELEASE) $(CHART) -n $(NAMESPACE) -f $(HELM_VALUES)
+
+.PHONY: deploy-ocp
+deploy-ocp: helm-lint
+	helm upgrade --install $(RELEASE) $(CHART) -n $(NAMESPACE) -f $(HELM_VALUES) \
+		--set stockExporter.image.tag=$(EXPORTER_VERSION) --set home.image.tag=$(HOME_VERSION) \
+		--set prometheus.image.tag=v$(PROM_VERSION) --set alertmanager.image.tag=v$(AM_VERSION) \
+		--wait --timeout 10m

@@ -1,0 +1,8 @@
+/.build/
+node_modules/
+.next/
+secrets/
+*.env
+.env
+.vscode/
+.idea/

@@ -1,0 +1,6 @@
+# Packages the binary from `make build` (UI already embedded); only the base image is needed, no npm or Go downloads.
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY stock_home /bin/stock_home
+EXPOSE 8080
+USER nonroot:nonroot
+ENTRYPOINT ["/bin/stock_home"]

@@ -1,0 +1,120 @@
+# OpenShift assigns UIDs/fsGroup via SCC; elsewhere podSecurityContext below is applied.
+openshift: false
+
+# Optional prefix for all object names, e.g. "stock-".
+namePrefix: ""
+
+# Public base URL of the portal (no trailing slash); used for links and Grafana root_url.
+externalURL: http://localhost:8080
+
+imagePullSecrets: []
+
+# Empty uses the cluster default StorageClass.
+storageClassName: ""
+
+podSecurityContext:
+  runAsUser: 65532
+  fsGroup: 65532
+
+networkPolicy:
+  enabled: true
+
+# OpenShift Route to the portal.
+route:
+  enabled: false
+  host: ""
+  timeout: 5m
+
+# Gateway API HTTPRoute to the portal.
+httpRoute:
+  enabled: false
+  hostnames: []
+  parentRefs: []
+
+prometheus:
+  image:
+    repository: quay.io/prometheus/prometheus
+    tag: v3.14.0
+    pullPolicy: IfNotPresent
+  retention:
+    time: 15d
+    size: 15GB
+  persistence:
+    size: 20Gi
+  resources:
+    requests: {cpu: 500m, memory: 1Gi}
+    limits: {memory: 4Gi}
+
+alertmanager:
+  image:
+    repository: quay.io/prometheus/alertmanager
+    tag: v0.34.1
+    pullPolicy: IfNotPresent
+  persistence:
+    size: 1Gi
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 256Mi}
+
+grafana:
+  image:
+    repository: docker.io/grafana/grafana
+    tag: "13.2.3"
+    pullPolicy: IfNotPresent
+  adminUser: admin
+  # Access without login; role is Viewer, Editor or Admin.
+  anonymous:
+    enabled: false
+    role: Viewer
+  persistence:
+    size: 5Gi
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi}
+
+stockExporter:
+  image:
+    repository: stock-exporter
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  feed:
+    # kite (live Zerodha Kite Connect) or sim (synthetic).
+    source: kite
+    forceOpen: false
+  kite:
+    # Pre-created Secret with keys api-key and api-secret; never stored in Helm values.
+    existingSecret: kite
+  extraArgs: []
+  persistence:
+    size: 1Gi
+  resources:
+    requests: {cpu: 250m, memory: 256Mi}
+    limits: {memory: 1Gi}
+
+portal:
+  image:
+    repository: docker.io/nginxinc/nginx-unprivileged
+    tag: 1.28-alpine
+    pullPolicy: IfNotPresent
+  replicas: 1
+  auth:
+    # Basic auth on /prometheus, /alertmanager and /exporter; password generated once, kept on upgrade.
+    enabled: true
+    username: admin
+  resources:
+    requests: {cpu: 50m, memory: 32Mi}
+    limits: {memory: 128Mi}
+
+# Product home page at "/"; when disabled "/" redirects to Grafana.
+home:
+  enabled: true
+  image:
+    repository: stock-home
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  # Index tiles in Market overview; the first one gets a sparkline.
+  indices: ["NIFTY 50", "NIFTY BANK", "NIFTY IT", "SENSEX", "INDIA VIX"]
+  queryTimeout: 10s
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 256Mi}

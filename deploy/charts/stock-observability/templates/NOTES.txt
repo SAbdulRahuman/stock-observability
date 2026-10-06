@@ -1,0 +1,29 @@
+{{- $url := include "so.externalURL" . -}}
+stock-observability is deployed to namespace {{ .Release.Namespace }}.
+
+{{- $basic := ternary "(basic auth)" "(no auth)" .Values.portal.auth.enabled }}
+{{- if .Values.home.enabled }}
+  Home:           {{ $url }}/
+{{- end }}
+  Grafana:        {{ $url }}/grafana/{{ if .Values.grafana.anonymous.enabled }}  (anonymous {{ .Values.grafana.anonymous.role }}){{ end }}
+  Prometheus:     {{ $url }}/prometheus/      {{ $basic }}
+  Alertmanager:   {{ $url }}/alertmanager/    {{ $basic }}
+{{- if eq .Values.stockExporter.feed.source "kite" }}
+  Kite login:     {{ $url }}/exporter/login   {{ $basic }}, once per trading day
+  Kite redirect URL to register in the Kite developer console:
+                  {{ $url }}/exporter/kite/callback
+{{- end }}
+
+Credentials (generated on first install, kept on upgrade):
+
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "so.fullname" (list . "grafana-admin") }} -o jsonpath='{.data.admin-password}' | base64 -d; echo
+{{- if .Values.portal.auth.enabled }}
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "so.fullname" (list . "portal-auth") }} -o jsonpath='{.data.password}' | base64 -d; echo
+{{- end }}
+{{- if eq .Values.stockExporter.feed.source "kite" }}
+
+The exporter needs Secret "{{ .Values.stockExporter.kite.existingSecret }}" (keys api-key, api-secret):
+
+  kubectl -n {{ .Release.Namespace }} create secret generic {{ .Values.stockExporter.kite.existingSecret }} \
+    --from-literal=api-key=<key> --from-file=api-secret=<path to secret file>
+{{- end }}

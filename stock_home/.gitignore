@@ -1,0 +1,3 @@
+/stock_home
+/ui/dist/*
+!/ui/dist/.gitkeep

@@ -1,0 +1,39 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $root := . }}
+{{- /* component: port, allowed client components ("*" = any source) */ -}}
+{{- $policies := dict
+  "portal" (list 8080 (list "*"))
+  "grafana" (list 3000 (list "portal" "stock-home"))
+  "prometheus" (list 9090 (list "portal" "grafana" "stock-home"))
+  "alertmanager" (list 9093 (list "portal" "grafana" "prometheus" "stock-home"))
+  "stock-exporter" (list 9101 (list "portal" "prometheus"))
+}}
+{{- if .Values.home.enabled }}
+{{- $_ := set $policies "stock-home" (list 8080 (list "portal")) }}
+{{- end }}
+{{- range $component, $p := $policies }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "so.fullname" (list $root $component) }}
+  labels:
+    {{- include "so.labels" (list $root $component) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "so.selectorLabels" (list $root $component) | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: {{ index $p 0 }}
+      {{- if not (has "*" (index $p 1)) }}
+      from:
+        {{- range $client := index $p 1 }}
+        - podSelector:
+            matchLabels:
+              {{- include "so.selectorLabels" (list $root $client) | nindent 14 }}
+        {{- end }}
+      {{- end }}
+{{- end }}
+{{- end }}

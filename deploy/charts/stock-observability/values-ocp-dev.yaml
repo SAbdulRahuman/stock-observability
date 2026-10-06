@@ -1,0 +1,54 @@
+openshift: true
+
+externalURL: https://stock-abdul.apps.ocp4poc.c4lab.local
+
+# The lab only has static local PVs (20Gi each).
+storageClassName: local
+
+route:
+  enabled: true
+  host: stock-abdul.apps.ocp4poc.c4lab.local
+
+# Images are built and pushed into the abdul namespace of the internal registry (top-level `make docker-push`).
+# Locally built images reuse their version tag, so they are always re-pulled.
+prometheus:
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/abdul/prometheus
+    pullPolicy: Always
+  retention:
+    time: 15d
+    size: 15GB
+
+alertmanager:
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/abdul/alertmanager
+    pullPolicy: Always
+
+grafana:
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/abdul/grafana
+  # POC only: re-enable login before wider use.
+  anonymous:
+    enabled: true
+    role: Admin
+
+stockExporter:
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/abdul/stock-exporter
+    pullPolicy: Always
+  feed:
+    source: kite
+  # Feeds the home page Portfolio section; amounts are hidden there by default.
+  extraArgs: ["--collector.portfolio"]
+
+home:
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/abdul/stock-home
+    pullPolicy: Always
+
+portal:
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/abdul/nginx-unprivileged
+  # POC only: re-enable basic auth before wider use.
+  auth:
+    enabled: false

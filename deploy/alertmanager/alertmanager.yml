@@ -1,0 +1,114 @@
+# Alertmanager configuration for stock observability (configuration only, no code changes).
+#
+# Notification integrations are intentionally not configured yet (planned for the next
+# release: Telegram, WhatsApp/SMS). Receivers without integrations keep alerts visible in
+# the Alertmanager UI/API (http://localhost:9093) and in `amtool alert query`.
+# To add a channel later, put e.g. a telegram_configs or webhook_configs block under a receiver.
+
+global:
+  resolve_timeout: 5m
+
+templates:
+  - /etc/alertmanager/templates/*.tmpl
+
+route:
+  receiver: stock-default
+  group_by: [alertname, category]
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 4h
+  routes:
+    # Feed/exporter health: 24x7, independent of market hours.
+    - receiver: stock-infra
+      matchers: ['category="infra"']
+      group_by: [alertname, job]
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 30m
+
+    - receiver: stock-portfolio
+      matchers: ['category="portfolio"']
+      group_by: [alertname, segment, exchange, symbol]
+      group_wait: 5s
+      group_interval: 30s
+      repeat_interval: 15m
+      active_time_intervals: [nse_session]
+      mute_time_intervals: [nse_holidays]
+
+    # Market-moving events: one notification per symbol, fast.
+    - receiver: stock-critical
+      matchers: ['severity="critical"', 'category=~"price|circuit|flow|market"']
+      group_by: [alertname, exchange, symbol]
+      group_wait: 5s
+      group_interval: 30s
+      repeat_interval: 30m
+      active_time_intervals: [nse_session]
+      mute_time_intervals: [nse_holidays]
+
+    # Everything else market related: batched per alert name to limit noise.
+    - receiver: stock-market
+      matchers: ['category=~"price|circuit|flow|market"']
+      group_by: [alertname, category]
+      group_wait: 15s
+      group_interval: 1m
+      repeat_interval: 1h
+      active_time_intervals: [nse_session]
+      mute_time_intervals: [nse_holidays]
+      routes:
+        - receiver: stock-info
+          matchers: ['severity="info"']
+          group_wait: 1m
+          group_interval: 5m
+          repeat_interval: 4h
+
+inhibit_rules:
+  # No trustworthy market data: silence everything derived from it.
+  - source_matchers: ['alertname=~"StockExporterDown|KiteSessionInvalid|KiteWebSocketDisconnected|MarketDataStale"']
+    target_matchers: ['category=~"price|circuit|flow|market|portfolio"']
+  # Root cause first: exporter down explains feed alerts.
+  - source_matchers: ['alertname="StockExporterDown"']
+    target_matchers: ['alertname=~"KiteSessionInvalid|KiteWebSocketDisconnected|MarketDataStale"']
+  # A locked circuit explains the price move and the "near circuit" warning.
+  - source_matchers: ['alertname="StockCircuitHit"']
+    target_matchers: ['alertname=~"StockNearUpperCircuit|StockNearLowerCircuit|StockPriceSpikeUp|StockPriceSharpDrop"']
+    equal: [exchange, symbol]
+  # A market-wide fall explains individual sharp drops on the same exchange.
+  - source_matchers: ['alertname="IndexSharpFall"']
+    target_matchers: ['alertname="StockPriceSharpDrop"']
+    equal: [exchange]
+  - source_matchers: ['severity="critical"']
+    target_matchers: ['severity=~"warning|info"']
+    equal: [exchange, symbol]
+
+receivers:
+  - name: stock-default
+  - name: stock-infra
+  - name: stock-portfolio
+  - name: stock-critical
+  - name: stock-market
+  - name: stock-info
+
+time_intervals:
+  # Pre-open (09:00) through post-close (16:00) IST, Monday to Friday.
+  - name: nse_session
+    time_intervals:
+      - weekdays: ['monday:friday']
+        times:
+          - start_time: '09:00'
+            end_time: '16:00'
+        location: Asia/Kolkata
+
+  # NSE capital market holidays 2026 (stock_exporter/examples/holidays-nse-2026.yml).
+  - name: nse_holidays
+    time_intervals:
+      - {years: ['2026'], months: ['january'], days_of_month: ['15', '26'], location: Asia/Kolkata}
+      - {years: ['2026'], months: ['february'], days_of_month: ['15'], location: Asia/Kolkata}
+      - {years: ['2026'], months: ['march'], days_of_month: ['3', '21', '26', '31'], location: Asia/Kolkata}
+      - {years: ['2026'], months: ['april'], days_of_month: ['3', '14'], location: Asia/Kolkata}
+      - {years: ['2026'], months: ['may'], days_of_month: ['1', '28'], location: Asia/Kolkata}
+      - {years: ['2026'], months: ['june'], days_of_month: ['26'], location: Asia/Kolkata}
+      - {years: ['2026'], months: ['august'], days_of_month: ['15'], location: Asia/Kolkata}
+      - {years: ['2026'], months: ['september'], days_of_month: ['14'], location: Asia/Kolkata}
+      - {years: ['2026'], months: ['october'], days_of_month: ['2', '20'], location: Asia/Kolkata}
+      - {years: ['2026'], months: ['november'], days_of_month: ['8', '10', '24'], location: Asia/Kolkata}
+      - {years: ['2026'], months: ['december'], days_of_month: ['25'], location: Asia/Kolkata}

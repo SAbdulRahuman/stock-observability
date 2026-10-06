@@ -1,0 +1,85 @@
+{{- if .Values.home.enabled }}
+{{- $name := include "so.fullname" (list . "stock-home") -}}
+{{- $v := .Values.home -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "so.labels" (list . "stock-home") | nindent 4 }}
+data:
+  {{- $hol := .Files.Glob "files/holidays.yml" }}
+  {{- if not $hol }}
+  {{- fail "files/holidays.yml not found" }}
+  {{- end }}
+  {{- $hol.AsConfig | nindent 2 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "so.labels" (list . "stock-home") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "so.selectorLabels" (list . "stock-home") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "so.labels" (list . "stock-home") | nindent 8 }}
+      annotations:
+        checksum/config: {{ .Files.Get "files/holidays.yml" | sha256sum }}
+    spec:
+      {{- include "so.podSpecCommon" . | nindent 6 }}
+      containers:
+        - name: stock-home
+          image: {{ include "so.image" $v.image }}
+          imagePullPolicy: {{ $v.image.pullPolicy }}
+          args:
+            - --prometheus.url=http://{{ include "so.fullname" (list . "prometheus") }}:9090/prometheus
+            - --alertmanager.url=http://{{ include "so.fullname" (list . "alertmanager") }}:9093/alertmanager
+            - --grafana.url=http://{{ include "so.fullname" (list . "grafana") }}:3000/grafana
+            - --market.indices={{ join "," $v.indices }}
+            - --market.holidays-file=/etc/stock-home/holidays.yml
+            - --query.timeout={{ $v.queryTimeout }}
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            {{- toYaml $v.resources | nindent 12 }}
+          securityContext:
+            {{- include "so.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/stock-home
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "so.labels" (list . "stock-home") | nindent 4 }}
+spec:
+  selector:
+    {{- include "so.selectorLabels" (list . "stock-home") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- end }}

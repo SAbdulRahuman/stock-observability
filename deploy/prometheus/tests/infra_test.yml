@@ -1,0 +1,136 @@
+# promtool test rules prometheus/tests/infra_test.yml
+rule_files:
+  - ../rules/stock_recording.rules.yml
+  - ../rules/stock_alerts.rules.yml
+
+evaluation_interval: 15s
+
+tests:
+  - name: exporter down
+    interval: 15s
+    input_series:
+      - series: 'up{job="stock_core",instance="se"}'
+        values: '1x4 0x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: StockExporterDown
+      - eval_time: 3m
+        alertname: StockExporterDown
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, severity: critical, category: infra}
+            exp_annotations:
+              summary: stock_exporter target stock_core is down
+              description: Prometheus cannot scrape se (stock_core).
+
+  - name: kite session invalid shortly before open
+    interval: 15s
+    input_series:
+      - series: 'stock_kite_session_valid{job="stock_core",instance="se"}'
+        values: '0x20'
+      - series: 'stock_market_trading_day{job="stock_core",instance="se"}'
+        values: '1x20'
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '0x20'
+      - series: 'stock_market_seconds_to_open{job="stock_core",instance="se"}'
+        values: '3600-15x20'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: KiteSessionInvalid
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, severity: critical, category: infra}
+            exp_annotations:
+              summary: Kite session missing or expired
+              description: No valid Kite access token. Open the exporter /login page and sign in to Kite to resume market data.
+
+  - name: kite session invalid at night does not alert
+    interval: 15s
+    input_series:
+      - series: 'stock_kite_session_valid{job="stock_core",instance="se"}'
+        values: '0x20'
+      - series: 'stock_market_trading_day{job="stock_core",instance="se"}'
+        values: '1x20'
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '0x20'
+      - series: 'stock_market_seconds_to_open{job="stock_core",instance="se"}'
+        values: '30000x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: KiteSessionInvalid
+
+  - name: websocket disconnected during session
+    interval: 15s
+    input_series:
+      - series: 'stock_feed_connections{job="stock_core",instance="se"}'
+        values: '1x4 0x16'
+      - series: 'stock_feed_subscribed_instruments{job="stock_core",instance="se"}'
+        values: '219x20'
+      - series: 'stock_market_phase{job="stock_core",instance="se",phase="open"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: KiteWebSocketDisconnected
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, severity: critical, category: infra}
+            exp_annotations:
+              summary: Kite WebSocket feed disconnected
+              description: stock_exporter has no connected market data WebSocket while the market is open.
+
+  - name: stale market data
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x20'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="A",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '120x20'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="B",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x20'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="C",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '2x20'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="D",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '3x20'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="E",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: MarketDataStale
+        exp_alerts:
+          - exp_labels: {severity: critical, category: infra}
+            exp_annotations:
+              summary: 20% of core instruments have no tick for 60s
+              description: Market data for NIFTY 200 instruments is stale; check the Kite feed and subscriptions.
+
+  - name: kite API errors and rate limiting
+    interval: 15s
+    input_series:
+      - series: 'stock_kite_api_requests_total{job="stock_core",instance="se",endpoint="quote",outcome="rate_limited"}'
+        values: '0+1x40'
+      - series: 'stock_kite_api_requests_total{job="stock_core",instance="se",endpoint="quote",outcome="success"}'
+        values: '0+10x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: KiteAPIErrors
+        exp_alerts:
+          - exp_labels: {endpoint: quote, outcome: rate_limited, severity: warning, category: infra}
+            exp_annotations:
+              summary: "Kite quote API: 40 rate_limited responses in 10m"
+              description: Kite REST calls are failing or being rate limited; circuit limits or portfolio data may be stale.
+
+  - name: scrape close to timeout
+    interval: 15s
+    input_series:
+      - series: 'scrape_duration_seconds{job="stock_core",instance="se"}'
+        values: '0.85x40'
+      - series: 'scrape_timeout_seconds{job="stock_core",instance="se"}'
+        values: '0.9x40'
+      - series: 'scrape_samples_post_metric_relabeling{job="stock_core",instance="se"}'
+        values: '3200x40'
+      - series: 'scrape_sample_limit{job="stock_core",instance="se"}'
+        values: '20000x40'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: StockScrapeUnhealthy
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, severity: warning, category: infra}
+            exp_annotations:
+              summary: Scrape of stock_core is close to its limits (94.44%)
+              description: Scrape duration or sample count is above 80% of the configured timeout or sample_limit; data may be dropped.

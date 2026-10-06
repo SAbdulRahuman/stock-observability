@@ -1,0 +1,75 @@
+{{- $am := include "so.fullname" (list . "alertmanager") -}}
+{{- $exporter := include "so.fullname" (list . "stock-exporter") -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "so.fullname" (list . "prometheus") }}
+  labels:
+    {{- include "so.labels" (list . "prometheus") | nindent 4 }}
+data:
+  prometheus.yml: |
+    # Ingestion budget: stock_core ~3,200 samples/s (1s), stock_broad ~6,000 samples/s (5s).
+    global:
+      scrape_interval: 15s
+      scrape_timeout: 10s
+      evaluation_interval: 15s
+      # Exposes scrape_timeout_seconds / scrape_sample_limit used by StockScrapeUnhealthy.
+      extra_scrape_metrics: true
+      external_labels:
+        system: stock-observability
+
+    rule_files:
+      - /etc/prometheus/rules/*.rules.yml
+
+    alerting:
+      alertmanagers:
+        - path_prefix: /alertmanager
+          static_configs:
+            - targets: ["{{ $am }}:9093"]
+
+    scrape_configs:
+      - job_name: stock_core
+        scrape_interval: 1s
+        scrape_timeout: 900ms
+        sample_limit: 20000
+        label_limit: 16
+        scrape_protocols: [PrometheusProto, OpenMetricsText1.0.0, PrometheusText0.0.4]
+        params:
+          tier: [core]
+        static_configs:
+          - targets: ["{{ $exporter }}:9101"]
+
+      - job_name: stock_broad
+        scrape_interval: 5s
+        scrape_timeout: 4s
+        sample_limit: 80000
+        label_limit: 16
+        scrape_protocols: [PrometheusProto, OpenMetricsText1.0.0, PrometheusText0.0.4]
+        params:
+          tier: [broad]
+          collect[]: [quote, circuit]
+        static_configs:
+          - targets: ["{{ $exporter }}:9101"]
+
+      - job_name: prometheus
+        metrics_path: /prometheus/metrics
+        static_configs:
+          - targets: ["localhost:9090"]
+
+      - job_name: alertmanager
+        metrics_path: /alertmanager/metrics
+        static_configs:
+          - targets: ["{{ $am }}:9093"]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "so.fullname" (list . "prometheus-rules") }}
+  labels:
+    {{- include "so.labels" (list . "prometheus") | nindent 4 }}
+data:
+  {{- $rules := .Files.Glob "files/prometheus-rules/*.rules.yml" }}
+  {{- if not $rules }}
+  {{- fail "no rule files found under files/prometheus-rules" }}
+  {{- end }}
+  {{- $rules.AsConfig | nindent 2 }}

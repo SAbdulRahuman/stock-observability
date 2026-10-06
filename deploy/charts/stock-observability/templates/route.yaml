@@ -1,0 +1,24 @@
+{{- if .Values.route.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "so.fullname" (list . "portal") }}
+  labels:
+    {{- include "so.labels" (list . "portal") | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/timeout: {{ .Values.route.timeout }}
+spec:
+  {{- with .Values.route.host }}
+  host: {{ . }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "so.fullname" (list . "portal") }}
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+{{- end }}

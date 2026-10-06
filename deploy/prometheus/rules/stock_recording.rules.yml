@@ -1,0 +1,66 @@
+# Recording rules for stock observability.
+# Per-instrument series keep all labels; market-wide aggregates drop job/instance.
+groups:
+  - name: stock_fast
+    interval: 5s
+    rules:
+      - record: stock:return_1m:percent
+        expr: (stock_last_price / (stock_last_price offset 1m) - 1) * 100
+      - record: stock:return_5m:percent
+        expr: (stock_last_price / (stock_last_price offset 5m) - 1) * 100
+      - record: stock:return_15m:percent
+        expr: (stock_last_price / (stock_last_price offset 15m) - 1) * 100
+      - record: stock:intraday_drawdown:percent
+        expr: (stock_last_price - stock_high_price) / (stock_high_price > 0) * 100
+      - record: stock:gap_open:percent
+        expr: (stock_open_price - stock_previous_close_price) / (stock_previous_close_price > 0) * 100
+      - record: stock:vwap_deviation:percent
+        expr: (stock_last_price - stock_average_traded_price) / (stock_average_traded_price > 0) * 100
+      - record: stock:order_imbalance:ratio
+        expr: stock_total_buy_quantity / (stock_total_sell_quantity > 0)
+      - record: stock:upper_circuit_distance:percent
+        expr: (stock_circuit_upper_limit_price - stock_last_price) / stock_last_price * 100
+      - record: stock:lower_circuit_distance:percent
+        expr: (stock_last_price - stock_circuit_lower_limit_price) / stock_last_price * 100
+      # Day volume resets every session; increase() treats the reset like a counter reset.
+      - record: stock:volume_1m:shares
+        expr: increase(stock_day_volume_shares[1m])
+
+      - record: market:advancers:count
+        expr: count(stock_change_percent{instrument_type="EQ"} > 0)
+      - record: market:decliners:count
+        expr: count(stock_change_percent{instrument_type="EQ"} < 0)
+      - record: market:advance_decline:ratio
+        expr: market:advancers:count / market:decliners:count
+      - record: sector:change_percent:avg
+        expr: avg by (sector) (stock_change_percent{instrument_type="EQ", tier="core"})
+      - record: market:stale_core_instruments:ratio
+        expr: |
+          count(stock_tick_age_seconds{tier="core"} > 60) / count(stock_tick_age_seconds{tier="core"})
+          or on() vector(0)
+
+  - name: stock_slow
+    interval: 15s
+    rules:
+      - record: stock:volatility_15m:percent
+        expr: stddev_over_time(stock:return_1m:percent{tier="core"}[15m])
+      - record: stock:volume_1m_avg_1h:shares
+        expr: avg_over_time(stock:volume_1m:shares{tier="core"}[1h])
+      - record: stock:sma_5m:price
+        expr: avg_over_time(stock_last_price{tier="core"}[5m])
+      - record: stock:sma_30m:price
+        expr: avg_over_time(stock_last_price{tier="core"}[30m])
+
+  - name: portfolio
+    interval: 15s
+    rules:
+      - record: portfolio:holding_value:sum
+        expr: sum(stock_portfolio_holding_quantity * stock_portfolio_holding_last_price)
+      - record: portfolio:day_change:sum
+        expr: sum(stock_portfolio_holding_day_change)
+      - record: portfolio:holding_pnl:sum
+        expr: sum(stock_portfolio_holding_pnl)
+      - record: portfolio:position_pnl:sum
+        expr: sum(stock_portfolio_position_pnl)
+      - record: portfolio:margin_utilisation:ratio
+        expr: stock_portfolio_margin_utilised / (stock_portfolio_margin_total > 0)

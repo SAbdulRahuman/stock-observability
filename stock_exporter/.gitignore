@@ -1,0 +1,9 @@
+/stock_exporter
+/watchlistgen
+/.build
+/data
+*.test
+*.out
+/vendor
+/.idea
+*.iml

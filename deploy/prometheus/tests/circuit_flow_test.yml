@@ -1,0 +1,105 @@
+# promtool test rules prometheus/tests/circuit_flow_test.yml
+rule_files:
+  - ../rules/stock_recording.rules.yml
+  - ../rules/stock_alerts.rules.yml
+
+evaluation_interval: 15s
+
+tests:
+  - name: circuit proximity and hit, including broad-tier symbols
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x40'
+      - series: 'stock_circuit_upper_limit_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '110x40'
+      - series: 'stock_circuit_lower_limit_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '90x40'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100x4 108x10 110x20'
+      - series: 'stock_circuit_upper_limit_price{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
+        values: '110x40'
+      - series: 'stock_circuit_lower_limit_price{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
+        values: '90x40'
+      - series: 'stock_last_price{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
+        values: '100x4 91x36'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: StockNearUpperCircuit
+        exp_alerts:
+          - exp_labels: {<<: &infy {job: stock_core, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core}, severity: warning, category: circuit}
+            exp_annotations:
+              summary: INFY is 1.85% from its upper circuit
+              description: NSE:INFY (core tier) is approaching its upper price band.
+      - eval_time: 3m
+        alertname: StockNearLowerCircuit
+        exp_alerts:
+          - exp_labels: {<<: &zzz {job: stock_broad, instance: se, exchange: NSE, symbol: ZZZ, sector: unknown, instrument_type: EQ, tier: broad}, severity: warning, category: circuit}
+            exp_annotations:
+              summary: ZZZ is 1.10% from its lower circuit
+              description: NSE:ZZZ (broad tier) is approaching its lower price band.
+      - eval_time: 3m
+        alertname: StockCircuitHit
+      - eval_time: 5m
+        alertname: StockCircuitHit
+        exp_alerts:
+          - exp_labels: {<<: *infy, band: upper, severity: critical, category: circuit}
+            exp_annotations:
+              summary: INFY hit its upper circuit at 110
+              description: NSE:INFY is locked at its upper circuit; trading is one-sided.
+      - eval_time: 5m
+        alertname: StockNearUpperCircuit
+
+  - name: order book imbalance
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x40'
+      - series: 'stock_total_buy_quantity{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '3500x40'
+      - series: 'stock_total_sell_quantity{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1000x40'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: StockOrderImbalance
+      - eval_time: 3m
+        alertname: StockOrderImbalance
+        exp_alerts:
+          - exp_labels: {<<: *infy, severity: info, category: flow}
+            exp_annotations:
+              summary: INFY order book buy/sell ratio is 3.50
+              description: Pending buy versus sell quantity for NSE:INFY has been heavily one-sided for 2 minutes.
+
+  - name: volume surge versus hourly average
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x300'
+      - series: 'stock_day_volume_shares{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '0+1000x280 290000+25000x20'
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: StockVolumeSurge
+      - eval_time: 74m
+        alertname: StockVolumeSurge
+        exp_alerts:
+          - exp_labels: {<<: *infy, severity: warning, category: flow}
+            exp_annotations:
+              summary: "INFY volume surge: 100k shares in 1 minute"
+              description: NSE:INFY traded more than 5x its average one-minute volume over the last hour.
+
+  - name: high volatility of one-minute returns
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x30'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: StockHighVolatility
+        exp_alerts:
+          - exp_labels: {<<: *infy, severity: warning, category: flow}
+            exp_annotations:
+              summary: INFY 1m-return volatility is 1.98%
+              description: Standard deviation of one-minute returns of NSE:INFY over 15 minutes exceeds 0.5%.

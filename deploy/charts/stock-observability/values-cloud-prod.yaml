@@ -1,0 +1,24 @@
+openshift: false
+
+externalURL: https://stock.example.com
+
+httpRoute:
+  enabled: true
+  hostnames: [stock.example.com]
+  parentRefs:
+    - name: public
+      namespace: gateway-infra
+
+prometheus:
+  retention:
+    time: 90d
+    size: 60GB
+  persistence:
+    size: 80Gi
+
+stockExporter:
+  image:
+    repository: ghcr.io/seenimo/stock-exporter
+
+portal:
+  replicas: 2
