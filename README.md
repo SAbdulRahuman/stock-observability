@@ -29,7 +29,7 @@ Nothing is compiled inside Docker. The Dockerfiles only copy prebuilt binaries o
 
 ## Repository layout
 
-This repository lives at [stock-observability/stock-observability](https://github.com/stock-observability/stock-observability). `stock_exporter`, `stock_home` and `deploy` are tracked here directly. The upstream projects are git submodules that point to forks in the [stock-observability](https://github.com/stock-observability) org, each pinned to a commit:
+This repository lives at [SAbdulRahuman/stock-observability](https://github.com/SAbdulRahuman/stock-observability). `stock_exporter`, `stock_home` and `deploy` are tracked here directly. The upstream projects are git submodules that point to forks in the [stock-observability](https://github.com/stock-observability) org, each pinned to a commit:
 
 | Submodule | Fork of | Branch |
 |---|---|---|
@@ -43,7 +43,7 @@ This repository lives at [stock-observability/stock-observability](https://githu
 | test-infra | prometheus/test-infra | master |
 
 ```bash
-git clone --recurse-submodules git@github.com:stock-observability/stock-observability.git
+git clone --recurse-submodules git@github.com:SAbdulRahuman/stock-observability.git
 git submodule update --init --recursive      # after a plain clone or a pull that moved a pin
 ```
 
