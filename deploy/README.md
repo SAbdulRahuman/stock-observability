@@ -184,8 +184,7 @@ The live feed (`stockExporter.feed.source: kite`) needs the Kite Connect API key
 
 ```bash
 oc -n abdul create secret generic kite \
-  --from-literal=api-key=<your-kite-api-key> \
-  --from-file=api-secret=<path-to-file-containing-api-secret>
+  --from-literal=api-key=kv8i33fc2z8qn1vr --from-literal=api-secret=fv4dqadu6piypi3ntbpewxbop1phew4h
 ```
 
 To replace it later:
@@ -431,11 +430,14 @@ Before deploying, set `externalURL`, `httpRoute.hostnames`, `httpRoute.parentRef
 | `npm ci`: `SELF_SIGNED_CERT_IN_CHAIN` or `ERR_SOCKET_TIMEOUT` | TLS interception / slow proxy | Build with `NPM_STRICT_SSL=false` (the OCP targets do this); timeouts are raised in `stock_home/web/.npmrc` |
 | Home page tile shows "Unavailable" | stock-home cannot reach Prometheus/Alertmanager | `oc -n abdul logs deploy/stock-home`; check those pods and NetworkPolicies |
 | Portfolio tile says "not available" | Portfolio collector off or no Kite session | Keep `--collector.portfolio` in `stockExporter.extraArgs`; log in to Kite |
+| No `stock_depth_*` / `stock_orderbook_*` series | Kite ticker not in `full` mode (exporter logs a warning), or collectors disabled | Keep the default `--kite.ticker-mode=full`; remove `--no-collector.depth` / `--no-collector.orderbook` from `stockExporter.extraArgs`. Broad tier is excluded on purpose (`collect[]` of the `stock_broad` job) |
+| `StockScrapeUnhealthy` on `stock_core` sample limit | Order book metrics add ~10,000 samples per core scrape (~13,000 total, limit 20,000) | Shrink the watchlist, raise `sample_limit`, or pass `--no-collector.depth` (raw 5-level book) and keep the `orderbook` KPIs |
 | `skopeo copy`: `uploading layer chunked: StatusCode: 400` | Registry route rejects streamed registry-to-registry uploads | Use the top-level `make docker-push` (stages images on disk first) |
 | `curl: Could not resolve host stock-abdul...` | No DNS record on the workstation | Add the hosts entry from [section 2](#lab-environment-facts) |
 | `404 Not Found ... Apache ... Port 8080` | Browser/curl used `http://...:8080` | Use `https://stock-abdul.apps.ocp4poc.c4lab.local/` (no port); clear cached redirects |
 | Exporter `ContainerCreating`, event `secret "kite" not found` | Kite secret missing | [Create the Kite secret](#5-create-the-kite-secret) |
 | `stock_kite_session_valid` is `0` | No Kite login today | Open `/exporter/login` |
+| Login page: `session exchange with Kite failed`; log `api.kite.trade/session/token ... Client.Timeout exceeded` | Pod has no direct internet egress | Set `stockExporter.env` `HTTPS_PROXY`/`NO_PROXY` (see `oc get proxy cluster -o yaml`); `values-ocp-dev.yaml` already does |
 | PVC `Pending` | No `Available` local PV, or wrong StorageClass | `oc get pv`; ask a cluster admin to free/add PVs |
 | Pod `ImagePullBackOff` | Image/tag not in the `abdul` registry | `oc get is -n abdul`; run the top-level `make docker-build docker-push` |
 | `helm upgrade`: `spec.selector: field is immutable` | A component's labels changed | `oc -n abdul delete deploy/<name>` then `make deploy-ocp` |

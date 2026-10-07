@@ -1,7 +1,7 @@
 # Prometheus configuration for stock observability.
 #
 # Ingestion budget (default watchlist, see stock_exporter/examples/watchlist.yml):
-#   stock_core  : NIFTY 200 + indices, all collectors, 1s  -> ~3,200 samples/s
+#   stock_core  : NIFTY 200 + indices, all collectors incl. depth/orderbook, 1s -> ~13,000 samples/s
 #   stock_broad : every other NSE EQ symbol, quote+circuit, 5s -> ~6,000 samples/s
 global:
   scrape_interval: 15s

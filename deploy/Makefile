@@ -68,6 +68,7 @@ EXPORTER_VERSION ?= $(shell cat ../stock_exporter/VERSION)
 HOME_VERSION ?= $(shell cat ../stock_home/VERSION)
 PROM_VERSION ?= $(shell cat ../prometheus/VERSION)
 AM_VERSION   ?= $(shell cat ../alertmanager/VERSION)
+OPENBB_VERSION ?= $(shell git -C ../OpenBB/OpenBB rev-parse --short HEAD 2>/dev/null)
 
 # Images are built and pushed by the top-level Makefile (../Makefile).
 .PHONY: ocp-images
@@ -87,4 +88,5 @@ deploy-ocp: helm-lint
 	helm upgrade --install $(RELEASE) $(CHART) -n $(NAMESPACE) -f $(HELM_VALUES) \
 		--set stockExporter.image.tag=$(EXPORTER_VERSION) --set home.image.tag=$(HOME_VERSION) \
 		--set prometheus.image.tag=v$(PROM_VERSION) --set alertmanager.image.tag=v$(AM_VERSION) \
+		$(if $(OPENBB_VERSION),--set openbb.image.tag=$(OPENBB_VERSION)) \
 		--wait --timeout 10m

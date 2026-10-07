@@ -46,6 +46,7 @@ type Server struct {
 	timeout  time.Duration
 	now      func() time.Time
 	requests *prometheus.CounterVec
+	fallback http.Handler
 }
 
 // NewServer returns a Server; timeout applies to commands that do not set their own.
@@ -64,6 +65,9 @@ func NewServer(reg *Registry, logger *slog.Logger, timeout time.Duration, promRe
 	return s
 }
 
+// SetFallback serves GET requests for commands that are not registered; call before Register.
+func (s *Server) SetFallback(h http.Handler) { s.fallback = h }
+
 // Register adds the command routes to mux. Commands registered later are not served.
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+Prefix+"commands", s.listCommands)
@@ -73,7 +77,11 @@ func (s *Server) Register(mux *http.ServeMux) {
 	unknown := func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown command"})
 	}
-	mux.HandleFunc("GET "+Prefix, unknown)
+	if s.fallback != nil {
+		mux.Handle("GET "+Prefix, s.fallback)
+	} else {
+		mux.HandleFunc("GET "+Prefix, unknown)
+	}
 	mux.HandleFunc("POST "+Prefix, unknown)
 }
 

@@ -21,6 +21,7 @@ import (
 
 	"github.com/seenimo/stock_home/internal/api"
 	"github.com/seenimo/stock_home/internal/holidays"
+	"github.com/seenimo/stock_home/internal/openbb"
 	"github.com/seenimo/stock_home/internal/platform"
 	"github.com/seenimo/stock_home/internal/source"
 	"github.com/seenimo/stock_home/ui"
@@ -38,6 +39,8 @@ func main() {
 		holidaysFile = flag.String("market.holidays-file", "", "Exchange holidays YAML (stock_exporter format).")
 		tz           = flag.String("market.timezone", "Asia/Kolkata", "Exchange timezone.")
 		timeout      = flag.Duration("query.timeout", 10*time.Second, "Timeout for one section refresh.")
+		openbbURL    = flag.String("openbb.url", "", "OpenBB Platform API base URL; /api/v2 commands without a native port are forwarded there. Empty disables. Credentials: env STOCK_HOME_OPENBB_USERNAME, STOCK_HOME_OPENBB_PASSWORD.")
+		openbbTO     = flag.Duration("openbb.timeout", 30*time.Second, "Timeout for one command forwarded to OpenBB.")
 		showVersion  = flag.Bool("version", false, "Print version and exit.")
 	)
 	flag.Parse()
@@ -46,13 +49,19 @@ func main() {
 		return
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	if err := run(logger, *listen, *promURL, *amURL, *grafanaURL, *indices, *holidaysFile, *tz, *timeout); err != nil {
+	ob := openbb.Config{
+		URL:      *openbbURL,
+		Username: os.Getenv("STOCK_HOME_OPENBB_USERNAME"),
+		Password: os.Getenv("STOCK_HOME_OPENBB_PASSWORD"),
+		Timeout:  *openbbTO,
+	}
+	if err := run(logger, *listen, *promURL, *amURL, *grafanaURL, *indices, *holidaysFile, *tz, *timeout, ob); err != nil {
 		logger.Error("Exiting", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, holidaysFile, tz string, timeout time.Duration) error {
+func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, holidaysFile, tz string, timeout time.Duration, ob openbb.Config) error {
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
 		return err
@@ -87,7 +96,17 @@ func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, holid
 
 	mux := http.NewServeMux()
 	srv.Register(mux)
-	platform.NewServer(platform.NewRegistry(), logger, timeout, reg).Register(mux)
+	plat := platform.NewServer(platform.NewRegistry(), logger, timeout, reg)
+	writeTimeout := 2 * timeout
+	if ob.URL != "" {
+		proxy, err := openbb.New(ob, logger, reg)
+		if err != nil {
+			return err
+		}
+		plat.SetFallback(proxy)
+		writeTimeout = max(writeTimeout, ob.Timeout+5*time.Second)
+	}
+	plat.Register(mux)
 	mux.Handle("GET /metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
 	mux.Handle("GET /", ui.Handler())
@@ -96,14 +115,14 @@ func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, holid
 		Addr:              listen,
 		Handler:           securityHeaders(mux),
 		ReadHeaderTimeout: 10 * time.Second,
-		WriteTimeout:      2 * timeout,
+		WriteTimeout:      writeTimeout,
 		IdleTimeout:       2 * time.Minute,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	errc := make(chan error, 1)
 	go func() { errc <- hs.ListenAndServe() }()
-	logger.Info("Listening", "address", listen, "version", version, "prometheus", promURL, "alertmanager", amURL, "holidays", len(hol))
+	logger.Info("Listening", "address", listen, "version", version, "prometheus", promURL, "alertmanager", amURL, "openbb", ob.URL, "holidays", len(hol))
 
 	select {
 	case err := <-errc:

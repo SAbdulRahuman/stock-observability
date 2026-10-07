@@ -11,6 +11,9 @@
 {{- if .Values.home.enabled }}
 {{- $_ := set $policies "stock-home" (list 8080 (list "portal")) }}
 {{- end }}
+{{- if .Values.openbb.enabled }}
+{{- $_ := set $policies "openbb" (list 8080 (ternary (list "*") (list "stock-home") .Values.openbb.route.enabled)) }}
+{{- end }}
 {{- range $component, $p := $policies }}
 ---
 apiVersion: networking.k8s.io/v1

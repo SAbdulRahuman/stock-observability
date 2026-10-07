@@ -8,7 +8,7 @@ metadata:
     {{- include "so.labels" (list . "prometheus") | nindent 4 }}
 data:
   prometheus.yml: |
-    # Ingestion budget: stock_core ~3,200 samples/s (1s), stock_broad ~6,000 samples/s (5s).
+    # Ingestion budget: stock_core ~13,000 samples/s (1s, incl. depth/orderbook), stock_broad ~6,000 samples/s (5s).
     global:
       scrape_interval: 15s
       scrape_timeout: 10s

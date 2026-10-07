@@ -195,6 +195,40 @@ func TestListCommands(t *testing.T) {
 	}
 }
 
+func TestFallback(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(echo)
+	s := NewServer(reg, slog.New(slog.NewTextHandler(io.Discard, nil)), time.Second, prometheus.NewRegistry())
+	s.SetFallback(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"fallback": r.URL.Path})
+	}))
+	mux := http.NewServeMux()
+	s.Register(mux)
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	var native struct{ Results []map[string]any }
+	if code := get(t, ts.URL+"/api/v2/equity/price/historical?symbol=A", &native); code != 200 || len(native.Results) != 1 {
+		t.Errorf("native command: %d %v", code, native)
+	}
+	var cmds []CommandInfo
+	if code := get(t, ts.URL+"/api/v2/commands", &cmds); code != 200 || len(cmds) != 1 {
+		t.Errorf("commands: %d %v", code, cmds)
+	}
+	var out map[string]string
+	if code := get(t, ts.URL+"/api/v2/equity/price/quote", &out); code != 200 || out["fallback"] != "/api/v2/equity/price/quote" {
+		t.Errorf("fallback: %d %v", code, out)
+	}
+	resp, err := http.Post(ts.URL+"/api/v2/equity/price/quote", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("POST to unknown command: status %d", resp.StatusCode)
+	}
+}
+
 func TestRegisterValidation(t *testing.T) {
 	h := func(context.Context, *Request) (*Result, error) { return nil, nil }
 	for name, c := range map[string]Command{

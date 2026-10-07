@@ -7,6 +7,7 @@ Go 1.25 server (`main.go`, `internal/`) + Next.js 16 static export (`web/`) embe
 - `/api/v1/*` — existing NSE dashboard (Prometheus + Alertmanager). Do not change its contract.
 - `/api/v2/*` — OpenBB-parity commands. Path = OpenBB command path, e.g. `equity.price.historical` → `GET /api/v2/equity/price/historical`. Provider-specific routers: `/api/v2/<provider>/<command>`.
 - `internal/platform/` — command registry, OBBject envelope, `/api/v2` router, errors.
+- `internal/openbb/` — forwards unregistered `GET /api/v2/*` to an OpenBB Platform API (`--openbb.url`, env `STOCK_HOME_OPENBB_USERNAME/PASSWORD`). Native commands always win; `/openbb` UI tab uses it.
 - `internal/provider/` — `Fetcher` interface, provider registry, shared HTTP client, credentials lookup. One sub-package per upstream: `internal/provider/<name>/` (`sec`, `nasdaq`, `cboe`, `fred`, …). Fixtures in `internal/provider/<name>/testdata/`.
 - `internal/provider/providertest/` — fixture-replay httptest helpers.
 - `internal/models/` — standard models (query params + data structs) mirroring `openbb_core/provider/standard_models/*.py`.

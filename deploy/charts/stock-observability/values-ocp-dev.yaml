@@ -40,11 +40,24 @@ stockExporter:
     source: kite
   # Feeds the home page Portfolio section; amounts are hidden there by default.
   extraArgs: ["--collector.portfolio"]
+  # The lab has no direct egress; api.kite.trade and ws.kite.trade go through the cluster proxy.
+  env:
+    - {name: HTTPS_PROXY, value: "http://proxy-in.its.hpecorp.net:443"}
+    - {name: HTTP_PROXY, value: "http://proxy-in.its.hpecorp.net:443"}
+    - {name: NO_PROXY, value: ".cluster.local,.svc,.ocp4poc.c4lab.local,10.132.0.0/14,172.30.0.0/16,10.189.176.0/20,127.0.0.1,localhost"}
 
 home:
   image:
     repository: image-registry.openshift-image-registry.svc:5000/abdul/stock-home
     pullPolicy: Always
+
+openbb:
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/abdul/openbb
+    pullPolicy: Always
+  route:
+    enabled: true
+    host: openbb-abdul.apps.ocp4poc.c4lab.local
 
 portal:
   image:

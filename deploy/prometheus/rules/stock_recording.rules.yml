@@ -50,6 +50,10 @@ groups:
         expr: avg_over_time(stock_last_price{tier="core"}[5m])
       - record: stock:sma_30m:price
         expr: avg_over_time(stock_last_price{tier="core"}[30m])
+      - record: stock:orderbook_spread_5m_avg:bps
+        expr: avg_over_time(stock_orderbook_spread_bps{tier="core"}[5m])
+      - record: stock:orderbook_imbalance_1m_avg:ratio
+        expr: avg_over_time(stock_orderbook_imbalance_ratio{tier="core"}[1m])
 
   - name: portfolio
     interval: 15s

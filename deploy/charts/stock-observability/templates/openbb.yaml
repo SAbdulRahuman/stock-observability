@@ -1,0 +1,130 @@
+{{- if .Values.openbb.enabled }}
+{{- $name := include "so.fullname" (list . "openbb") -}}
+{{- $secret := include "so.fullname" (list . "openbb-auth") -}}
+{{- $v := .Values.openbb -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "so.labels" (list . "openbb") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "so.selectorLabels" (list . "openbb") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "so.labels" (list . "openbb") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/openbb-proxy-configmap.yaml") . | sha256sum }}
+    spec:
+      {{- include "so.podSpecCommon" . | nindent 6 }}
+      containers:
+        # OpenBB's own OPENBB_API_AUTH breaks route registration in this release, so the
+        # API only listens on localhost and the auth-proxy sidecar enforces basic auth.
+        - name: openbb
+          image: {{ include "so.image" $v.image }}
+          imagePullPolicy: {{ $v.image.pullPolicy }}
+          env:
+            - name: HOME
+              value: /home/openbb
+            - name: OPENBB_API_HOST
+              value: 127.0.0.1
+            - name: OPENBB_API_PORT
+              value: "6900"
+            - name: OPENBB_API_AUTH
+              value: "false"
+            {{- with $v.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with $v.credentials.existingSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ . }}
+          {{- end }}
+          # Importing every extension takes a while. The API only binds to localhost,
+          # so the kubelet's tcpSocket probes (pod IP) cannot reach it.
+          {{- $probe := list "python" "-c" "import socket; socket.create_connection(('127.0.0.1', 6900), 2)" | toJson }}
+          startupProbe:
+            exec:
+              command: {{ $probe }}
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: {{ $probe }}
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: {{ $probe }}
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml $v.resources | nindent 12 }}
+          securityContext:
+            {{- include "so.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: home
+              mountPath: /home/openbb
+            - name: tmp
+              mountPath: /tmp
+        - name: auth-proxy
+          image: {{ include "so.image" .Values.portal.image }}
+          imagePullPolicy: {{ .Values.portal.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            {{- toYaml $v.authProxy.resources | nindent 12 }}
+          securityContext:
+            {{- include "so.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - name: proxy-conf
+              mountPath: /etc/nginx/conf.d
+            {{- if $v.auth.enabled }}
+            - name: auth
+              mountPath: /etc/nginx/auth
+            {{- end }}
+      volumes:
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: proxy-conf
+          configMap:
+            name: {{ $name }}-proxy
+        {{- if $v.auth.enabled }}
+        - name: auth
+          secret:
+            secretName: {{ $secret }}
+            items:
+              - key: htpasswd
+                path: htpasswd
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "so.labels" (list . "openbb") | nindent 4 }}
+spec:
+  selector:
+    {{- include "so.selectorLabels" (list . "openbb") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- end }}

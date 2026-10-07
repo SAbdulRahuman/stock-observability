@@ -36,6 +36,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/exporter-toolkit/bootstrap"
 	kiteconnect "github.com/zerodha/gokiteconnect/v4"
+	kiteticker "github.com/zerodha/gokiteconnect/v4/ticker"
 
 	"github.com/seenimo/stock_exporter/collector"
 	"github.com/seenimo/stock_exporter/internal/kite"
@@ -243,6 +244,9 @@ func start(ctx context.Context, o options, b *bootstrap.Bootstrap) (collector.De
 			return collector.Deps{}, fmt.Errorf("reading Kite API secret: %w", err)
 		}
 		deps.Health = store.NewHealth("kite", string(mode))
+		if mode != kiteticker.ModeFull && (collector.Enabled("depth") || collector.Enabled("orderbook")) {
+			b.Logger.Warn("Order book depth is only streamed in full mode; depth and orderbook metrics will be empty", "mode", mode)
+		}
 		auth := kiteconnect.New(o.kiteAPIKey)
 		if o.kiteBaseURI != "" {
 			auth.SetBaseURI(o.kiteBaseURI)

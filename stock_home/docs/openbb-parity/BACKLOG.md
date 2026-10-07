@@ -10,6 +10,7 @@ Rules:
 - One feature = one local commit. The commit hash goes in **Notes**.
 - A worker may split a large feature into `F###a`, `F###b`, … rows in place when the real command count is discovered.
 - API path = `/api/v2/` + OpenBB command path (dots → slashes). Provider-specific routers mount at `/api/v2/<provider>/...`.
+- Until a command is ported, `GET /api/v2/<path>` is forwarded to the OpenBB server's `/api/v1/<path>` when `--openbb.url` is set (`internal/openbb`); a native registration replaces it automatically.
 
 ---
 

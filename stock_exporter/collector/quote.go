@@ -34,7 +34,8 @@ type quoteCollector struct {
 
 	last, open, high, low, prevClose, change typedDesc
 	volume, vwap, buyQty, sellQty, lastQty   typedDesc
-	openInterest, lastTrade, tickAge         typedDesc
+	openInterest, oiDayHigh, oiDayLow        typedDesc
+	lastTrade, exchangeTime, tickAge         typedDesc
 }
 
 func init() {
@@ -58,7 +59,10 @@ func NewQuoteCollector(_ *slog.Logger, deps Deps) (Collector, error) {
 		sellQty:      gaugeDesc("", "total_sell_quantity", "Total pending sell quantity in the order book.", l...),
 		lastQty:      gaugeDesc("", "last_traded_quantity", "Quantity of the last trade.", l...),
 		openInterest: gaugeDesc("", "open_interest", "Open interest of derivative contracts.", l...),
+		oiDayHigh:    gaugeDesc("", "open_interest_day_high", "Highest open interest of derivative contracts today.", l...),
+		oiDayLow:     gaugeDesc("", "open_interest_day_low", "Lowest open interest of derivative contracts today.", l...),
 		lastTrade:    gaugeDesc("", "last_trade_timestamp_seconds", "Exchange time of the last trade.", l...),
+		exchangeTime: gaugeDesc("", "exchange_timestamp_seconds", "Exchange time of the latest tick.", l...),
 		tickAge:      gaugeDesc("", "tick_age_seconds", "Seconds since the last tick was received (since exporter start if none yet).", l...),
 	}, nil
 }
@@ -84,11 +88,16 @@ func (c *quoteCollector) Update(ch chan<- prometheus.Metric, scope Scope) error 
 		if q.PrevClose > 0 {
 			ch <- c.change.mustNewConstMetric((q.LastPrice-q.PrevClose)/q.PrevClose*100, lv...)
 		}
+		if !q.ExchangeTime.IsZero() {
+			ch <- c.exchangeTime.mustNewConstMetric(unixSeconds(q.ExchangeTime), lv...)
+		}
 		switch e.Instrument.Type {
 		case store.TypeIndex:
 			continue
 		case store.TypeFuture, store.TypeCall, store.TypePut:
 			ch <- c.openInterest.mustNewConstMetric(q.OpenInterest, lv...)
+			ch <- c.oiDayHigh.mustNewConstMetric(q.OIDayHigh, lv...)
+			ch <- c.oiDayLow.mustNewConstMetric(q.OIDayLow, lv...)
 		}
 		ch <- c.volume.mustNewConstMetric(q.Volume, lv...)
 		ch <- c.vwap.mustNewConstMetric(q.AveragePrice, lv...)

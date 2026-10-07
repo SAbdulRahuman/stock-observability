@@ -85,6 +85,8 @@ stockExporter:
     # Pre-created Secret with keys api-key and api-secret; never stored in Helm values.
     existingSecret: kite
   extraArgs: []
+  # Extra container env, e.g. HTTPS_PROXY / NO_PROXY when Kite is only reachable through a proxy.
+  env: []
   persistence:
     size: 1Gi
   resources:
@@ -115,6 +117,39 @@ home:
   # Index tiles in Market overview; the first one gets a sparkline.
   indices: ["NIFTY 50", "NIFTY BANK", "NIFTY IT", "SENSEX", "INDIA VIX"]
   queryTimeout: 10s
+  # Timeout for /api/v2 commands forwarded to OpenBB.
+  openbbTimeout: 30s
   resources:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {memory: 256Mi}
+
+# OpenBB Platform API; stock-home forwards /api/v2 commands it has not ported natively.
+openbb:
+  enabled: true
+  image:
+    repository: openbb
+    # OpenBB/OpenBB commit; deploy-ocp sets it.
+    tag: "ae02687"
+    pullPolicy: IfNotPresent
+  auth:
+    # Basic auth by the auth-proxy sidecar; password generated once, kept on upgrade.
+    enabled: true
+    username: openbb
+  credentials:
+    # Optional pre-created Secret of provider keys as env vars, e.g. FRED_API_KEY.
+    existingSecret: ""
+  # Extra container env, e.g. HTTPS_PROXY / NO_PROXY for cluster egress.
+  env: []
+  # OpenShift Route to the API and its /docs; needs an OpenShift cluster.
+  route:
+    enabled: false
+    host: ""
+    timeout: 2m
+  resources:
+    requests: {cpu: 250m, memory: 1Gi}
+    limits: {memory: 3Gi}
+  # nginx sidecar (portal.image) in front of the API.
+  authProxy:
+    resources:
+      requests: {cpu: 20m, memory: 16Mi}
+      limits: {memory: 64Mi}

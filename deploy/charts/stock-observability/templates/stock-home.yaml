@@ -44,6 +44,19 @@ spec:
             - --market.indices={{ join "," $v.indices }}
             - --market.holidays-file=/etc/stock-home/holidays.yml
             - --query.timeout={{ $v.queryTimeout }}
+            {{- if .Values.openbb.enabled }}
+            - --openbb.url=http://{{ include "so.fullname" (list . "openbb") }}:8080
+            - --openbb.timeout={{ $v.openbbTimeout }}
+            {{- end }}
+          {{- if and .Values.openbb.enabled .Values.openbb.auth.enabled }}
+          env:
+            - name: STOCK_HOME_OPENBB_USERNAME
+              valueFrom:
+                secretKeyRef: {name: {{ include "so.fullname" (list . "openbb-auth") }}, key: username}
+            - name: STOCK_HOME_OPENBB_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: {{ include "so.fullname" (list . "openbb-auth") }}, key: password}
+          {{- end }}
           ports:
             - name: http
               containerPort: 8080

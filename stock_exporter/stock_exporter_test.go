@@ -109,8 +109,16 @@ func TestHandlerTiersAndFilters(t *testing.T) {
 	if _, ok := all["stock_portfolio_holding_pnl"]; ok {
 		t.Fatal("portfolio collector must be disabled by default")
 	}
+	for _, m := range []string{"stock_depth_price", "stock_orderbook_spread_bps", "stock_orderbook_quantity"} {
+		if core[m] == 0 {
+			t.Errorf("%s missing from core scrape", m)
+		}
+		if _, ok := broad[m]; ok {
+			t.Errorf("%s present in filtered broad scrape", m)
+		}
+	}
 
-	for _, q := range []string{"tier=bogus", "collect[]=quote&exclude[]=market", "collect[]=nope", "collect[]=depth"} {
+	for _, q := range []string{"tier=bogus", "collect[]=quote&exclude[]=market", "collect[]=nope"} {
 		if code, _ := scrape(t, h, q); code != http.StatusBadRequest {
 			t.Errorf("%s: status %d, want 400", q, code)
 		}
@@ -126,8 +134,9 @@ func TestCoreTierSampleBudget(t *testing.T) {
 		total += n
 	}
 	t.Logf("core tier: %d samples per scrape", total)
-	if total < 2500 || total > 3500 {
-		t.Fatalf("core tier produces %d samples per scrape, expected ~3000 (1s scrape budget)", total)
+	// ~3,000 quote/circuit samples plus ~10,000 depth/orderbook samples; stock_core sample_limit is 20,000.
+	if total < 11000 || total > 15000 {
+		t.Fatalf("core tier produces %d samples per scrape, expected ~13000 (1s scrape budget)", total)
 	}
 }
 

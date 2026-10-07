@@ -13,12 +13,23 @@ stock-observability is deployed to namespace {{ .Release.Namespace }}.
   Kite redirect URL to register in the Kite developer console:
                   {{ $url }}/exporter/kite/callback
 {{- end }}
+{{- if .Values.openbb.enabled }}
+{{- if .Values.home.enabled }}
+  OpenBB tab:     {{ $url }}/openbb
+{{- end }}
+{{- if .Values.openbb.route.enabled }}
+  OpenBB API:     https://{{ .Values.openbb.route.host | default (printf "<route host: kubectl -n %s get route %s>" .Release.Namespace (include "so.fullname" (list . "openbb"))) }}/docs  {{ ternary "(basic auth)" "(no auth)" .Values.openbb.auth.enabled }}
+{{- end }}
+{{- end }}
 
 Credentials (generated on first install, kept on upgrade):
 
   kubectl -n {{ .Release.Namespace }} get secret {{ include "so.fullname" (list . "grafana-admin") }} -o jsonpath='{.data.admin-password}' | base64 -d; echo
 {{- if .Values.portal.auth.enabled }}
   kubectl -n {{ .Release.Namespace }} get secret {{ include "so.fullname" (list . "portal-auth") }} -o jsonpath='{.data.password}' | base64 -d; echo
+{{- end }}
+{{- if and .Values.openbb.enabled .Values.openbb.auth.enabled }}
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "so.fullname" (list . "openbb-auth") }} -o jsonpath='{.data.password}' | base64 -d; echo
 {{- end }}
 {{- if eq .Values.stockExporter.feed.source "kite" }}
 

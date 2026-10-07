@@ -22,3 +22,29 @@ spec:
     insecureEdgeTerminationPolicy: Redirect
   wildcardPolicy: None
 {{- end }}
+{{- if and .Values.openbb.enabled .Values.openbb.route.enabled }}
+---
+# Own host: OpenBB's FastAPI /docs does not work under a path prefix.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "so.fullname" (list . "openbb") }}
+  labels:
+    {{- include "so.labels" (list . "openbb") | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/timeout: {{ .Values.openbb.route.timeout }}
+spec:
+  {{- with .Values.openbb.route.host }}
+  host: {{ . }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "so.fullname" (list . "openbb") }}
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+{{- end }}

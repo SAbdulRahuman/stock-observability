@@ -192,3 +192,16 @@ make clean   # removes .build, prometheus/.build, alertmanager/.build and the st
 ## Deployment
 
 Deployment, configuration, access, credentials and day-2 operations are described in [stock-observability/README.md](stock-observability/README.md).
+
+## OCP 
+
+OCP cluster details
+ 
+10.189.185.210    api.ocp4poc.c4lab.local
+
+10.189.185.210    console-openshift-console.apps.ocp4poc.c4lab.local
+
+10.189.185.210    oauth-openshift.apps.ocp4poc.c4lab.local
+ 
+kubeadmin/ABKHs-TnW6m-I2pmb-vYZZg
+ 

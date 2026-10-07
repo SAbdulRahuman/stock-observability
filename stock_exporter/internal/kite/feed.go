@@ -73,6 +73,8 @@ func ConvertTick(t models.Tick, received time.Time) store.Quote {
 		BuyQuantity:   float64(t.TotalBuyQuantity),
 		SellQuantity:  float64(t.TotalSellQuantity),
 		OpenInterest:  float64(t.OI),
+		OIDayHigh:     float64(t.OIDayHigh),
+		OIDayLow:      float64(t.OIDayLow),
 		LastTradeTime: t.LastTradeTime.Time,
 		ExchangeTime:  t.Timestamp.Time,
 		ReceivedAt:    received,

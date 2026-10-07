@@ -45,13 +45,18 @@ spec:
             {{- with $v.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- if $kite }}
+          {{- if or $kite $v.env }}
           env:
+            {{- if $kite }}
             - name: KITE_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ $v.kite.existingSecret }}
                   key: api-key
+            {{- end }}
+            {{- with $v.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           ports:
             - name: http

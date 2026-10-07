@@ -29,8 +29,8 @@ type depthCollector struct {
 }
 
 func init() {
-	// Disabled by default: 30 series per instrument.
-	registerCollector("depth", defaultDisabled, NewDepthCollector)
+	// Up to 30 series per instrument; the broad scrape job filters it out via collect[].
+	registerCollector("depth", defaultEnabled, NewDepthCollector)
 }
 
 // NewDepthCollector exposes the top 5 levels of the order book.
@@ -57,6 +57,9 @@ func (c *depthCollector) Update(ch chan<- prometheus.Metric, scope Scope) error 
 			levels [5]store.DepthLevel
 		}{{"bid", e.Quote.Depth.Bids}, {"ask", e.Quote.Depth.Asks}} {
 			for i, lvl := range s.levels {
+				if lvl.Empty() {
+					continue
+				}
 				lv := append(append([]string{}, base...), s.name, levelNames[i])
 				ch <- c.price.mustNewConstMetric(lvl.Price, lv...)
 				ch <- c.quantity.mustNewConstMetric(lvl.Quantity, lv...)

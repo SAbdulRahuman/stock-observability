@@ -1,4 +1,4 @@
-# Alerting rules for stock observability (25 alerts).
+# Alerting rules for stock observability (28 alerts).
 #
 # Conventions:
 #   severity: info | warning | critical     category: price | circuit | flow | market | portfolio | infra
@@ -149,6 +149,36 @@ groups:
         annotations:
           summary: "{{ $labels.symbol }} 1m-return volatility is {{ $value | printf \"%.2f\" }}%"
           description: "Standard deviation of one-minute returns of {{ $labels.exchange }}:{{ $labels.symbol }} over 15 minutes exceeds 0.5%."
+
+      - alert: StockWideSpread
+        expr: |
+          stock:orderbook_spread_5m_avg:bps{instrument_type="EQ"} > 50
+          and on() stock_market_open == 1
+        for: 2m
+        labels: {severity: warning, category: flow}
+        annotations:
+          summary: "{{ $labels.symbol }} bid-ask spread averages {{ $value | printf \"%.1f\" }} bps"
+          description: "The 5 minute average bid-ask spread of {{ $labels.exchange }}:{{ $labels.symbol }} exceeds 50 bps; liquidity is thin."
+
+      - alert: StockOrderBookCrossed
+        expr: |
+          stock_orderbook_spread_price{tier="core"} < 0
+          and on() stock_market_open == 1
+        for: 1m
+        labels: {severity: warning, category: flow}
+        annotations:
+          summary: "{{ $labels.symbol }} order book is crossed by {{ $value }}"
+          description: "Best bid of {{ $labels.exchange }}:{{ $labels.symbol }} has been above the best ask for 1 minute; the depth feed may be stale or corrupt."
+
+      - alert: StockOrderBookImbalance
+        expr: |
+          (stock:orderbook_imbalance_1m_avg:ratio > 0.8 or stock:orderbook_imbalance_1m_avg:ratio < -0.8)
+          and on() stock_market_open == 1
+        for: 2m
+        labels: {severity: info, category: flow}
+        annotations:
+          summary: "{{ $labels.symbol }} top 5 depth imbalance is {{ $value | printf \"%.2f\" }}"
+          description: "Quantity in the top 5 bid versus ask levels of {{ $labels.exchange }}:{{ $labels.symbol }} has been heavily one-sided for 2 minutes (1 = all bids, -1 = all asks)."
 
   - name: stock_market
     interval: 5s

@@ -48,7 +48,7 @@ check() { # name, value, python condition on v
 
 check "up stock_core"                       "$(q 'up{job="stock_core"}')"  "v==1"
 check "up stock_broad"                      "$(q 'up{job="stock_broad"}')" "v==1"
-check "core samples/scrape"                 "$(q 'scrape_samples_scraped{job="stock_core"}')" "v is not None and 2500<v<4000"
+check "core samples/scrape"                 "$(q 'scrape_samples_scraped{job="stock_core"}')" "v is not None and 11000<v<15000"
 check "broad samples/scrape"                "$(q 'scrape_samples_scraped{job="stock_broad"}')" "v is not None and v>20000"
 check "ingest samples/s (1m)"               "$(q 'rate(prometheus_tsdb_head_samples_appended_total[1m])')" "v is not None and v>5000"
 check "core scrape duration p_max (s)"      "$(q 'max_over_time(scrape_duration_seconds{job="stock_core"}[1m])')" "v is not None and v<0.9"

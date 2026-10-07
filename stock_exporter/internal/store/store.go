@@ -53,6 +53,9 @@ type DepthLevel struct {
 	Orders   float64
 }
 
+// Empty reports whether the level carries no order (unfilled side or market closed).
+func (l DepthLevel) Empty() bool { return l.Price == 0 && l.Quantity == 0 }
+
 // Depth holds the top 5 bid and ask levels.
 type Depth struct {
 	Bids [5]DepthLevel
@@ -72,6 +75,8 @@ type Quote struct {
 	BuyQuantity   float64
 	SellQuantity  float64
 	OpenInterest  float64
+	OIDayHigh     float64
+	OIDayLow      float64
 	LastTradeTime time.Time
 	ExchangeTime  time.Time
 	ReceivedAt    time.Time

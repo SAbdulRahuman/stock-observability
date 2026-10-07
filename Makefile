@@ -27,8 +27,11 @@ EXPORTER_VERSION := $(shell cat stock_exporter/VERSION)
 HOME_VERSION     := $(shell cat stock_home/VERSION)
 PROM_VERSION     := $(shell cat prometheus/VERSION)
 AM_VERSION       := $(shell cat alertmanager/VERSION)
+OPENBB_DIR       := OpenBB/OpenBB
+OPENBB_VERSION   := $(shell git -C $(OPENBB_DIR) rev-parse --short HEAD 2>/dev/null)
 GRAFANA_IMAGE    ?= docker.io/grafana/grafana:13.2.3
 NGINX_IMAGE      ?= docker.io/nginxinc/nginx-unprivileged:1.28-alpine
+PYTHON_IMAGE     ?= docker.io/library/python:3.11-slim
 BASE_IMAGES      := gcr.io/distroless/static-debian12:nonroot quay.io/prometheus/busybox-linux-amd64:latest
 
 # Local name:tag of each image; pushed under the same name:tag to $(REGISTRY). Must match the Helm values.
@@ -38,10 +41,13 @@ IMG_prometheus     := prometheus:v$(PROM_VERSION)
 IMG_alertmanager   := alertmanager:v$(AM_VERSION)
 IMG_grafana        := $(notdir $(GRAFANA_IMAGE))
 IMG_nginx          := $(notdir $(NGINX_IMAGE))
+IMG_openbb         := openbb:$(OPENBB_VERSION)
 
 BUILT    := stock-exporter stock-home prometheus alertmanager
 MIRRORED := grafana nginx
-IMAGES   := $(BUILT) $(MIRRORED)
+# Built entirely inside docker (no local build-<name> step).
+DOCKER_ONLY := openbb
+IMAGES   := $(BUILT) $(MIRRORED) $(DOCKER_ONLY)
 
 BUILD_USER := $(USER)@$(shell hostname)
 BUILD_DATE := $(shell date -u +%Y%m%d-%H:%M:%S)
@@ -144,6 +150,17 @@ docker-build-grafana:
 
 docker-build-nginx:
 	skopeo copy --src-tls-verify=$(TLS_VERIFY) docker://$(NGINX_IMAGE) docker-daemon:$(IMG_nginx)
+
+# Context is a clean archive of the tracked platform sources; the submodule's .git is a gitfile.
+docker-build-openbb:
+	@test -n "$(OPENBB_VERSION)" || { echo "$(OPENBB_DIR) is not checked out"; exit 1; }
+	docker image inspect $(PYTHON_IMAGE) >/dev/null 2>&1 || \
+		skopeo copy --src-tls-verify=$(TLS_VERIFY) docker://$(PYTHON_IMAGE) docker-daemon:$(PYTHON_IMAGE)
+	rm -rf .build/openbb && mkdir -p .build/openbb
+	git -C $(OPENBB_DIR) archive --format=tar HEAD openbb_platform | tar -x -C .build/openbb
+	docker build --pull=false -f deploy/openbb/Dockerfile \
+		--build-arg PYTHON_IMAGE=$(PYTHON_IMAGE) --build-arg TLS_VERIFY=$(TLS_VERIFY) \
+		-t $(IMG_openbb) .build/openbb
 
 # --- docker-push ---------------------------------------------------------------
 

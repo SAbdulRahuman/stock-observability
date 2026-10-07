@@ -134,8 +134,9 @@ stock_circuit_upper_limit_price{` + labels + `} 1650
 
 func TestDepthCollector(t *testing.T) {
 	c := mustCollector(t, NewDepthCollector, testDeps(t))
-	if n := testutil.CollectAndCount(adapter{c, Scope{}}); n != 30 {
-		t.Fatalf("got %d series, want 30", n)
+	// Only level 1 of each side is filled; empty levels are skipped.
+	if n := testutil.CollectAndCount(adapter{c, Scope{}}); n != 6 {
+		t.Fatalf("got %d series, want 6", n)
 	}
 	want := `
 # HELP stock_depth_price Order book price at level.
@@ -143,15 +144,64 @@ func TestDepthCollector(t *testing.T) {
 stock_depth_price{exchange="NSE",instrument_type="EQ",level="1",sector="IT",side="ask",symbol="INFY",tier="core"} 1550.05
 stock_depth_price{exchange="NSE",instrument_type="EQ",level="1",sector="IT",side="bid",symbol="INFY",tier="core"} 1549.95
 `
-	// Compare only level 1 by filtering the other levels out of the collected output.
-	got, err := testutil.CollectAndFormat(adapter{c, Scope{}}, expfmt.TypeTextPlain, "stock_depth_price")
+	if err := testutil.CollectAndCompare(adapter{c, Scope{}}, strings.NewReader(want), "stock_depth_price"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOrderbookCollector(t *testing.T) {
+	deps := testDeps(t)
+	c := mustCollector(t, NewOrderbookCollector, deps)
+	want := `
+# HELP stock_orderbook_average_order_quantity Average quantity per order across the top 5 levels of a side.
+# TYPE stock_orderbook_average_order_quantity gauge
+stock_orderbook_average_order_quantity{exchange="NSE",instrument_type="EQ",sector="IT",side="ask",symbol="INFY",tier="core"} 3.5
+stock_orderbook_average_order_quantity{exchange="NSE",instrument_type="EQ",sector="IT",side="bid",symbol="INFY",tier="core"} 5
+# HELP stock_orderbook_imbalance_ratio Top 5 levels (bid - ask) / (bid + ask) quantity, from -1 (all asks) to 1 (all bids).
+# TYPE stock_orderbook_imbalance_ratio gauge
+stock_orderbook_imbalance_ratio{` + labels + `} -0.16666666666666666
+# HELP stock_orderbook_levels Number of non-empty levels (0-5) of a side.
+# TYPE stock_orderbook_levels gauge
+stock_orderbook_levels{exchange="NSE",instrument_type="EQ",sector="IT",side="ask",symbol="INFY",tier="core"} 1
+stock_orderbook_levels{exchange="NSE",instrument_type="EQ",sector="IT",side="bid",symbol="INFY",tier="core"} 1
+# HELP stock_orderbook_microprice Best bid and ask weighted by the opposite side's level 1 quantity.
+# TYPE stock_orderbook_microprice gauge
+stock_orderbook_microprice{` + labels + `} 1549.9916666666668
+# HELP stock_orderbook_mid_price Midpoint of best bid and best ask.
+# TYPE stock_orderbook_mid_price gauge
+stock_orderbook_mid_price{` + labels + `} 1550
+# HELP stock_orderbook_quantity Quantity across the top 5 levels of a side.
+# TYPE stock_orderbook_quantity gauge
+stock_orderbook_quantity{exchange="NSE",instrument_type="EQ",sector="IT",side="ask",symbol="INFY",tier="core"} 7
+stock_orderbook_quantity{exchange="NSE",instrument_type="EQ",sector="IT",side="bid",symbol="INFY",tier="core"} 5
+`
+	if err := testutil.CollectAndCompare(adapter{c, Scope{}}, strings.NewReader(want),
+		"stock_orderbook_average_order_quantity", "stock_orderbook_imbalance_ratio", "stock_orderbook_levels",
+		"stock_orderbook_microprice", "stock_orderbook_mid_price", "stock_orderbook_quantity"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := testutil.CollectAndFormat(adapter{c, Scope{}}, expfmt.TypeTextPlain, "stock_orderbook_spread_price", "stock_orderbook_spread_bps")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(want), "\n") {
-		if !strings.Contains(string(got), line) {
-			t.Errorf("missing %q", line)
-		}
+	if !strings.Contains(string(got), "stock_orderbook_spread_price{"+labels+"} 0.09") ||
+		!strings.Contains(string(got), "stock_orderbook_spread_bps{"+labels+"} 0.64") {
+		t.Errorf("unexpected spread:\n%s", got)
+	}
+	// 6 per side for 2 sides plus 6 top-of-book KPIs.
+	if n := testutil.CollectAndCount(adapter{c, Scope{}}); n != 18 {
+		t.Fatalf("got %d series, want 18", n)
+	}
+
+	// One-sided book (e.g. upper circuit): side aggregates only, no spread-based KPIs.
+	deps.Store.UpdateQuote(3, store.Quote{LastPrice: 10, HasDepth: true, Depth: store.Depth{Bids: [5]store.DepthLevel{{Price: 10, Quantity: 100, Orders: 4}}}})
+	broad, _ := NewScope(store.TierBroad)
+	// Bid: quantity, orders, notional, levels, weighted price, average order; ask: quantity, orders, notional, levels.
+	if n := testutil.CollectAndCount(adapter{c, broad}); n != 10 {
+		t.Fatalf("one-sided book: got %d series, want 10", n)
+	}
+	if n := testutil.CollectAndCount(adapter{c, broad}, "stock_orderbook_spread_price", "stock_orderbook_imbalance_ratio"); n != 0 {
+		t.Fatalf("one-sided book exposes %d spread/imbalance series", n)
 	}
 }
 

@@ -60,12 +60,12 @@ func TestConvertTick(t *testing.T) {
 	now := time.Now()
 	tk := models.Tick{
 		Mode: "full", InstrumentToken: 1, LastPrice: 100, VolumeTraded: 500, AverageTradePrice: 99.5,
-		TotalBuyQuantity: 10, TotalSellQuantity: 20, LastTradedQuantity: 3, OI: 7,
+		TotalBuyQuantity: 10, TotalSellQuantity: 20, LastTradedQuantity: 3, OI: 7, OIDayHigh: 9, OIDayLow: 5,
 		OHLC:  models.OHLC{Open: 98, High: 101, Low: 97, Close: 95},
 		Depth: models.Depth{Buy: [5]models.DepthItem{{Price: 99.95, Quantity: 4, Orders: 1}}},
 	}
 	q := ConvertTick(tk, now)
-	if q.LastPrice != 100 || q.PrevClose != 95 || q.Volume != 500 || q.OpenInterest != 7 || !q.HasDepth || q.Depth.Bids[0].Price != 99.95 || q.ReceivedAt != now {
+	if q.LastPrice != 100 || q.PrevClose != 95 || q.Volume != 500 || q.OpenInterest != 7 || q.OIDayHigh != 9 || q.OIDayLow != 5 || !q.HasDepth || q.Depth.Bids[0].Price != 99.95 || q.ReceivedAt != now {
 		t.Fatalf("unexpected %+v", q)
 	}
 	tk.IsIndex = true

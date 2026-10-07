@@ -1,0 +1,65 @@
+# promtool test rules prometheus/tests/orderbook_test.yml
+rule_files:
+  - ../rules/stock_recording.rules.yml
+  - ../rules/stock_alerts.rules.yml
+
+evaluation_interval: 15s
+
+tests:
+  - name: wide bid-ask spread on the 5 minute average
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x60'
+      - series: 'stock_orderbook_spread_bps{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '2x20 80x40'
+      - series: 'stock_orderbook_spread_bps{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '3x60'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: StockWideSpread
+      - eval_time: 12m
+        alertname: StockWideSpread
+        exp_alerts:
+          - exp_labels: {<<: &infy {job: stock_core, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core}, severity: warning, category: flow}
+            exp_annotations:
+              summary: INFY bid-ask spread averages 80.0 bps
+              description: The 5 minute average bid-ask spread of NSE:INFY exceeds 50 bps; liquidity is thin.
+
+  - name: crossed order book only while the market is open
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '0x8 1x30'
+      - series: 'stock_orderbook_spread_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '-0.5x38'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: StockOrderBookCrossed
+      - eval_time: 4m
+        alertname: StockOrderBookCrossed
+        exp_alerts:
+          - exp_labels: {<<: *infy, severity: warning, category: flow}
+            exp_annotations:
+              summary: INFY order book is crossed by -0.5
+              description: Best bid of NSE:INFY has been above the best ask for 1 minute; the depth feed may be stale or corrupt.
+
+  - name: one-sided top 5 depth keeps its sign
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x40'
+      - series: 'stock_orderbook_imbalance_ratio{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '-0.9x40'
+      - series: 'stock_orderbook_imbalance_ratio{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '0.5x40'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: StockOrderBookImbalance
+      - eval_time: 4m
+        alertname: StockOrderBookImbalance
+        exp_alerts:
+          - exp_labels: {<<: *infy, severity: info, category: flow}
+            exp_annotations:
+              summary: INFY top 5 depth imbalance is -0.90
+              description: Quantity in the top 5 bid versus ask levels of NSE:INFY has been heavily one-sided for 2 minutes (1 = all bids, -1 = all asks).
