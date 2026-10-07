@@ -1,0 +1,54 @@
+# Signals (proposal §A3, Release 1): KPI threshold states, one series per active signal.
+# Signals never notify; they feed dashboards, conditions and (R2) the effectiveness ledger.
+#   stock:signal_active:bool{signal, direction} = 1 while the condition holds during the session
+groups:
+  - name: nse_signals
+    interval: 1m
+    rules:
+      - record: stock:signal_active:bool
+        labels: {signal: rsi_overbought, direction: bearish}
+        expr: stock:rsi_14m:index{instrument_type="EQ"} > bool 70 == 1 and on() stock_market_open == 1
+      - record: stock:signal_active:bool
+        labels: {signal: rsi_oversold, direction: bullish}
+        expr: stock:rsi_14m:index{instrument_type="EQ"} < bool 30 == 1 and on() stock_market_open == 1
+      - record: stock:signal_active:bool
+        labels: {signal: stochastic_overbought, direction: bearish}
+        expr: stock:stochastic_k_14m:percent{instrument_type="EQ"} > bool 80 == 1 and on() stock_market_open == 1
+      - record: stock:signal_active:bool
+        labels: {signal: stochastic_oversold, direction: bullish}
+        expr: stock:stochastic_k_14m:percent{instrument_type="EQ"} < bool 20 == 1 and on() stock_market_open == 1
+      - record: stock:signal_active:bool
+        labels: {signal: bollinger_breakout, direction: bullish}
+        expr: stock:bollinger_percent_b_20m:ratio{instrument_type="EQ"} > bool 1 == 1 and on() stock_market_open == 1
+      - record: stock:signal_active:bool
+        labels: {signal: bollinger_breakout, direction: bearish}
+        expr: stock:bollinger_percent_b_20m:ratio{instrument_type="EQ"} < bool 0 == 1 and on() stock_market_open == 1
+      # Width within 5% of its 2h low and below 0.6%, from 11:15 (2h of bars available).
+      - record: stock:signal_active:bool
+        labels: {signal: bollinger_squeeze, direction: neutral}
+        expr: |
+          (
+              stock:bollinger_width_20m:percent{instrument_type="EQ"} <= 1.05 * min_over_time(stock:bollinger_width_20m:percent{instrument_type="EQ"}[2h])
+            and stock:bollinger_width_20m:percent{instrument_type="EQ"} < 0.6
+          ) * 0 + 1
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close < 15300
+      - record: stock:signal_active:bool
+        labels: {signal: rvol_high, direction: neutral}
+        expr: stock:relative_volume:ratio > bool 3 == 1 and on() stock_market_open == 1
+      - record: stock:signal_active:bool
+        labels: {signal: pivot_above_r1, direction: bullish}
+        expr: |
+          stock_last_price{tier="core", instrument_type="EQ"} > bool ignoring(level) stock:pivot:price{level="R1"} == 1
+          and on() stock_market_open == 1
+      - record: stock:signal_active:bool
+        labels: {signal: pivot_below_s1, direction: bearish}
+        expr: |
+          stock_last_price{tier="core", instrument_type="EQ"} < bool ignoring(level) stock:pivot:price{level="S1"} == 1
+          and on() stock_market_open == 1
+      - record: stock:signal_active:bool
+        labels: {signal: relative_strength_strong, direction: bullish}
+        expr: stock:relative_strength_nifty:percent > bool 3 == 1 and on() stock_market_open == 1
+      - record: stock:signal_active:bool
+        labels: {signal: relative_strength_weak, direction: bearish}
+        expr: stock:relative_strength_nifty:percent < bool -3 == 1 and on() stock_market_open == 1

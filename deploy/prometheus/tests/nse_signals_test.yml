@@ -1,0 +1,71 @@
+# promtool test rules prometheus/tests/nse_signals_test.yml
+rule_files:
+  - ../rules/nse_signals.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: threshold signals while the market is open
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x10 0x5'
+      - series: 'stock:rsi_14m:index{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '75x15'
+      - series: 'stock:rsi_14m:index{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '80x15'
+      - series: 'stock:stochastic_k_14m:percent{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '15x15'
+      - series: 'stock:bollinger_percent_b_20m:ratio{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1.2x15'
+      - series: 'stock:relative_volume:ratio{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '3.5x15'
+      - series: 'stock:relative_strength_nifty:percent{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '-4x15'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1520x15'
+      - series: 'stock:pivot:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",level="R1"}'
+        values: '1510x15'
+      - series: 'stock:pivot:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",level="S1"}'
+        values: '1490x15'
+    promql_expr_test:
+      - expr: stock:signal_active:bool
+        eval_time: 5m
+        exp_samples:
+          - labels: 'stock:signal_active:bool{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",signal="rsi_overbought",direction="bearish"}'
+            value: 1
+          - labels: 'stock:signal_active:bool{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",signal="stochastic_oversold",direction="bullish"}'
+            value: 1
+          - labels: 'stock:signal_active:bool{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",signal="bollinger_breakout",direction="bullish"}'
+            value: 1
+          - labels: 'stock:signal_active:bool{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",signal="rvol_high",direction="neutral"}'
+            value: 1
+          - labels: 'stock:signal_active:bool{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",signal="pivot_above_r1",direction="bullish"}'
+            value: 1
+          - labels: 'stock:signal_active:bool{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",signal="relative_strength_weak",direction="bearish"}'
+            value: 1
+      - expr: stock:signal_active:bool
+        eval_time: 12m
+        exp_samples: []
+
+  - name: Bollinger squeeze after 11:15 only
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x200'
+      - series: 'stock_market_seconds_to_close{job="stock_core",instance="se"}'
+        values: '22500-60x200'
+      - series: 'stock:bollinger_width_20m:percent{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1.2-0.01x80 0.4x120'
+      - series: 'stock:bollinger_width_20m:percent{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '0.3x80 0.5x120'
+    promql_expr_test:
+      # 11:05: squeezed, but before 11:15.
+      - expr: stock:signal_active:bool{signal="bollinger_squeeze"}
+        eval_time: 110m
+        exp_samples: []
+      - expr: stock:signal_active:bool{signal="bollinger_squeeze"}
+        eval_time: 125m
+        exp_samples:
+          - labels: 'stock:signal_active:bool{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",signal="bollinger_squeeze",direction="neutral"}'
+            value: 1

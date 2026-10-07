@@ -1,0 +1,125 @@
+# promtool test rules prometheus/tests/nse_kpi_quality_test.yml
+rule_files:
+  - ../rules/nse_kpi_quality.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: coverage counts only instruments with a fresh tick
+    interval: 1m
+    input_series:
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="A",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x10'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="B",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '120x10'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '1x10'
+      - series: 'stock_tick_age_seconds{job="stock_broad",instance="se",exchange="NSE",symbol="Z",sector="unknown",instrument_type="EQ",tier="broad"}'
+        values: '2x10'
+      - series: 'stock:rsi_14m:index{job="stock_core",instance="se",exchange="NSE",symbol="A",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '50x10'
+      - series: 'stock:rsi_14m:index{job="stock_core",instance="se",exchange="NSE",symbol="B",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '50x10'
+      - series: 'stock:rsi_14m:index{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '50x10'
+      - series: 'stock:vwap_deviation:percent{job="stock_core",instance="se",exchange="NSE",symbol="A",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '0.5x10'
+      - series: 'stock:vwap_deviation:percent{job="stock_core",instance="se",exchange="NSE",symbol="B",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '0.5x10'
+      - series: 'stock:turnover:inr{job="stock_core",instance="se",exchange="NSE",symbol="A",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1e6x10'
+      - series: 'stock:turnover:inr{job="stock_core",instance="se",exchange="NSE",symbol="B",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1e6x10'
+      - series: 'stock:turnover:inr{job="stock_broad",instance="se",exchange="NSE",symbol="Z",sector="unknown",instrument_type="EQ",tier="broad"}'
+        values: '1e5x10'
+      - series: 'market:trin:ratio'
+        values: '1.2x10'
+      - series: 'sector:relative_strength:percent{sector="IT"}'
+        values: '0.5x10'
+    promql_expr_test:
+      - expr: kpi:fresh_core_instruments:ratio
+        eval_time: 5m
+        exp_samples:
+          - labels: 'kpi:fresh_core_instruments:ratio'
+            value: 0.6666666666666666
+      - expr: kpi:coverage:ratio{kpi=~"stock:rsi_14m:index|stock:vwap_deviation:percent|stock:turnover:inr|stock:macd_12_26m:price|market:trin:ratio|market:dispersion:percent|sector:relative_strength:percent"}
+        eval_time: 5m
+        exp_samples:
+          - labels: 'kpi:coverage:ratio{kpi="stock:rsi_14m:index"}'
+            value: 0.6666666666666666
+          - labels: 'kpi:coverage:ratio{kpi="stock:vwap_deviation:percent"}'
+            value: 0.5
+          - labels: 'kpi:coverage:ratio{kpi="stock:turnover:inr"}'
+            value: 0.6666666666666666
+          - labels: 'kpi:coverage:ratio{kpi="stock:macd_12_26m:price"}'
+            value: 0
+          - labels: 'kpi:coverage:ratio{kpi="market:trin:ratio"}'
+            value: 0.6666666666666666
+          - labels: 'kpi:coverage:ratio{kpi="market:dispersion:percent"}'
+            value: 0
+          - labels: 'kpi:coverage:ratio{kpi="sector:relative_strength:percent"}'
+            value: 0.6666666666666666
+      # Multi-session KPIs report nothing before their warm-up history exists.
+      - expr: kpi:coverage:ratio{kpi=~"stock:pivot:price|stock:atr_14d:points|stock:range_expansion:ratio|stock:relative_volume:ratio"}
+        eval_time: 5m
+        exp_samples: []
+
+  - name: multi-session coverage once history exists
+    # Hourly samples stand in for daily snapshots; the rules only count them.
+    interval: 1h
+    input_series:
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="A",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x12'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="B",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x12'
+      - series: 'stock:session_true_range:points{job="stock_core",instance="se",exchange="NSE",symbol="A",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '2x12'
+      - series: 'stock:session_true_range:points{job="stock_core",instance="se",exchange="NSE",symbol="B",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '_x6 2x6'
+      - series: 'stock:atr_14d:points{job="stock_core",instance="se",exchange="NSE",symbol="A",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '_x9 2x3'
+    promql_expr_test:
+      # Only A has 10 snapshots; B is still warming up.
+      - expr: kpi:coverage:ratio{kpi="stock:atr_14d:points"}
+        eval_time: 10h
+        exp_samples:
+          - labels: 'kpi:coverage:ratio{kpi="stock:atr_14d:points"}'
+            value: 1
+
+  - name: degraded coverage alerts after 5 minutes, from 09:45
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x20'
+      - series: 'stock_market_seconds_to_close{job="stock_core",instance="se"}'
+        values: '20000-60x20'
+      - series: 'kpi:coverage:ratio{kpi="stock:rsi_14m:index"}'
+        values: '0.5x20'
+      - series: 'kpi:coverage:ratio{kpi="stock:turnover:inr"}'
+        values: '0.95x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: KPIDataQualityDegraded
+      - eval_time: 6m
+        alertname: KPIDataQualityDegraded
+        exp_alerts:
+          - exp_labels: {kpi: "stock:rsi_14m:index", severity: warning, category: quality, layer: incident, incident: kpi_data_quality}
+            exp_annotations:
+              summary: KPI stock:rsi_14m:index coverage is 50%
+              description: Fewer than 90% of the instruments in scope have a fresh value for stock:rsi_14m:index for 5 minutes; dashboards and alerts built on it are incomplete.
+
+  - name: no data-quality alert during warm-up or when closed
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x20 0x20'
+      - series: 'stock_market_seconds_to_close{job="stock_core",instance="se"}'
+        values: '22500-60x20 0x20'
+      - series: 'kpi:coverage:ratio{kpi="stock:rsi_14m:index"}'
+        values: '0.5x40'
+    alert_rule_test:
+      # 09:15 + 6m: still inside the 30-minute warm-up.
+      - eval_time: 6m
+        alertname: KPIDataQualityDegraded
+      - eval_time: 35m
+        alertname: KPIDataQualityDegraded

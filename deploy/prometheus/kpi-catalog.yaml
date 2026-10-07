@@ -51,6 +51,37 @@ kpis:
     scope: core
     unit: shares
 
+  # --- Signals and data quality -------------------------------------------------------------
+  - name: stock:signal_active:bool
+    kind: signal
+    release: R1
+    formula: "1 while a KPI threshold holds during the session; labels signal, direction"
+    inputs: [stock:rsi_14m:index, stock:stochastic_k_14m:percent, stock:bollinger_percent_b_20m:ratio, stock:bollinger_width_20m:percent, stock:relative_volume:ratio, stock:pivot:price, stock:relative_strength_nifty:percent]
+    rule_file: nse_signals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: bool
+
+  - name: kpi:fresh_core_instruments:ratio
+    kind: quality
+    release: R1
+    formula: "count(tick age < 60s) / count(core instruments)"
+    inputs: [stock_tick_age_seconds]
+    rule_file: nse_kpi_quality.rules.yml
+    frequency: 1m
+    scope: core
+    unit: ratio
+
+  - name: kpi:coverage:ratio
+    kind: quality
+    release: R1
+    formula: "instruments with a fresh KPI value / instruments in scope, label kpi"
+    inputs: [stock_tick_age_seconds]
+    rule_file: nse_kpi_quality.rules.yml
+    frequency: 1m
+    scope: market
+    unit: ratio
+
   # --- Price -------------------------------------------------------------------------------
   - name: stock:return_1m:percent
     kind: kpi

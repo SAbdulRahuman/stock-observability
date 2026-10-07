@@ -1,0 +1,189 @@
+# KPI data quality (proposal §A4, Release 1).
+#   kpi:coverage:ratio{kpi} = instruments with a value and a tick in the last 60s / instruments in scope
+# Exporter values persist when ticks stop, so the freshness join is what makes a stale feed visible.
+# Multi-session KPIs use instruments with enough snapshot history as their denominator, so they
+# report nothing (and cannot alert) until warm-up. One rule per catalogue KPI with coverage: true.
+groups:
+  - name: nse_kpi_quality
+    interval: 1m
+    rules:
+      - record: kpi:fresh_core_instruments:ratio
+        expr: |
+          (count(stock_tick_age_seconds{tier="core"} < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core"})
+
+      # --- core tier, every instrument type ------------------------------------------------
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:return_1m:percent"}
+        expr: |
+          (count(stock:return_1m:percent{tier="core"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:return_5m:percent"}
+        expr: |
+          (count(stock:return_5m:percent{tier="core"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:return_15m:percent"}
+        expr: |
+          (count(stock:return_15m:percent{tier="core"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:gap_open:percent"}
+        expr: |
+          (count(stock:gap_open:percent{tier="core"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:intraday_return:percent"}
+        expr: |
+          (count(stock:intraday_return:percent and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:rsi_14m:index"}
+        expr: |
+          (count(stock:rsi_14m:index and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:stochastic_k_14m:percent"}
+        expr: |
+          (count(stock:stochastic_k_14m:percent and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:macd_12_26m:price"}
+        expr: |
+          (count(stock:macd_12_26m:price and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:realized_vol_annualised:percent"}
+        expr: |
+          (count(stock:realized_vol_annualised:percent and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:bollinger_width_20m:percent"}
+        expr: |
+          (count(stock:bollinger_width_20m:percent and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:bollinger_percent_b_20m:ratio"}
+        expr: |
+          (count(stock:bollinger_percent_b_20m:ratio and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core"})
+
+      # --- core tier equities -----------------------------------------------------------
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:vwap_deviation:percent"}
+        expr: |
+          (count(stock:vwap_deviation:percent{tier="core"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock_orderbook_spread_bps"}
+        expr: |
+          (count(stock_orderbook_spread_bps{tier="core"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock_orderbook_imbalance_ratio"}
+        expr: |
+          (count(stock_orderbook_imbalance_ratio{tier="core"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:relative_strength_nifty:percent"}
+        expr: |
+          (count(stock:relative_strength_nifty:percent and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:orderbook_depth:inr"}
+        expr: |
+          (count(stock:orderbook_depth:inr and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:depth_vs_1h:ratio"}
+        expr: |
+          (count(stock:depth_vs_1h:ratio and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:microprice_deviation:bps"}
+        expr: |
+          (count(stock:microprice_deviation:bps and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:volume_delta_1h:ratio"}
+        expr: |
+          (count(stock:volume_delta_1h:ratio and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"})
+
+      # --- equities in both tiers ---------------------------------------------------------
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:turnover:inr"}
+        expr: |
+          (count(stock:turnover:inr and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{instrument_type="EQ"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:upper_circuit_distance:percent"}
+        expr: |
+          (count(stock:upper_circuit_distance:percent{instrument_type="EQ"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{instrument_type="EQ"})
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:lower_circuit_distance:percent"}
+        expr: |
+          (count(stock:lower_circuit_distance:percent{instrument_type="EQ"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(stock_tick_age_seconds{instrument_type="EQ"})
+
+      # --- multi-session KPIs: denominator = instruments past their warm-up ----------------
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:pivot:price"}
+        expr: |
+          (count(stock:pivot:price{level="P"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(last_over_time(stock:session_high:price[7d]))
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:atr_14d:points"}
+        expr: |
+          (count(stock:atr_14d:points and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(count_over_time(stock:session_true_range:points[20d]) >= 10)
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:range_expansion:ratio"}
+        expr: |
+          (count(stock:range_expansion:ratio and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(count_over_time(stock:session_true_range:points[20d]) >= 10)
+      - record: kpi:coverage:ratio
+        labels: {kpi: "stock:relative_volume:ratio"}
+        expr: |
+          (count(stock:relative_volume:ratio and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
+          / count(count_over_time(stock:session_volume:shares[14d]) >= 5)
+
+      # --- market and sector KPIs: present x share of fresh core instruments ---------------
+      - record: kpi:coverage:ratio
+        labels: {kpi: "market:advance_decline:ratio"}
+        expr: (count(market:advance_decline:ratio) or on() vector(0)) * on() kpi:fresh_core_instruments:ratio
+      - record: kpi:coverage:ratio
+        labels: {kpi: "market:above_vwap:ratio"}
+        expr: (count(market:above_vwap:ratio) or on() vector(0)) * on() kpi:fresh_core_instruments:ratio
+      - record: kpi:coverage:ratio
+        labels: {kpi: "market:trin:ratio"}
+        expr: (count(market:trin:ratio) or on() vector(0)) * on() kpi:fresh_core_instruments:ratio
+      - record: kpi:coverage:ratio
+        labels: {kpi: "market:dispersion:percent"}
+        expr: (count(market:dispersion:percent) or on() vector(0)) * on() kpi:fresh_core_instruments:ratio
+      - record: kpi:coverage:ratio
+        labels: {kpi: "market:circuit_hits:count"}
+        expr: (count(market:circuit_hits:count{band="upper"}) or on() vector(0)) * on() kpi:fresh_core_instruments:ratio
+      - record: kpi:coverage:ratio
+        labels: {kpi: "sector:relative_strength:percent"}
+        expr: |
+          (count(sector:relative_strength:percent) or on() vector(0))
+          / count(count by (sector) (stock_tick_age_seconds{tier="core", instrument_type="EQ", sector!~"unknown|Index"}))
+          * on() kpi:fresh_core_instruments:ratio
+
+  - name: nse_kpi_quality_alerts
+    interval: 1m
+    rules:
+      # From 09:45 (30 minutes of warm-up after the open).
+      - alert: KPIDataQualityDegraded
+        expr: |
+          kpi:coverage:ratio < 0.9
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close < 20700
+        for: 5m
+        labels: {severity: warning, category: quality, layer: incident, incident: kpi_data_quality}
+        annotations:
+          summary: "KPI {{ $labels.kpi }} coverage is {{ $value | humanizePercentage }}"
+          description: "Fewer than 90% of the instruments in scope have a fresh value for {{ $labels.kpi }} for 5 minutes; dashboards and alerts built on it are incomplete."
