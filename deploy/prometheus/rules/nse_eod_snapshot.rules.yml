@@ -1,0 +1,22 @@
+# End-of-day (EOD) session snapshots (proposal §6.0, Release 1).
+# The 30m group evaluates exactly once inside the 30-minute post_close window (15:30-16:00 IST),
+# giving one sample per trading day. These series are sparse: read them only through
+# *_over_time functions, e.g. last_over_time(...[7d]) for the previous session.
+groups:
+  - name: nse_eod_snapshot
+    interval: 30m
+    rules:
+      - record: stock:session_high:price
+        expr: stock_high_price{tier="core"} and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:session_low:price
+        expr: stock_low_price{tier="core"} and on() stock_market_phase{phase="post_close"} == 1
+      # TR = max(H, PC) - min(L, PC)
+      - record: stock:session_true_range:points
+        expr: |
+          (
+              ((stock_high_price{tier="core"} > stock_previous_close_price{tier="core"}) or stock_previous_close_price{tier="core"})
+            - ((stock_low_price{tier="core"} < stock_previous_close_price{tier="core"}) or stock_previous_close_price{tier="core"})
+          )
+          and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:session_volume:shares
+        expr: stock_day_volume_shares{tier="core", instrument_type="EQ"} and on() stock_market_phase{phase="post_close"} == 1

@@ -10,6 +10,47 @@
 # warmup_sessions: completed sessions of EOD snapshots needed before the KPI has a value
 # coverage: tracked by kpi:coverage:ratio and KPIDataQualityDegraded
 kpis:
+  # --- EOD session snapshots (nse_eod_snapshot) ----------------------------------------------
+  - name: stock:session_high:price
+    kind: snapshot
+    release: R1
+    formula: "H at post_close (one sample per trading day)"
+    inputs: [stock_high_price, stock_market_phase]
+    rule_file: nse_eod_snapshot.rules.yml
+    frequency: 30m
+    scope: core
+    unit: price
+
+  - name: stock:session_low:price
+    kind: snapshot
+    release: R1
+    formula: "L at post_close (one sample per trading day)"
+    inputs: [stock_low_price, stock_market_phase]
+    rule_file: nse_eod_snapshot.rules.yml
+    frequency: 30m
+    scope: core
+    unit: price
+
+  - name: stock:session_true_range:points
+    kind: snapshot
+    release: R1
+    formula: "TR = max(H, PC) - min(L, PC) at post_close"
+    inputs: [stock_high_price, stock_low_price, stock_previous_close_price, stock_market_phase]
+    rule_file: nse_eod_snapshot.rules.yml
+    frequency: 30m
+    scope: core
+    unit: points
+
+  - name: stock:session_volume:shares
+    kind: snapshot
+    release: R1
+    formula: "V at post_close, EQ only"
+    inputs: [stock_day_volume_shares, stock_market_phase]
+    rule_file: nse_eod_snapshot.rules.yml
+    frequency: 30m
+    scope: core
+    unit: shares
+
   # --- Price -------------------------------------------------------------------------------
   - name: stock:return_1m:percent
     kind: kpi

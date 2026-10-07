@@ -1,0 +1,95 @@
+# promtool test rules prometheus/tests/nse_eod_snapshot_test.yml
+# One "day" = 48 samples at 30m; slot 31 (15:30) is post_close.
+rule_files:
+  - ../rules/nse_eod_snapshot.rules.yml
+
+evaluation_interval: 30m
+
+tests:
+  - name: one snapshot per session, recorded only in post_close
+    interval: 30m
+    input_series:
+      - series: 'stock_market_phase{job="stock_core",instance="se",phase="post_close"}'
+        values: '0x30 1 0x15  0x30 1 0x15  0x30 1 0x15'
+      - series: 'stock_high_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '105x47 110x47 108x47'
+      - series: 'stock_low_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '95x47 97x47 99x47'
+      - series: 'stock_previous_close_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100x47 112x47 96x47'
+      - series: 'stock_day_volume_shares{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1000x47 2000x47 3000x47'
+      - series: 'stock_high_price{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '25100x143'
+      - series: 'stock_high_price{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
+        values: '50x143'
+    promql_expr_test:
+      - expr: stock:session_high:price
+        eval_time: 15h
+        exp_samples: []
+      - expr: stock:session_high:price
+        eval_time: 15h30m
+        exp_samples:
+          - labels: 'stock:session_high:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 105
+          - labels: 'stock:session_high:price{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+            value: 25100
+      - expr: stock:session_low:price
+        eval_time: 15h30m
+        exp_samples:
+          - labels: 'stock:session_low:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 95
+      # Plain day: H - L.
+      - expr: stock:session_true_range:points
+        eval_time: 15h30m
+        exp_samples:
+          - labels: 'stock:session_true_range:points{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 10
+      - expr: stock:session_volume:shares
+        eval_time: 15h30m
+        exp_samples:
+          - labels: 'stock:session_volume:shares{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1000
+      - expr: stock:session_volume:shares
+        eval_time: 16h
+        exp_samples: []
+      # Gap down: PC 112 above H 110 -> PC - L.
+      - expr: stock:session_true_range:points
+        eval_time: 39h30m
+        exp_samples:
+          - labels: 'stock:session_true_range:points{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 15
+      # Gap up: PC 96 below L 99 -> H - PC.
+      - expr: stock:session_true_range:points
+        eval_time: 63h30m
+        exp_samples:
+          - labels: 'stock:session_true_range:points{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 12
+      - expr: count_over_time(stock:session_high:price{symbol="INFY"}[3d])
+        eval_time: 71h30m
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 3
+      # Previous-session lookup used by pivots.
+      - expr: last_over_time(stock:session_high:price{symbol="INFY"}[7d])
+        eval_time: 50h
+        exp_samples:
+          - labels: 'stock:session_high:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 110
+
+  - name: holiday (no post_close phase) records nothing
+    interval: 30m
+    input_series:
+      - series: 'stock_market_phase{job="stock_core",instance="se",phase="post_close"}'
+        values: '0x30 1 0x15  0x47  0x30 1 0x15'
+      - series: 'stock_high_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '105x143'
+    promql_expr_test:
+      - expr: stock:session_high:price
+        eval_time: 39h30m
+        exp_samples: []
+      - expr: count_over_time(stock:session_high:price[3d])
+        eval_time: 71h30m
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 2
