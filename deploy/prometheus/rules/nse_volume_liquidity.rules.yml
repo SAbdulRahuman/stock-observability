@@ -1,0 +1,31 @@
+# Volume and liquidity (proposal §6.5, Release 1).
+#   Turnover (INR)  = V * VWAP
+#   RVOL            = V / (avg session volume over 14 days * elapsed / 22500), after 09:45, >= 5 sessions
+#   Depth (INR)     = sum of price * qty over the top-5 bid and ask levels
+#   Depth vs 1h     = depth / avg_over_time(depth[1h])
+groups:
+  - name: nse_volume_liquidity
+    interval: 15s
+    rules:
+      - record: stock:turnover:inr
+        expr: stock_day_volume_shares{instrument_type="EQ"} * stock_average_traded_price{instrument_type="EQ"}
+
+      # Assumes linear intraday volume (NSE volume is U-shaped), hence the 09:45 gate.
+      - record: stock:relative_volume:ratio
+        expr: |
+          (
+            stock_day_volume_shares{tier="core", instrument_type="EQ"}
+            / (
+                avg_over_time(stock:session_volume:shares[14d])
+                * on() group_left() ((22500 - stock_market_seconds_to_close) / 22500)
+                > 0
+              )
+          )
+          and count_over_time(stock:session_volume:shares[14d]) >= 5
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close < 20700
+
+      - record: stock:orderbook_depth:inr
+        expr: sum without (side) (stock_orderbook_notional{tier="core"})
+      - record: stock:depth_vs_1h:ratio
+        expr: stock:orderbook_depth:inr / (avg_over_time(stock:orderbook_depth:inr[1h]) > 0)

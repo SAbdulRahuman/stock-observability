@@ -1,0 +1,68 @@
+# promtool test rules prometheus/tests/nse_volume_liquidity_test.yml
+# RVOL values are checked in reference_rvol_test.yml.
+rule_files:
+  - ../rules/nse_volume_liquidity.rules.yml
+
+evaluation_interval: 15s
+
+tests:
+  - name: turnover for equities in both tiers, not indices
+    interval: 1m
+    input_series:
+      - series: 'stock_day_volume_shares{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1000x5'
+      - series: 'stock_average_traded_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1500.5x5'
+      - series: 'stock_day_volume_shares{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
+        values: '200x5'
+      - series: 'stock_average_traded_price{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
+        values: '50x5'
+    promql_expr_test:
+      - expr: stock:turnover:inr
+        eval_time: 2m
+        exp_samples:
+          - labels: 'stock:turnover:inr{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1500500
+          - labels: 'stock:turnover:inr{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
+            value: 10000
+
+  - name: depth notional and depth drain versus its 1h average
+    interval: 1m
+    input_series:
+      - series: 'stock_orderbook_notional{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",side="bid"}'
+        values: '600000x60 100000x10'
+      - series: 'stock_orderbook_notional{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",side="ask"}'
+        values: '400000x60 50000x10'
+    promql_expr_test:
+      - expr: stock:orderbook_depth:inr
+        eval_time: 30m
+        exp_samples:
+          - labels: 'stock:orderbook_depth:inr{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1000000
+      - expr: stock:depth_vs_1h:ratio
+        eval_time: 30m
+        exp_samples:
+          - labels: 'stock:depth_vs_1h:ratio{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1
+      # From 61m depth is 150k; the [1h] window at 70m holds 203 samples at 1M and 37 at 150k.
+      - expr: round(stock:depth_vs_1h:ratio, 0.0001)
+        eval_time: 70m
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 0.1726
+
+  - name: no relative volume before 5 sessions of history
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x5'
+      - series: 'stock_market_seconds_to_close{job="stock_core",instance="se"}'
+        values: '10000x5'
+      - series: 'stock:session_volume:shares{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1000 1000 1000 1000'
+      - series: 'stock_day_volume_shares{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '500x5'
+    promql_expr_test:
+      - expr: stock:relative_volume:ratio
+        eval_time: 4m
+        exp_samples: []

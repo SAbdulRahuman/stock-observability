@@ -383,6 +383,40 @@ def family_atr():
     ], SLOT
 
 
+# --- nse_volume_liquidity.rules.yml ----------------------------------------------------------
+
+
+def family_rvol():
+    infy = instrument("INFY")
+    cal = Calendar(20, holidays=[5, 6, 12, 13])
+    rnd = random.Random(9)
+    finals = [rnd.randint(500_000, 2_000_000) for _ in range(cal.days)]
+
+    def day_volume(i):
+        d, s = divmod(i, SLOTS_PER_DAY)
+        if not cal.trading(d):
+            return finals[d - 1] if d else 0
+        return round(finals[d] * min(1.0, max(0.0, (s - PRE_OPEN_SLOT) / (POST_CLOSE_SLOT - PRE_OPEN_SLOT))))
+
+    vol = Series("stock_day_volume_shares", infy, SLOT, [day_volume(i) for i in range(cal.n)], "%d")
+    stc = cal.series()[4]
+    checks = []
+    for d in range(cal.days):
+        for slot in (FIRST_OPEN_SLOT, FIRST_OPEN_SLOT + 1, LAST_OPEN_SLOT):
+            t = cal.t(d, slot)
+            sessions = [
+                finals[p] for p in range(d) if cal.trading(p) and t - 14 * 86400 < cal.t(p, POST_CLOSE_SLOT) <= t
+            ]
+            elapsed = (22500 - stc.at(t)) / 22500
+            if not cal.trading(d) or len(sessions) < 5 or stc.at(t) >= 20700:
+                checks.append(Absent("stock:relative_volume:ratio", infy, t))
+                continue
+            checks.append(Check("stock:relative_volume:ratio", infy, t, vol.at(t) / (mean(sessions) * elapsed)))
+    return ["nse_eod_snapshot.rules.yml", "nse_volume_liquidity.rules.yml"], [
+        test_case("relative volume vs the 14-day session average, after 09:45 only", SLOT, cal.series() + [vol], checks)
+    ], SLOT
+
+
 FAMILIES = {
     "base": family_base,
     "price_levels": family_price_levels,
@@ -390,6 +424,7 @@ FAMILIES = {
     "momentum": family_momentum,
     "volatility": family_volatility,
     "atr": family_atr,
+    "rvol": family_rvol,
 }
 
 

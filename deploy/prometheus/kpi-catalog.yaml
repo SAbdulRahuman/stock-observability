@@ -382,6 +382,85 @@ kpis:
     coverage: true
     dashboard_default: true
 
+  # --- Volume / liquidity -----------------------------------------------------------------
+  - name: stock:turnover:inr
+    kind: kpi
+    family: market
+    level: stock_intelligence
+    capability: volume
+    release: R1
+    formula: "V * VWAP"
+    inputs: [stock_day_volume_shares, stock_average_traded_price]
+    rule_file: nse_volume_liquidity.rules.yml
+    frequency: 15s
+    scope: all_eq
+    unit: inr
+    warmup: 0s
+    quality: exact
+    method: day volume times exchange VWAP
+    alertable: false
+    coverage: true
+    dashboard_default: true
+
+  - name: stock:relative_volume:ratio
+    kind: kpi
+    family: market
+    level: stock_intelligence
+    capability: volume
+    release: R1
+    formula: "V / (avg session volume over 14 days * elapsed / 22500), after 09:45"
+    inputs: [stock_day_volume_shares, stock:session_volume:shares, stock_market_seconds_to_close]
+    rule_file: nse_volume_liquidity.rules.yml
+    frequency: 15s
+    scope: core
+    unit: ratio
+    warmup: 30m
+    warmup_sessions: 5
+    quality: heuristic
+    method: time-adjusted relative volume assuming linear intraday volume
+    limitation: "NSE intraday volume is U-shaped; gated to after 09:45"
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
+  - name: stock:orderbook_depth:inr
+    kind: kpi
+    family: microstructure
+    level: stock_intelligence
+    capability: liquidity
+    release: R1
+    formula: "sum(price * qty) over top-5 bid and ask levels"
+    inputs: [stock_orderbook_notional]
+    rule_file: nse_volume_liquidity.rules.yml
+    frequency: 15s
+    scope: core
+    unit: inr
+    warmup: 0s
+    quality: exact
+    method: top-5 depth notional, both sides
+    alertable: false
+    coverage: true
+    dashboard_default: true
+
+  - name: stock:depth_vs_1h:ratio
+    kind: kpi
+    family: microstructure
+    level: stock_intelligence
+    capability: liquidity
+    release: R1
+    formula: "depth / avg_over_time(depth[1h])"
+    inputs: [stock:orderbook_depth:inr]
+    rule_file: nse_volume_liquidity.rules.yml
+    frequency: 15s
+    scope: core
+    unit: ratio
+    warmup: 1h
+    quality: exact
+    method: depth notional relative to its trailing 1h mean
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
   # --- Liquidity / order flow (exporter-native) ---------------------------------------------
   - name: stock_orderbook_spread_bps
     kind: kpi
