@@ -14,6 +14,7 @@ groups:
     interval: 15s
     rules:
       # Least-squares projection of the last 10 minutes, 15 minutes ahead; all EQ tiers.
+      # The offset 9m guard requires a (nearly) full window, e.g. after a Prometheus restart.
       - alert: StockProjectedCircuitHit
         expr: |
           (
@@ -23,6 +24,7 @@ groups:
           )
           unless ignoring(band) stock_last_price >= stock_circuit_upper_limit_price
           unless ignoring(band) stock_last_price <= stock_circuit_lower_limit_price
+          and ignoring(band) stock_last_price offset 9m
           and on() stock_market_open == 1
         for: 1m
         labels: {severity: warning, category: circuit, layer: condition, condition: projected_circuit_hit}

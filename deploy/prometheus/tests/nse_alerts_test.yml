@@ -244,6 +244,9 @@ tests:
       - series: 'stock_circuit_lower_limit_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '90x30'
     alert_rule_test:
+      # Projection already reaches the band, but there is no 9-minute history yet.
+      - eval_time: 8m
+        alertname: StockProjectedCircuitHit
       - eval_time: 10m
         alertname: StockProjectedCircuitHit
         exp_alerts:

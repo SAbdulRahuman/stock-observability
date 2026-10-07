@@ -60,8 +60,53 @@ check "sample_limit exceeded"               "$(q 'sum(prometheus_target_scrapes_
 check "recorded advance/decline ratio"      "$(q 'market:advance_decline:ratio')" "v is not None and v>0"
 check "firing alerts in Prometheus"         "$(q 'count(ALERTS{alertstate="firing"})')" "v is not None and v>=1"
 
+# NSE Release 1 KPIs (EOD-based KPIs stay empty: sim mode never reaches post_close).
+kpis=$(grep -c '^stock_kpi_info' stock_exporter/textfile/kpi_info.prom)
+check "stock_kpi_info series"               "$(q 'count(stock_kpi_info)')" "v==$kpis"
+check "RSI(14) core instruments"            "$(q 'count(stock:rsi_14m:index)')" "v is not None and v>150"
+check "turnover equities"                   "$(q 'count(stock:turnover:inr)')" "v is not None and v>1000"
+check "TRIN"                                "$(q 'market:trin:ratio')" "v is not None and v>0"
+check "sector relative strength sectors"    "$(q 'count(sector:relative_strength:percent)')" "v is not None and v>=5"
+check "KPI coverage series"                 "$(q 'count(kpi:coverage:ratio)')" "v is not None and v>=25"
+check "min intraday KPI coverage"           "$(q 'min(kpi:coverage:ratio{kpi=~"stock:(return_1m|rsi_14m|turnover|orderbook_depth|microprice_deviation).*"})')" "v is not None and v>=0.9"
+nse_records=$(sed -n 's/^ *- record: \(.*\)$/\1/p' prometheus/rules/nse_*.rules.yml | sort -u | paste -sd'|')
+check "R1 recorded series (cap 12000)"      "$(q "count({__name__=~\"$nse_records\"})")" "v is not None and v<12000"
+check "R1 rule group max duration (s)"      "$(q 'max(prometheus_rule_group_last_duration_seconds{rule_group=~".*nse_.*"})')" "v is not None and v<1"
+
+# Every dashboard query must execute (empty results are fine).
+dash_errors=$(python3 - "$PROM_PORT" <<'EOF'
+import json, sys, urllib.parse, urllib.request
+port = sys.argv[1]
+d = json.load(open("grafana/dashboards/nse-r1.json"))
+exprs = [t["expr"] for p in d["panels"] for t in p.get("targets", [])] + [a["expr"] for a in d["annotations"]["list"]]
+bad = 0
+for e in exprs:
+    e = e.replace("$symbol", "RELIANCE").replace("$sector", ".*")
+    url = "http://127.0.0.1:%s/api/v1/query?%s" % (port, urllib.parse.urlencode({"query": e}))
+    try:
+        urllib.request.urlopen(url, timeout=10).read()
+    except Exception as err:
+        bad += 1
+        print("query failed: %s: %s" % (e, err), file=sys.stderr)
+print(bad)
+EOF
+)
+check "dashboard query errors"              "$dash_errors" "v==0"
+
+echo ">> slowest rule groups (s):"
+curl -fsS --get "http://127.0.0.1:$PROM_PORT/api/v1/query" \
+  --data-urlencode 'query=topk(6, max_over_time(prometheus_rule_group_last_duration_seconds[2m]))' \
+  | python3 -c 'import json,sys; [print("  %.3f %s" % (float(r["value"][1]), r["metric"]["rule_group"].split(";")[-1])) for r in json.load(sys.stdin)["data"]["result"]]'
+echo ">> slowest rules, last evaluation (s):"
+curl -fsS "http://127.0.0.1:$PROM_PORT/api/v1/rules" | python3 -c '
+import json, sys
+rules = [(r["evaluationTime"], g["name"], r["name"], r.get("labels", {}).get("kpi", "")) for g in json.load(sys.stdin)["data"]["groups"] for r in g["rules"]]
+for t, g, n, k in sorted(rules, reverse=True)[:8]:
+    print("  %.3f %s %s %s" % (t, g, n, k))'
+
 echo ">> alerts received by Alertmanager:"
-bin/amtool --alertmanager.url="http://127.0.0.1:$AM_PORT" alert query -o simple | head -15 || fail=1
+alerts=$(bin/amtool --alertmanager.url="http://127.0.0.1:$AM_PORT" alert query -o simple) || fail=1
+head -15 <<<"$alerts"
 n=$(curl -fsS "http://127.0.0.1:$AM_PORT/api/v2/alerts" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
 check "alerts in Alertmanager" "$n" "v>=1"
 

@@ -46,17 +46,23 @@ stock-observability/
 ├── docker-compose.yml               # local stack
 ├── prometheus/
 │   ├── prometheus.yml               # compose-only Prometheus config
-│   ├── rules/*.rules.yml            # alert + recording rules (shared with Helm)
-│   └── tests/                       # promtool rule unit tests
+│   ├── rules/*.rules.yml            # alert + recording rules (shared with Helm); nse_*.rules.yml = NSE KPIs
+│   ├── kpi-catalog.yaml             # KPI contracts (make check-kpis)
+│   └── tests/                       # promtool rule unit tests; reference_*_test.yml are generated
 ├── alertmanager/
 │   ├── alertmanager.yml             # routes, inhibitions, time intervals (shared with Helm)
 │   └── templates/stock.tmpl
+├── grafana/dashboards/*.json        # dashboards provisioned by the chart
+├── stock_exporter/textfile/         # generated stock_kpi_info for the exporter's textfile collector
+├── tools/kpicatalog/                # catalogue checker and textfile generator (Go)
 └── charts/stock-observability/      # Helm chart
     ├── values.yaml                  # portable defaults
     ├── values-ocp-dev.yaml          # OCP lab (namespace abdul)
     ├── values-cloud-prod.yaml       # cloud Kubernetes example
     ├── files/prometheus-rules -> ../../../prometheus/rules   (symlink)
     ├── files/alertmanager     -> ../../../alertmanager       (symlink)
+    ├── files/grafana-dashboards -> ../../../grafana/dashboards (symlink)
+    ├── files/stock-exporter-textfile -> ../../../stock_exporter/textfile (symlink)
     ├── files/holidays.yml     -> ../../../../stock_exporter/examples/holidays-nse-2026.yml (symlink)
     └── templates/
 ```
@@ -324,6 +330,19 @@ Edit `prometheus/rules/*.rules.yml` or `alertmanager/alertmanager.yml` (shared w
 make check test      # promtool / amtool validation and unit tests
 make deploy-ocp      # config checksum change rolls the affected pod
 ```
+
+### Add or change an NSE KPI
+
+NSE formula rules (`prometheus/rules/nse_*.rules.yml`, design in [prometheus/NSE_FORMULA_RULES_PROPOSAL.md](prometheus/NSE_FORMULA_RULES_PROPOSAL.md)) need a contract in `prometheus/kpi-catalog.yaml`; `make check` fails otherwise.
+
+```bash
+make kpi-textfile      # regenerate stock_exporter/textfile/kpi_info.prom (stock_kpi_info)
+make reference-tests   # regenerate reference_*_test.yml from prometheus/tests/reference/kpiref.py
+make check test        # check-kpis, check-reference, promtool, amtool
+make e2e               # sim stack: KPI series, coverage, budget, dashboard queries
+```
+
+KPIs with `coverage: true` also need a `kpi:coverage:ratio` rule in `nse_kpi_quality.rules.yml`. Multi-session KPIs (pivots, ATR, RVOL) need EOD snapshots and stay empty in sim mode, which never reaches `post_close`.
 
 ### Release a new stock_exporter version
 
