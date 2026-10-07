@@ -21,6 +21,7 @@ import (
 
 	"github.com/seenimo/stock_home/internal/api"
 	"github.com/seenimo/stock_home/internal/holidays"
+	"github.com/seenimo/stock_home/internal/platform"
 	"github.com/seenimo/stock_home/internal/source"
 	"github.com/seenimo/stock_home/ui"
 )
@@ -86,6 +87,7 @@ func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, holid
 
 	mux := http.NewServeMux()
 	srv.Register(mux)
+	platform.NewServer(platform.NewRegistry(), logger, timeout, reg).Register(mux)
 	mux.Handle("GET /metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
 	mux.Handle("GET /", ui.Handler())
