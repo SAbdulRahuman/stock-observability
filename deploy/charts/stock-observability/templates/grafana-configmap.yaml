@@ -31,3 +31,35 @@ data:
         jsonData:
           implementation: prometheus
           handleGrafanaManagedAlerts: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "so.fullname" (list . "grafana-dashboard-provider") }}
+  labels:
+    {{- include "so.labels" (list . "grafana") | nindent 4 }}
+data:
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: stock-observability
+        folder: Stock Observability
+        type: file
+        disableDeletion: true
+        allowUiUpdates: false
+        updateIntervalSeconds: 60
+        options:
+          path: /etc/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "so.fullname" (list . "grafana-dashboards") }}
+  labels:
+    {{- include "so.labels" (list . "grafana") | nindent 4 }}
+data:
+  {{- $dashboards := .Files.Glob "files/grafana-dashboards/*.json" }}
+  {{- if not $dashboards }}
+  {{- fail "no dashboards found under files/grafana-dashboards" }}
+  {{- end }}
+  {{- $dashboards.AsConfig | nindent 2 }}

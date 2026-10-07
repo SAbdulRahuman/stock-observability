@@ -1,0 +1,347 @@
+{
+  "uid": "nse-r1",
+  "title": "NSE Market Observability (R1)",
+  "description": "Release 1 KPIs from deploy/prometheus/kpi-catalog.yaml: market health, sector rotation, stock intelligence and KPI data quality. Observability signals, not trading advice.",
+  "tags": ["nse", "kpi", "release-1"],
+  "timezone": "Asia/Kolkata",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "15s",
+  "schemaVersion": 41,
+  "version": 1,
+  "time": {"from": "now-6h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "sector",
+        "label": "Sector",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": {"query": "label_values(stock_last_price{tier=\"core\", instrument_type=\"EQ\"}, sector)", "refId": "sector"},
+        "definition": "label_values(stock_last_price{tier=\"core\", instrument_type=\"EQ\"}, sector)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "current": {"text": "All", "value": "$__all"},
+        "sort": 1
+      },
+      {
+        "name": "symbol",
+        "label": "Symbol",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": {"query": "label_values(stock_last_price{tier=\"core\", instrument_type=\"EQ\", sector=~\"$sector\"}, symbol)", "refId": "symbol"},
+        "definition": "label_values(stock_last_price{tier=\"core\", instrument_type=\"EQ\", sector=~\"$sector\"}, symbol)",
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "sort": 1
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Conditions",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "enable": true,
+        "iconColor": "orange",
+        "expr": "ALERTS{alertstate=\"firing\", layer=\"condition\", condition!=\"\", symbol=\"$symbol\"}",
+        "step": "1m",
+        "titleFormat": "{{alertname}}",
+        "textFormat": "{{direction}}",
+        "useValueForTime": false
+      }
+    ]
+  },
+  "panels": [
+    {"type": "row", "title": "Market health", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}, "panels": []},
+    {
+      "type": "stat", "title": "Advance / decline", "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "market:advance_decline:ratio: advancers / decliners across tracked NSE equities.",
+      "targets": [{"refId": "A", "expr": "market:advance_decline:ratio", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "stat", "title": "Above VWAP", "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "market:above_vwap:ratio: share of equities trading above their exchange VWAP.",
+      "targets": [{"refId": "A", "expr": "market:above_vwap:ratio", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.2}, {"color": "green", "value": 0.5}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "stat", "title": "TRIN", "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "market:trin:ratio (Arms index): > 1 bearish, < 1 bullish; stress above 2.",
+      "targets": [{"refId": "A", "expr": "market:trin:ratio", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 2}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "stat", "title": "Dispersion", "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "market:dispersion:percent: stddev of day change across core equities.",
+      "targets": [{"refId": "A", "expr": "market:dispersion:percent", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "stat", "title": "Upper circuits", "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "market:circuit_hits:count{band=\"upper\"}: equities locked at the upper band.",
+      "targets": [{"refId": "A", "expr": "market:circuit_hits:count{band=\"upper\"}", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "none", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 20}, {"color": "red", "value": 40}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "stat", "title": "Lower circuits", "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "market:circuit_hits:count{band=\"lower\"}: equities locked at the lower band.",
+      "targets": [{"refId": "A", "expr": "market:circuit_hits:count{band=\"lower\"}", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "none", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 10}, {"color": "red", "value": 20}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "timeseries", "title": "Breadth: TRIN, above VWAP, advance/decline", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "market:trin:ratio", "legendFormat": "TRIN"},
+        {"refId": "B", "expr": "market:above_vwap:ratio", "legendFormat": "above VWAP"},
+        {"refId": "C", "expr": "market:advance_decline:ratio", "legendFormat": "advance/decline"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none", "custom": {"thresholdsStyle": {"mode": "line"}}, "thresholds": {"mode": "absolute", "steps": [{"color": "transparent", "value": null}, {"color": "green", "value": 0.5}, {"color": "yellow", "value": 1}, {"color": "red", "value": 2}]}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "table", "title": "Market incidents (firing)", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "NSE incident-layer alerts: breadth stress, circuit clusters, KPI data quality.",
+      "targets": [{"refId": "A", "expr": "ALERTS{alertstate=\"firing\", layer=\"incident\", incident!=\"\"}", "instant": true, "format": "table"}],
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "Value": true, "__name__": true, "alertstate": true, "layer": true}}}],
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"showHeader": true}
+    },
+
+    {"type": "row", "title": "Sector intelligence", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 13}, "panels": []},
+    {
+      "type": "bargauge", "title": "Sector relative strength vs NIFTY 50 (pp)", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "sector:relative_strength:percent: equal-weight sector change minus NIFTY 50 change. SectorRotation fires beyond +/-2 for 10 minutes.",
+      "targets": [{"refId": "A", "expr": "sort_desc(sector:relative_strength:percent)", "instant": true, "legendFormat": "{{sector}}"}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2, "min": -4, "max": 4, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": -2}, {"color": "green", "value": 0}, {"color": "blue", "value": 2}]}}, "overrides": []},
+      "options": {"orientation": "horizontal", "displayMode": "lcd", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "timeseries", "title": "Sector relative strength over time", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sector:relative_strength:percent{sector=~\"$sector\"}", "legendFormat": "{{sector}}"}],
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "right"}, "tooltip": {"mode": "multi"}}
+    },
+
+    {"type": "row", "title": "Stock intelligence: $symbol", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 22}, "panels": []},
+    {
+      "type": "stat", "title": "Intraday return", "gridPos": {"h": 4, "w": 4, "x": 0, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "stock:intraday_return:percent{symbol=\"$symbol\"}", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "stat", "title": "Gap at open", "gridPos": {"h": 4, "w": 4, "x": 4, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "stock:gap_open:percent{symbol=\"$symbol\", tier=\"core\"}", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "type": "stat", "title": "VWAP deviation", "gridPos": {"h": 4, "w": 4, "x": 8, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "stock:vwap_deviation:percent{symbol=\"$symbol\", tier=\"core\"}", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "stat", "title": "Strength vs NIFTY 50", "gridPos": {"h": 4, "w": 4, "x": 12, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "stock:relative_strength_nifty:percent{symbol=\"$symbol\"}", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "stat", "title": "Turnover", "gridPos": {"h": 4, "w": 4, "x": 16, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "stock:turnover:inr in crore (1e7 INR).",
+      "targets": [{"refId": "A", "expr": "stock:turnover:inr{symbol=\"$symbol\"} / 1e7", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 1, "displayName": "INR Cr", "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "stat", "title": "ATR(14)", "gridPos": {"h": 4, "w": 4, "x": 20, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "stock:atr_14d:points (approximation: mean of 20 calendar days of session true range; needs 10 sessions).",
+      "targets": [{"refId": "A", "expr": "stock:atr_14d:points{symbol=\"$symbol\"}", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 2, "noValue": "warming up", "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "type": "timeseries", "title": "Price, floor pivots and opening range", "gridPos": {"h": 9, "w": 12, "x": 0, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "stock_last_price{symbol=\"$symbol\", tier=\"core\"}", "legendFormat": "LTP"},
+        {"refId": "B", "expr": "stock_average_traded_price{symbol=\"$symbol\", tier=\"core\"}", "legendFormat": "VWAP"},
+        {"refId": "C", "expr": "stock:pivot:price{symbol=\"$symbol\"}", "legendFormat": "{{level}}"},
+        {"refId": "D", "expr": "last_over_time(stock:opening_range:price{symbol=\"$symbol\"}[6h15m])", "legendFormat": "ORB {{bound}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "currencyINR"}, "overrides": [
+        {"matcher": {"id": "byRegexp", "options": "^(P|R1|R2|S1|S2|ORB.*)$"}, "properties": [{"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [6, 4]}}, {"id": "custom.lineWidth", "value": 1}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries", "title": "RSI(14) and Stochastic %K (1m bars)", "gridPos": {"h": 9, "w": 12, "x": 12, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "RSI is Cutler's SMA variant (approximation until Wilder RSI in R2).",
+      "targets": [
+        {"refId": "A", "expr": "stock:rsi_14m:index{symbol=\"$symbol\"}", "legendFormat": "RSI(14)"},
+        {"refId": "B", "expr": "stock:stochastic_k_14m:percent{symbol=\"$symbol\"}", "legendFormat": "%K(14)"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none", "min": 0, "max": 100, "custom": {"thresholdsStyle": {"mode": "line+area"}}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "transparent", "value": 30}, {"color": "red", "value": 70}]}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries", "title": "MACD (SMA 12/26), signal and histogram", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 36},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Approximation: SMA-based MACD until EMA rules in R2. Signal = 9-minute mean of MACD.",
+      "targets": [
+        {"refId": "A", "expr": "stock:macd_12_26m:price{symbol=\"$symbol\"}", "legendFormat": "MACD"},
+        {"refId": "B", "expr": "avg_over_time(stock:macd_12_26m:price{symbol=\"$symbol\"}[9m])", "legendFormat": "signal"},
+        {"refId": "C", "expr": "stock:macd_12_26m:price{symbol=\"$symbol\"} - avg_over_time(stock:macd_12_26m:price{symbol=\"$symbol\"}[9m])", "legendFormat": "histogram"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none"}, "overrides": [
+        {"matcher": {"id": "byName", "options": "histogram"}, "properties": [{"id": "custom.drawStyle", "value": "bars"}, {"id": "custom.fillOpacity", "value": 60}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries", "title": "Bollinger(20, 2): bandwidth and %B", "gridPos": {"h": 8, "w": 8, "x": 8, "y": 36},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "stock:bollinger_width_20m:percent{symbol=\"$symbol\"}", "legendFormat": "bandwidth %"},
+        {"refId": "B", "expr": "stock:bollinger_percent_b_20m:ratio{symbol=\"$symbol\"}", "legendFormat": "%B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none"}, "overrides": [
+        {"matcher": {"id": "byName", "options": "%B"}, "properties": [{"id": "custom.axisPlacement", "value": "right"}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries", "title": "Realized volatility (annualised)", "gridPos": {"h": 8, "w": 8, "x": 16, "y": 36},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "stock:realized_vol_annualised:percent{symbol=\"$symbol\"}", "legendFormat": "{{symbol}}"},
+        {"refId": "B", "expr": "stock_last_price{symbol=\"INDIA VIX\"}", "legendFormat": "INDIA VIX"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries", "title": "Relative volume and range expansion", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 44},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "RVOL is a heuristic (linear intraday volume), from 09:45 with 5 sessions of history. Range expansion = (H - L) / ATR(14).",
+      "targets": [
+        {"refId": "A", "expr": "stock:relative_volume:ratio{symbol=\"$symbol\"}", "legendFormat": "RVOL"},
+        {"refId": "B", "expr": "stock:range_expansion:ratio{symbol=\"$symbol\"}", "legendFormat": "range / ATR"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none", "custom": {"thresholdsStyle": {"mode": "line"}}, "thresholds": {"mode": "absolute", "steps": [{"color": "transparent", "value": null}, {"color": "orange", "value": 1.5}, {"color": "red", "value": 2}]}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries", "title": "Order flow: volume delta and book imbalance", "gridPos": {"h": 8, "w": 8, "x": 8, "y": 44},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Volume delta uses the tick rule (Kite provides no aggressor side).",
+      "targets": [
+        {"refId": "A", "expr": "stock:volume_delta_1h:ratio{symbol=\"$symbol\"}", "legendFormat": "volume delta 1h"},
+        {"refId": "B", "expr": "stock_orderbook_imbalance_ratio{symbol=\"$symbol\"}", "legendFormat": "top-5 imbalance"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none", "min": -1, "max": 1}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries", "title": "Microprice deviation and spread (bps)", "gridPos": {"h": 8, "w": 8, "x": 16, "y": 44},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "stock:microprice_deviation:bps{symbol=\"$symbol\"}", "legendFormat": "microprice - mid"},
+        {"refId": "B", "expr": "stock_orderbook_spread_bps{symbol=\"$symbol\"}", "legendFormat": "spread"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries", "title": "Top-5 depth vs its 1h average", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 52},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "StockLiquidityDrain needs this below 0.25 and the spread above twice its 1h mean.",
+      "targets": [{"refId": "A", "expr": "stock:depth_vs_1h:ratio{symbol=\"$symbol\"}", "legendFormat": "depth / 1h mean"}],
+      "fieldConfig": {"defaults": {"unit": "none", "custom": {"thresholdsStyle": {"mode": "line"}}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "transparent", "value": 0.25}]}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "table", "title": "Active signals ($sector)", "gridPos": {"h": 8, "w": 8, "x": 8, "y": 52},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "stock:signal_active:bool: KPI threshold states. Signals do not notify.",
+      "targets": [{"refId": "A", "expr": "stock:signal_active:bool{sector=~\"$sector\"}", "instant": true, "format": "table"}],
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "Value": true, "__name__": true, "job": true, "instance": true, "exchange": true, "instrument_type": true, "tier": true}}}],
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"showHeader": true, "sortBy": [{"displayName": "symbol", "desc": false}]}
+    },
+    {
+      "type": "table", "title": "Condition alerts (firing)", "gridPos": {"h": 8, "w": 8, "x": 16, "y": 52},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "NSE condition-layer alerts; delivered as a 15-minute digest.",
+      "targets": [{"refId": "A", "expr": "ALERTS{alertstate=\"firing\", layer=\"condition\", condition!=\"\"}", "instant": true, "format": "table"}],
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "Value": true, "__name__": true, "alertstate": true, "layer": true, "job": true, "instance": true, "exchange": true, "instrument_type": true, "tier": true}}}],
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"showHeader": true}
+    },
+
+    {"type": "row", "title": "KPI data quality", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 60}, "panels": []},
+    {
+      "type": "bargauge", "title": "KPI coverage (fresh values / instruments in scope)", "gridPos": {"h": 10, "w": 16, "x": 0, "y": 61},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "kpi:coverage:ratio. KPIDataQualityDegraded fires below 90% after 09:45 for 5 minutes. Multi-session KPIs appear once their history exists.",
+      "targets": [{"refId": "A", "expr": "sort(kpi:coverage:ratio)", "instant": true, "legendFormat": "{{kpi}}"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0.9}]}}, "overrides": []},
+      "options": {"orientation": "horizontal", "displayMode": "basic", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "stat", "title": "Fresh core instruments", "gridPos": {"h": 5, "w": 8, "x": 16, "y": 61},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "kpi:fresh_core_instruments:ratio: core instruments with a tick in the last 60 seconds.",
+      "targets": [{"refId": "A", "expr": "kpi:fresh_core_instruments:ratio", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 1, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.9}, {"color": "green", "value": 0.98}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "stat", "title": "KPIs below 90% coverage", "gridPos": {"h": 5, "w": 8, "x": 16, "y": 66},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "count(kpi:coverage:ratio < 0.9) or vector(0)", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "none", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "type": "table", "title": "KPI catalogue", "gridPos": {"h": 10, "w": 24, "x": 0, "y": 71},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "stock_kpi_info, generated from deploy/prometheus/kpi-catalog.yaml. quality: exact | approximation | proxy | heuristic | model.",
+      "targets": [{"refId": "A", "expr": "stock_kpi_info", "instant": true, "format": "table"}],
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "Value": true, "__name__": true, "job": true, "instance": true}, "indexByName": {"kpi": 0, "capability": 1, "quality": 2, "method": 3, "unit": 4, "scope": 5, "family": 6, "level": 7, "release": 8}}}],
+      "fieldConfig": {"defaults": {}, "overrides": [
+        {"matcher": {"id": "byName", "options": "quality"}, "properties": [{"id": "custom.cellOptions", "value": {"type": "color-text"}}, {"id": "mappings", "value": [{"type": "value", "options": {"exact": {"color": "green"}, "approximation": {"color": "orange"}, "heuristic": {"color": "red"}}}]}]}
+      ]},
+      "options": {"showHeader": true, "sortBy": [{"displayName": "kpi", "desc": false}]}
+    }
+  ]
+}

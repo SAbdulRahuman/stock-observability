@@ -77,6 +77,10 @@ spec:
               mountPath: /var/lib/grafana
             - name: datasources
               mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /etc/grafana/dashboards
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -84,6 +88,12 @@ spec:
         - name: datasources
           configMap:
             name: {{ include "so.fullname" (list . "grafana-datasources") }}
+        - name: dashboard-provider
+          configMap:
+            name: {{ include "so.fullname" (list . "grafana-dashboard-provider") }}
+        - name: dashboards
+          configMap:
+            name: {{ include "so.fullname" (list . "grafana-dashboards") }}
 ---
 apiVersion: v1
 kind: Service
