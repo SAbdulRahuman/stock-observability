@@ -58,7 +58,7 @@ check-reference:
 		|| { echo "$$f has no generator in kpiref.py"; exit 1; }; done
 
 .PHONY: test
-test: test-rules test-routes
+test: test-rules test-routes test-inhibit
 
 .PHONY: test-rules
 test-rules: bin/promtool
@@ -67,6 +67,10 @@ test-rules: bin/promtool
 .PHONY: test-routes
 test-routes: bin/amtool
 	tests/alertmanager_routes_test.sh
+
+.PHONY: test-inhibit
+test-inhibit: bin/alertmanager
+	tests/alertmanager_inhibit_test.sh
 
 .PHONY: e2e
 e2e: tools

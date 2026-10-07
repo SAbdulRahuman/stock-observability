@@ -97,7 +97,8 @@ inhibit_rules:
   - source_matchers: ['alertname="IndexSharpFall"']
     target_matchers: ['alertname="StockPriceSharpDrop"']
     equal: [exchange]
-  - source_matchers: ['severity="critical"']
+  # Per instrument only: `equal` treats missing labels as equal, so market-level alerts need the symbol matcher.
+  - source_matchers: ['severity="critical"', 'symbol=~".+"']
     target_matchers: ['severity=~"warning|info"']
     equal: [exchange, symbol]
 

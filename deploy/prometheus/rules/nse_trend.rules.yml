@@ -13,14 +13,20 @@ groups:
   - name: nse_trend_alerts
     interval: 15s
     rules:
-      # Least-squares projection of the last 10 minutes, 15 minutes ahead; all EQ tiers.
+      # Least-squares projection of the last 10 minutes, 15 minutes ahead; all EQ tiers, within 5% of the band.
       # The offset 9m guard requires a (nearly) full window, e.g. after a Prometheus restart.
       - alert: StockProjectedCircuitHit
         expr: |
           (
-              label_replace(predict_linear(stock_last_price{instrument_type="EQ"}[10m], 900) >= stock_circuit_upper_limit_price, "band", "upper", "", "")
+              label_replace(
+                  predict_linear(stock_last_price{instrument_type="EQ"}[10m], 900) >= stock_circuit_upper_limit_price
+                and (stock_circuit_upper_limit_price - stock_last_price) < 0.05 * stock_last_price,
+                "band", "upper", "", "")
             or
-              label_replace(predict_linear(stock_last_price{instrument_type="EQ"}[10m], 900) <= stock_circuit_lower_limit_price, "band", "lower", "", "")
+              label_replace(
+                  predict_linear(stock_last_price{instrument_type="EQ"}[10m], 900) <= stock_circuit_lower_limit_price
+                and (stock_last_price - stock_circuit_lower_limit_price) < 0.05 * stock_last_price,
+                "band", "lower", "", "")
           )
           unless ignoring(band) stock_last_price >= stock_circuit_upper_limit_price
           unless ignoring(band) stock_last_price <= stock_circuit_lower_limit_price
