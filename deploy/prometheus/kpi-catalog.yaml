@@ -1,7 +1,8 @@
 # KPI contracts (proposal §A4). `make check-kpis` keeps this file, the rule files and the
 # generated stock_kpi_info textfile in sync.
 #
-# kind:     kpi | snapshot | signal | quality       (only kpi entries need family..frequency)
+# kind:     kpi | snapshot | signal | quality | helper   (only kpi entries need family..frequency;
+#           helper = intermediate state of a stateful KPI)
 # family:   technical | microstructure | market | risk | derivatives | predictive
 # level:    market_health | sector_intelligence | stock_intelligence | risk_intelligence | ...
 # scope:    core (tier=core) | broad | all_eq (EQ in both tiers) | market | sector
@@ -301,15 +302,16 @@ kpis:
     level: stock_intelligence
     capability: momentum
     release: R1
-    formula: "MACD ~ SMA12(C) - SMA26(C), 1m bars; signal = 9m mean of MACD"
-    inputs: [stock_last_price]
+    formula: "MACD = EMA12(C) - EMA26(C), 1m bars"
+    inputs: [stock:ema_12m:price, stock:ema_26m:price]
     rule_file: nse_trend.rules.yml
-    frequency: 15s
+    frequency: 1m
     scope: core
     unit: price
     warmup: 26m
-    quality: approximation
-    method: SMA-based MACD; EMA-based from R2
+    quality: exact
+    method: stateful EMAs seeded with the SMA of the session's first n bars (EMA-based since R2)
+    limitation: "re-seeded from the last n bars after a gap longer than 3 minutes"
     alertable: true
     coverage: true
     dashboard_default: true
@@ -725,3 +727,186 @@ kpis:
     method: distance to the daily lower price band
     alertable: true
     coverage: true
+
+  # === Release 2 ============================================================================
+
+  # --- Moving averages and MACD (stateful, 1m) -----------------------------------------------
+  - name: stock:ema_9m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "EMA9 = 0.2 * C + 0.8 * EMA9[1m ago], 1m bars"
+    inputs: [stock_last_price]
+    rule_file: nse_moving_averages.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 9m
+    quality: exact
+    method: stateful EMA seeded with the SMA of the session's first 9 bars
+    limitation: "re-seeded from the last 9 bars after a gap longer than 3 minutes"
+
+  - name: stock:ema_12m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "EMA12 = 2/13 * C + 11/13 * EMA12[1m ago], 1m bars"
+    inputs: [stock_last_price]
+    rule_file: nse_trend.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 12m
+    quality: exact
+    method: stateful EMA seeded with the SMA of the session's first 12 bars
+    limitation: "re-seeded from the last 12 bars after a gap longer than 3 minutes"
+
+  - name: stock:ema_20m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "EMA20 = 2/21 * C + 19/21 * EMA20[1m ago], 1m bars"
+    inputs: [stock_last_price]
+    rule_file: nse_moving_averages.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 20m
+    quality: exact
+    method: stateful EMA seeded with the SMA of the session's first 20 bars
+    limitation: "re-seeded from the last 20 bars after a gap longer than 3 minutes"
+    dashboard_default: true
+
+  - name: stock:ema_26m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "EMA26 = 2/27 * C + 25/27 * EMA26[1m ago], 1m bars"
+    inputs: [stock_last_price]
+    rule_file: nse_trend.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 26m
+    quality: exact
+    method: stateful EMA seeded with the SMA of the session's first 26 bars
+    limitation: "re-seeded from the last 26 bars after a gap longer than 3 minutes"
+
+  - name: stock:ema_50m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "EMA50 = 2/51 * C + 49/51 * EMA50[1m ago], 1m bars"
+    inputs: [stock_last_price]
+    rule_file: nse_moving_averages.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 50m
+    quality: exact
+    method: stateful EMA seeded with the SMA of the session's first 50 bars
+    limitation: "re-seeded from the last 50 bars after a gap longer than 3 minutes"
+    dashboard_default: true
+
+  - name: stock:ema_distance_20m:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "(C - EMA20) / EMA20 * 100"
+    inputs: [stock_last_price, stock:ema_20m:price]
+    rule_file: nse_moving_averages.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent
+    warmup: 20m
+    quality: exact
+    method: distance of the last price from EMA20
+    alertable: true
+
+  - name: stock:macd_signal_9m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R2
+    formula: "signal = 0.2 * MACD + 0.8 * signal[1m ago]"
+    inputs: [stock:macd_12_26m:price]
+    rule_file: nse_trend.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 34m
+    quality: exact
+    method: stateful EMA9 of MACD seeded with the mean of its first 9 values
+    dashboard_default: true
+
+  - name: stock:macd_histogram:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R2
+    formula: "MACD - signal"
+    inputs: [stock:macd_12_26m:price, stock:macd_signal_9m:price]
+    rule_file: nse_trend.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 34m
+    quality: exact
+    method: MACD line minus its EMA9 signal line
+    alertable: true
+    dashboard_default: true
+
+  # --- Wilder RSI (stateful, 1m) -------------------------------------------------------------
+  - name: stock:rsi_avg_gain_14m:points
+    kind: helper
+    release: R2
+    formula: "avg_gain = avg_gain[1m ago] + (max(C - C[1m ago], 0) - avg_gain[1m ago]) / 14"
+    inputs: [stock_last_price]
+    rule_file: nse_momentum.rules.yml
+    frequency: 1m
+    scope: core
+    unit: points
+
+  - name: stock:rsi_avg_loss_14m:points
+    kind: helper
+    release: R2
+    formula: "avg_loss = avg_loss[1m ago] + (max(C[1m ago] - C, 0) - avg_loss[1m ago]) / 14"
+    inputs: [stock_last_price]
+    rule_file: nse_momentum.rules.yml
+    frequency: 1m
+    scope: core
+    unit: points
+
+  - name: stock:rsi_wilder_14m:index
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R2
+    formula: "RSI(14) = 100 - 100 / (1 + avg_gain / avg_loss), Wilder smoothing on 1m bars"
+    inputs: [stock:rsi_avg_gain_14m:points, stock:rsi_avg_loss_14m:points]
+    rule_file: nse_momentum.rules.yml
+    frequency: 1m
+    scope: core
+    unit: index
+    range: {min: 0, max: 100}
+    warmup: 14m
+    quality: exact
+    method: Wilder RSI seeded with the Cutler averages of the session's first 14 bars
+    limitation: "no movement since the seed gives NaN"
+    alertable: true
+    dashboard_default: true

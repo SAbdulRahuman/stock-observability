@@ -205,22 +205,23 @@
     {
       "type": "timeseries", "title": "RSI(14) and Stochastic %K (1m bars)", "gridPos": {"h": 9, "w": 12, "x": 12, "y": 27},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "description": "RSI is Cutler's SMA variant (approximation until Wilder RSI in R2).",
+      "description": "RSI(14) is Cutler's SMA variant (used by signals and alerts); RSI Wilder is the textbook smoothing.",
       "targets": [
         {"refId": "A", "expr": "stock:rsi_14m:index{symbol=\"$symbol\"}", "legendFormat": "RSI(14)"},
+        {"refId": "C", "expr": "stock:rsi_wilder_14m:index{symbol=\"$symbol\"}", "legendFormat": "RSI Wilder(14)"},
         {"refId": "B", "expr": "stock:stochastic_k_14m:percent{symbol=\"$symbol\"}", "legendFormat": "%K(14)"}
       ],
       "fieldConfig": {"defaults": {"unit": "none", "min": 0, "max": 100, "custom": {"thresholdsStyle": {"mode": "line+area"}}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "transparent", "value": 30}, {"color": "red", "value": 70}]}}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
     },
     {
-      "type": "timeseries", "title": "MACD (SMA 12/26), signal and histogram", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 36},
+      "type": "timeseries", "title": "MACD (EMA 12/26), signal and histogram", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 36},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "description": "Approximation: SMA-based MACD until EMA rules in R2. Signal = 9-minute mean of MACD.",
+      "description": "MACD = EMA12 - EMA26 of 1m closes; signal = EMA9 of MACD. Available 26 and 34 minutes after the open.",
       "targets": [
         {"refId": "A", "expr": "stock:macd_12_26m:price{symbol=\"$symbol\"}", "legendFormat": "MACD"},
-        {"refId": "B", "expr": "avg_over_time(stock:macd_12_26m:price{symbol=\"$symbol\"}[9m])", "legendFormat": "signal"},
-        {"refId": "C", "expr": "stock:macd_12_26m:price{symbol=\"$symbol\"} - avg_over_time(stock:macd_12_26m:price{symbol=\"$symbol\"}[9m])", "legendFormat": "histogram"}
+        {"refId": "B", "expr": "stock:macd_signal_9m:price{symbol=\"$symbol\"}", "legendFormat": "signal"},
+        {"refId": "C", "expr": "stock:macd_histogram:price{symbol=\"$symbol\"}", "legendFormat": "histogram"}
       ],
       "fieldConfig": {"defaults": {"unit": "none"}, "overrides": [
         {"matcher": {"id": "byName", "options": "histogram"}, "properties": [{"id": "custom.drawStyle", "value": "bars"}, {"id": "custom.fillOpacity", "value": 60}]}

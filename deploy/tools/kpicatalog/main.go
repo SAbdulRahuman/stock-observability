@@ -63,7 +63,7 @@ type ruleFile struct {
 }
 
 var enums = map[string][]string{
-	"kind":    {"kpi", "snapshot", "signal", "quality"},
+	"kind":    {"kpi", "snapshot", "signal", "quality", "helper"},
 	"family":  {"technical", "microstructure", "market", "risk", "derivatives", "predictive"},
 	"level":   {"market_health", "sector_intelligence", "stock_intelligence", "risk_intelligence", "derivatives_intelligence", "predictive_intelligence"},
 	"release": {"R1", "R2", "R3", "R4", "R5", "R6"},

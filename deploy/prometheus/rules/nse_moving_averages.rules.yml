@@ -1,0 +1,30 @@
+# Moving averages (proposal §7.2, Release 2). Stateful EMAs as in nse_trend (EMA12/26 live there):
+#   EMA(n) = a * C + (1 - a) * EMA[1m ago], a = 2 / (n + 1), seeded with SMA(n) n minutes after the open
+#   Price vs EMA20 = (C - EMA20) / EMA20 * 100
+groups:
+  - name: nse_moving_averages
+    interval: 1m
+    rules:
+      - record: stock:ema_9m:price
+        expr: |
+          (
+              0.2 * stock_last_price{tier="core"} + 0.8 * last_over_time(stock:ema_9m:price[3m])
+            or (avg_over_time(stock_last_price{tier="core"}[9m:1m]) and on() stock_market_seconds_to_close <= 21960)
+          )
+          and on() stock_market_open == 1
+      - record: stock:ema_20m:price
+        expr: |
+          (
+              2/21 * stock_last_price{tier="core"} + 19/21 * last_over_time(stock:ema_20m:price[3m])
+            or (avg_over_time(stock_last_price{tier="core"}[20m:1m]) and on() stock_market_seconds_to_close <= 21300)
+          )
+          and on() stock_market_open == 1
+      - record: stock:ema_50m:price
+        expr: |
+          (
+              2/51 * stock_last_price{tier="core"} + 49/51 * last_over_time(stock:ema_50m:price[3m])
+            or (avg_over_time(stock_last_price{tier="core"}[50m:1m]) and on() stock_market_seconds_to_close <= 19500)
+          )
+          and on() stock_market_open == 1
+      - record: stock:ema_distance_20m:percent
+        expr: (stock_last_price{tier="core"} - stock:ema_20m:price) / (stock:ema_20m:price > 0) * 100

@@ -1,0 +1,95 @@
+# promtool test rules prometheus/tests/nse_stateful_test.yml
+# Edge cases of the stateful 1m rules (EMAs, MACD, Wilder RSI); values are checked in
+# reference_ema_test.yml. The session opens at t=0.
+rule_files:
+  - ../rules/nse_trend.rules.yml
+  - ../rules/nse_moving_averages.rules.yml
+  - ../rules/nse_momentum.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: linear ramps, warm-up and tier scoping
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x60'
+      - series: 'stock_market_seconds_to_close{job="stock_core",instance="se"}'
+        values: '22500-60x60'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="UP",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100+1x60'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="DOWN",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '200-1x60'
+      - series: 'stock_last_price{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
+        values: '100+1x60'
+    promql_expr_test:
+      # Seeded with SMA(12) twelve minutes after the open, not before.
+      - expr: stock:ema_12m:price
+        eval_time: 11m
+        exp_samples: []
+      - expr: stock:ema_12m:price{symbol="UP"}
+        eval_time: 12m
+        exp_samples:
+          - labels: 'stock:ema_12m:price{job="stock_core",instance="se",exchange="NSE",symbol="UP",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 106.5
+      # An EMA of a ramp lags it by slope * (n - 1) / 2, so MACD = 12.5 - 5.5 = 7 and the
+      # signal line settles on 7 (histogram 0).
+      - expr: stock:macd_12_26m:price
+        eval_time: 40m
+        exp_samples:
+          - labels: 'stock:macd_12_26m:price{job="stock_core",instance="se",exchange="NSE",symbol="UP",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 7
+          - labels: 'stock:macd_12_26m:price{job="stock_core",instance="se",exchange="NSE",symbol="DOWN",sector="IT",instrument_type="EQ",tier="core"}'
+            value: -7
+      - expr: stock:macd_signal_9m:price{symbol="UP"}
+        eval_time: 33m
+        exp_samples: []
+      - expr: round(stock:macd_histogram:price, 0.001)
+        eval_time: 40m
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="UP",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 0
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="DOWN",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 0
+      - expr: stock:rsi_wilder_14m:index
+        eval_time: 13m
+        exp_samples: []
+      - expr: stock:rsi_wilder_14m:index
+        eval_time: 30m
+        exp_samples:
+          - labels: 'stock:rsi_wilder_14m:index{job="stock_core",instance="se",exchange="NSE",symbol="UP",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 100
+          - labels: 'stock:rsi_wilder_14m:index{job="stock_core",instance="se",exchange="NSE",symbol="DOWN",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 0
+      - expr: count({tier="broad", __name__=~"stock:(ema|macd|rsi).*"})
+        eval_time: 60m
+        exp_samples: []
+
+  - name: state lapses after the close and is re-seeded in the next session
+    interval: 1m
+    input_series:
+      # Session 1: 0-19m, closed 20-49m, session 2 from 50m.
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x19 0x29 1x40'
+      - series: 'stock_market_seconds_to_close{job="stock_core",instance="se"}'
+        values: '22500-60x19 0x29 22500-60x40'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100+1x19 119x29 150+1x40'
+    promql_expr_test:
+      - expr: round(stock:ema_9m:price, 0.001)
+        eval_time: 19m
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 115
+      - expr: stock:ema_9m:price
+        eval_time: 30m
+        exp_samples: []
+      # 58m is 8 minutes into session 2: yesterday's state is gone and SMA(9) is not ready.
+      - expr: stock:ema_9m:price
+        eval_time: 58m
+        exp_samples: []
+      - expr: stock:ema_9m:price
+        eval_time: 59m
+        exp_samples:
+          - labels: 'stock:ema_9m:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 155

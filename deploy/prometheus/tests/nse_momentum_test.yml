@@ -2,7 +2,6 @@
 # Formula values are checked in reference_momentum_test.yml; this file covers edge cases.
 rule_files:
   - ../rules/nse_momentum.rules.yml
-  - ../rules/nse_trend.rules.yml
 
 evaluation_interval: 15s
 
@@ -46,12 +45,6 @@ tests:
             value: 100
           - labels: 'stock:stochastic_k_14m:percent{job="stock_core",instance="se",exchange="NSE",symbol="DOWN",sector="IT",instrument_type="EQ",tier="core"}'
             value: 0
-      # MACD of a linear ramp: SMA12 - SMA26 = slope * (26 - 12) / 2.
-      - expr: stock:macd_12_26m:price{symbol="UP"}
-        eval_time: 28m
-        exp_samples:
-          - labels: 'stock:macd_12_26m:price{job="stock_core",instance="se",exchange="NSE",symbol="UP",sector="IT",instrument_type="EQ",tier="core"}'
-            value: 7
 
   - name: relative strength vs NIFTY 50 for core equities
     interval: 1m

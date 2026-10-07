@@ -5,6 +5,11 @@ rule_files:
 
 evaluation_interval: 5s
 
+group_eval_order:
+  - stock_fast
+  - stock_slow
+  - nse_volatility
+
 tests:
   - name: Bollinger width, %B and realized volatility match the reference
     interval: 15s

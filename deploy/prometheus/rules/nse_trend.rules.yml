@@ -1,14 +1,36 @@
-# Trend (proposal §6.3, Release 1).
-#   MACD(12,26) ~ SMA12 - SMA26 of 1m closes (flagged approximation; EMA-based MACD in R2).
-#   Signal line = avg_over_time(macd[9m]); histogram = macd - signal (computed in alerts/Grafana).
+# Trend (proposal §6.3 / §7.5, Release 1 + 2).
+#   EMA(n)  = a * C + (1 - a) * EMA[1m ago], a = 2 / (n + 1), one step per 1m evaluation
+#   MACD    = EMA12 - EMA26;  signal = EMA9(MACD);  histogram = MACD - signal
+# Stateful rules (§7.0): each reads its own previous value. A series is seeded with the SMA of
+# the session's first n bars, n minutes after the open (textbook seed), and re-seeded from the
+# last n bars after a gap > 3m. Session gating lets the state lapse overnight.
+# EMA12/26 live here so MACD and its signal read them in the same evaluation.
 groups:
   - name: nse_trend
-    interval: 15s
+    interval: 1m
     rules:
-      - record: stock:macd_12_26m:price
+      - record: stock:ema_12m:price
         expr: |
-          avg_over_time(stock_last_price{tier="core"}[12m:1m])
-          - avg_over_time(stock_last_price{tier="core"}[26m:1m])
+          (
+              2/13 * stock_last_price{tier="core"} + 11/13 * last_over_time(stock:ema_12m:price[3m])
+            or (avg_over_time(stock_last_price{tier="core"}[12m:1m]) and on() stock_market_seconds_to_close <= 21780)
+          )
+          and on() stock_market_open == 1
+      - record: stock:ema_26m:price
+        expr: |
+          (
+              2/27 * stock_last_price{tier="core"} + 25/27 * last_over_time(stock:ema_26m:price[3m])
+            or (avg_over_time(stock_last_price{tier="core"}[26m:1m]) and on() stock_market_seconds_to_close <= 20940)
+          )
+          and on() stock_market_open == 1
+      - record: stock:macd_12_26m:price
+        expr: stock:ema_12m:price - stock:ema_26m:price
+      - record: stock:macd_signal_9m:price
+        expr: |
+          0.2 * stock:macd_12_26m:price + 0.8 * last_over_time(stock:macd_signal_9m:price[3m])
+          or (avg_over_time(stock:macd_12_26m:price[9m]) and count_over_time(stock:macd_12_26m:price[9m]) >= 9)
+      - record: stock:macd_histogram:price
+        expr: stock:macd_12_26m:price - stock:macd_signal_9m:price
 
   - name: nse_trend_alerts
     interval: 15s

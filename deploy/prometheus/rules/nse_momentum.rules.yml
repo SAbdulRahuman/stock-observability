@@ -1,6 +1,6 @@
 # Momentum (proposal §6.2, Release 1). Oscillators run on 1-minute bars: x[14m:1m] samples LTP
 # at minute boundaries, i.e. 1m closes.
-#   RSI(14)  = 100 - 100 / (1 + avg_gain / avg_loss)   Cutler (SMA) RSI; Wilder RSI comes in R2
+#   RSI(14)  = 100 - 100 / (1 + avg_gain / avg_loss)   Cutler (SMA) RSI; Wilder RSI in nse_momentum_wilder
 #   %K(14)   = (C - LL14) / (HH14 - LL14) * 100
 #   RS_NIFTY = change%(stock) - change%(NIFTY 50)
 groups:
@@ -25,27 +25,56 @@ groups:
           - on() group_left()
           stock_change_percent{symbol="NIFTY 50", instrument_type="INDEX"}
 
+  # Wilder RSI (§7.4 #41, Release 2): avg = avg[1m ago] + (x - avg[1m ago]) / 14 on 1m bars, seeded
+  # with the Cutler averages of the session's first 14 bars (Wilder's own seed). Stateful, see nse_trend.
+  - name: nse_momentum_wilder
+    interval: 1m
+    rules:
+      - record: stock:rsi_avg_gain_14m:points
+        expr: |
+          (
+              1/14 * clamp_min(stock_last_price{tier="core"} - stock_last_price{tier="core"} offset 1m, 0)
+            + 13/14 * last_over_time(stock:rsi_avg_gain_14m:points[3m])
+            or (
+                avg_over_time(clamp_min(stock_last_price{tier="core"} - stock_last_price{tier="core"} offset 1m, 0)[14m:1m])
+              and on() stock_market_seconds_to_close <= 21660
+            )
+          )
+          and on() stock_market_open == 1
+      - record: stock:rsi_avg_loss_14m:points
+        expr: |
+          (
+              1/14 * clamp_min(stock_last_price{tier="core"} offset 1m - stock_last_price{tier="core"}, 0)
+            + 13/14 * last_over_time(stock:rsi_avg_loss_14m:points[3m])
+            or (
+                avg_over_time(clamp_min(stock_last_price{tier="core"} offset 1m - stock_last_price{tier="core"}, 0)[14m:1m])
+              and on() stock_market_seconds_to_close <= 21660
+            )
+          )
+          and on() stock_market_open == 1
+      # avg_loss = 0 -> RSI 100; no movement at all -> NaN.
+      - record: stock:rsi_wilder_14m:index
+        expr: 100 - 100 / (1 + stock:rsi_avg_gain_14m:points / stock:rsi_avg_loss_14m:points)
+
   - name: nse_momentum_alerts
     interval: 15s
     rules:
       # Overbought/oversold on two oscillators, MACD histogram turning against the move, and
-      # tick-rule volume flowing the other way. histogram = macd - avg_over_time(macd[9m]).
+      # tick-rule volume flowing the other way.
       - alert: StockMomentumExhaustion
         expr: |
           (
             label_replace(
                 stock:rsi_14m:index{instrument_type="EQ"} > 70
               and stock:stochastic_k_14m:percent > 80
-              and (stock:macd_12_26m:price - avg_over_time(stock:macd_12_26m:price[9m]))
-                < (stock:macd_12_26m:price offset 2m - avg_over_time(stock:macd_12_26m:price[9m] offset 2m))
+              and stock:macd_histogram:price < stock:macd_histogram:price offset 2m
               and stock:volume_delta_1h:ratio < 0,
               "direction", "bearish", "", "")
             or
             label_replace(
                 stock:rsi_14m:index{instrument_type="EQ"} < 30
               and stock:stochastic_k_14m:percent < 20
-              and (stock:macd_12_26m:price - avg_over_time(stock:macd_12_26m:price[9m]))
-                > (stock:macd_12_26m:price offset 2m - avg_over_time(stock:macd_12_26m:price[9m] offset 2m))
+              and stock:macd_histogram:price > stock:macd_histogram:price offset 2m
               and stock:volume_delta_1h:ratio > 0,
               "direction", "bullish", "", "")
           )

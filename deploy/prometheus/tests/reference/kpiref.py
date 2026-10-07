@@ -22,6 +22,9 @@ ABS_TOL = 1e-9
 HERE = os.path.dirname(os.path.abspath(__file__))
 TESTS_DIR = os.path.dirname(HERE)
 
+# promtool evaluates groups in random order unless told; reference values assume inputs first.
+GROUP_ORDER = {"volatility": ["stock_fast", "stock_slow", "nse_volatility"]}
+
 CORE = {"job": "stock_core", "instance": "se"}
 BROAD = {"job": "stock_broad", "instance": "se"}
 
@@ -103,7 +106,10 @@ def render(family, rule_files, cases, eval_interval):
         "rule_files:",
     ]
     out += ["  - ../rules/%s" % f for f in rule_files]
-    out += ["", "evaluation_interval: %s" % duration(eval_interval), "", "tests:"]
+    out += ["", "evaluation_interval: %s" % duration(eval_interval)]
+    if family in GROUP_ORDER:
+        out += ["", "group_eval_order:"] + ["  - %s" % g for g in GROUP_ORDER[family]]
+    out += ["", "tests:"]
     for c in cases:
         out.append("  - name: %s" % c["name"])
         out.append("    interval: %s" % duration(c["step"]))
@@ -306,11 +312,82 @@ def family_momentum():
         for t in (15 * 60, 20 * 60, 26 * 60, 33 * 60, 40 * 60):
             checks.append(Check("stock:rsi_14m:index", lbl, t, rsi(price, t)))
             checks.append(Check("stock:stochastic_k_14m:percent", lbl, t, stochastic_k(price, t)))
-            if t >= 26 * 60:
-                macd = mean(price.bars(t, 12 * 60)) - mean(price.bars(t, 26 * 60))
-                checks.append(Check("stock:macd_12_26m:price", lbl, t, macd))
-    cases.append(test_case("RSI, Stochastic %K and MACD match the reference on 15s data", step, series, checks))
-    return ["nse_momentum.rules.yml", "nse_trend.rules.yml"], cases
+    cases.append(test_case("RSI and Stochastic %K match the reference on 15s data", step, series, checks))
+    return ["nse_momentum.rules.yml"], cases
+
+
+# --- stateful EMAs, MACD and Wilder RSI (1m evaluations) --------------------------------------
+
+
+def recurse(evals, seed, step):
+    """One value per evaluation: None until seed(t) returns a value, then step(t, previous)."""
+    out, prev = {}, None
+    for t in evals:
+        prev = seed(t) if prev is None else step(t, prev)
+        out[t] = prev
+    return out
+
+
+def ema(price, n, evals):
+    a = 2 / (n + 1)
+    return recurse(
+        evals,
+        lambda t: mean(price.bars(t, n * 60)) if t >= n * 60 else None,
+        lambda t, prev: a * price.at(t) + (1 - a) * prev,
+    )
+
+
+def wilder_avg(price, evals, sign, n=14):
+    move = lambda k: max(sign * (price.at(k) - price.at(k - 60)), 0)
+    return recurse(
+        evals,
+        lambda t: mean([move(k) for k in range(60, int(t) + 1, 60)][-n:]) if t >= n * 60 else None,
+        lambda t, prev: move(t) / n + (n - 1) / n * prev,
+    )
+
+
+def family_ema():
+    """The session opens at t=0 (stock_market_seconds_to_close = 22500 - t); rules run every 1m."""
+    step, minutes = 15, 70
+    n = 4 * minutes + 1
+    session = [
+        Series("stock_market_open", CORE, step, constant(1, n), "%d"),
+        Series("stock_market_seconds_to_close", CORE, step, [22500 - i * step for i in range(n)], "%d"),
+    ]
+    evals = range(0, minutes * 60 + 1, 60)
+    series, checks = list(session), []
+    for seed, sym in ((13, "INFY"), (14, "TCS")):
+        lbl = instrument(sym)
+        price = Series("stock_last_price", lbl, step, random_walk(seed, n, sigma=0.002))
+        series.append(price)
+        emas = {k: ema(price, k, evals) for k in (9, 12, 20, 26, 50)}
+        macd = {t: emas[12][t] - emas[26][t] for t in evals if emas[26][t] is not None}
+        signal = recurse(
+            evals,
+            lambda t: mean([macd[k] for k in macd if t - 540 < k <= t]) if len([k for k in macd if t - 540 < k <= t]) >= 9 else None,
+            lambda t, prev: 0.2 * macd[t] + 0.8 * prev,
+        )
+        gain, loss = wilder_avg(price, evals, 1), wilder_avg(price, evals, -1)
+        for t in (8 * 60, 13 * 60, 20 * 60, 30 * 60, 33 * 60, 40 * 60, 52 * 60, 70 * 60):
+            for k, e in emas.items():
+                name = "stock:ema_%dm:price" % k
+                checks.append(Absent(name, lbl, t) if e[t] is None else Check(name, lbl, t, e[t]))
+            if emas[20][t] is not None:
+                checks.append(Check("stock:ema_distance_20m:percent", lbl, t, (price.at(t) - emas[20][t]) / emas[20][t] * 100))
+            if t in macd:
+                checks.append(Check("stock:macd_12_26m:price", lbl, t, macd[t], abs_tol=1e-9))
+            if signal[t] is None:
+                checks.append(Absent("stock:macd_signal_9m:price", lbl, t))
+            else:
+                checks.append(Check("stock:macd_signal_9m:price", lbl, t, signal[t], abs_tol=1e-9))
+                checks.append(Check("stock:macd_histogram:price", lbl, t, macd[t] - signal[t], abs_tol=1e-9))
+            if gain[t] is None:
+                checks.append(Absent("stock:rsi_wilder_14m:index", lbl, t))
+            else:
+                checks.append(Check("stock:rsi_wilder_14m:index", lbl, t, 100 - 100 / (1 + gain[t] / loss[t])))
+    return ["nse_trend.rules.yml", "nse_moving_averages.rules.yml", "nse_momentum.rules.yml"], [
+        test_case("stateful EMAs, MACD signal/histogram and Wilder RSI match the reference", step, series, checks)
+    ], 60
 
 
 # --- nse_volatility.rules.yml -----------------------------------------------------------------
@@ -508,6 +585,7 @@ FAMILIES = {
     "price_levels": family_price_levels,
     "pivots": family_pivots,
     "momentum": family_momentum,
+    "ema": family_ema,
     "volatility": family_volatility,
     "atr": family_atr,
     "rvol": family_rvol,
