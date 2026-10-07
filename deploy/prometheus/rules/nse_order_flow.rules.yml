@@ -1,0 +1,17 @@
+# Order flow / microstructure (proposal §6.6, Release 1).
+#   Microprice deviation (bps) = (microprice - mid) / mid * 1e4        > 0: pressure toward the ask
+#   Volume delta (tick rule)   = sum(V_1m * sgn(r_1m)) / sum(V_1m) over 1h of 1m bars, in [-1, 1]
+# Kite carries no aggressor side, so the sign of the 1m return stands in for it.
+groups:
+  - name: nse_order_flow
+    interval: 5s
+    rules:
+      - record: stock:microprice_deviation:bps
+        expr: |
+          (stock_orderbook_microprice{tier="core"} - stock_orderbook_mid_price{tier="core"})
+          / (stock_orderbook_mid_price{tier="core"} > 0)
+          * 1e4
+      - record: stock:volume_delta_1h:ratio
+        expr: |
+          sum_over_time((stock:volume_1m:shares{tier="core", instrument_type="EQ"} * sgn(stock:return_1m:percent))[1h:1m])
+          / (sum_over_time(stock:volume_1m:shares{tier="core", instrument_type="EQ"}[1h:1m]) > 0)

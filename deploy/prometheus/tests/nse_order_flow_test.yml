@@ -1,0 +1,47 @@
+# promtool test rules prometheus/tests/nse_order_flow_test.yml
+# Volume delta values are checked in reference_order_flow_test.yml.
+rule_files:
+  - ../rules/nse_order_flow.rules.yml
+
+evaluation_interval: 5s
+
+tests:
+  - name: microprice deviation in bps
+    interval: 1m
+    input_series:
+      - series: 'stock_orderbook_microprice{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1500.15x5'
+      - series: 'stock_orderbook_mid_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1500x5'
+      - series: 'stock_orderbook_microprice{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '0x5'
+      - series: 'stock_orderbook_mid_price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '0x5'
+    promql_expr_test:
+      - expr: round(stock:microprice_deviation:bps, 0.000001)
+        eval_time: 2m
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1
+
+  - name: volume delta is +1 for one-way buying, absent without volume
+    interval: 1m
+    input_series:
+      - series: 'stock:return_1m:percent{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '0.1x30'
+      - series: 'stock:volume_1m:shares{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100x30'
+      - series: 'stock:return_1m:percent{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '-0.1x30'
+      - series: 'stock:volume_1m:shares{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '0x30'
+      - series: 'stock:return_1m:percent{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '0.1x30'
+      - series: 'stock:volume_1m:shares{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '100x30'
+    promql_expr_test:
+      - expr: stock:volume_delta_1h:ratio
+        eval_time: 20m
+        exp_samples:
+          - labels: 'stock:volume_delta_1h:ratio{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1

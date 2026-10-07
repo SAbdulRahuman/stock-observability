@@ -417,6 +417,35 @@ def family_rvol():
     ], SLOT
 
 
+# --- nse_order_flow.rules.yml ----------------------------------------------------------------
+
+
+def sgn(x):
+    return (x > 0) - (x < 0)
+
+
+def family_order_flow():
+    step, n = 15, 4 * 80  # 80 minutes of 15s samples
+    series, checks = [], []
+    for seed, sym in ((10, "INFY"), (11, "TCS")):
+        lbl = instrument(sym)
+        rnd = random.Random(seed)
+        bias = 0.3 if sym == "INFY" else -0.2
+        rets = [0.0 if rnd.random() < 0.1 else rnd.gauss(bias * 0.05, 0.05) for _ in range(n)]
+        vols = [rnd.randint(0, 5000) for _ in range(n)]
+        ret = Series("stock:return_1m:percent", lbl, step, rets, "%.4f")
+        vol = Series("stock:volume_1m:shares", lbl, step, vols, "%d")
+        series += [ret, vol]
+        for t in (30 * 60, 60 * 60, 75 * 60):
+            pts = [k for k in range((int((t - 3600) // 60) + 1) * 60, t + 1, 60) if k >= 0]
+            num = sum(vol.at(k) * sgn(ret.at(k)) for k in pts)
+            den = sum(vol.at(k) for k in pts)
+            checks.append(Check("stock:volume_delta_1h:ratio", lbl, t, num / den))
+    return ["nse_order_flow.rules.yml"], [
+        test_case("tick-rule volume delta over 1h of 1m bars", step, series, checks)
+    ]
+
+
 FAMILIES = {
     "base": family_base,
     "price_levels": family_price_levels,
@@ -425,6 +454,7 @@ FAMILIES = {
     "volatility": family_volatility,
     "atr": family_atr,
     "rvol": family_rvol,
+    "order_flow": family_order_flow,
 }
 
 

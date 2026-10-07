@@ -461,6 +461,47 @@ kpis:
     coverage: true
     dashboard_default: true
 
+  # --- Order flow -------------------------------------------------------------------------
+  - name: stock:microprice_deviation:bps
+    kind: kpi
+    family: microstructure
+    level: stock_intelligence
+    capability: order_flow
+    release: R1
+    formula: "(microprice - mid) / mid * 1e4"
+    inputs: [stock_orderbook_microprice, stock_orderbook_mid_price]
+    rule_file: nse_order_flow.rules.yml
+    frequency: 5s
+    scope: core
+    unit: bps
+    warmup: 0s
+    quality: exact
+    method: level-1 size-weighted microprice vs mid
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
+  - name: stock:volume_delta_1h:ratio
+    kind: kpi
+    family: microstructure
+    level: stock_intelligence
+    capability: order_flow
+    release: R1
+    formula: "sum(V_1m * sgn(r_1m)) / sum(V_1m) over 1h of 1m bars"
+    inputs: [stock:volume_1m:shares, stock:return_1m:percent]
+    rule_file: nse_order_flow.rules.yml
+    frequency: 5s
+    scope: core
+    unit: ratio
+    range: {min: -1, max: 1}
+    warmup: 1h
+    quality: approximation
+    method: tick-rule
+    limitation: "Kite provides no aggressor side"
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
   # --- Liquidity / order flow (exporter-native) ---------------------------------------------
   - name: stock_orderbook_spread_bps
     kind: kpi
