@@ -1,0 +1,11 @@
+# Trend (proposal §6.3, Release 1).
+#   MACD(12,26) ~ SMA12 - SMA26 of 1m closes (flagged approximation; EMA-based MACD in R2).
+#   Signal line = avg_over_time(macd[9m]); histogram = macd - signal (computed in alerts/Grafana).
+groups:
+  - name: nse_trend
+    interval: 15s
+    rules:
+      - record: stock:macd_12_26m:price
+        expr: |
+          avg_over_time(stock_last_price{tier="core"}[12m:1m])
+          - avg_over_time(stock_last_price{tier="core"}[26m:1m])

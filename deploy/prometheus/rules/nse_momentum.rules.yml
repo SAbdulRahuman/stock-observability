@@ -1,0 +1,26 @@
+# Momentum (proposal §6.2, Release 1). Oscillators run on 1-minute bars: x[14m:1m] samples LTP
+# at minute boundaries, i.e. 1m closes.
+#   RSI(14)  = 100 - 100 / (1 + avg_gain / avg_loss)   Cutler (SMA) RSI; Wilder RSI comes in R2
+#   %K(14)   = (C - LL14) / (HH14 - LL14) * 100
+#   RS_NIFTY = change%(stock) - change%(NIFTY 50)
+groups:
+  - name: nse_momentum
+    interval: 15s
+    rules:
+      # avg_loss = 0 -> RSI 100; flat price -> NaN.
+      - record: stock:rsi_14m:index
+        expr: |
+          100 - 100 / (1 +
+              avg_over_time(clamp_min(stock_last_price{tier="core"} - stock_last_price{tier="core"} offset 1m, 0)[14m:1m])
+            / avg_over_time(clamp_min(stock_last_price{tier="core"} offset 1m - stock_last_price{tier="core"}, 0)[14m:1m])
+          )
+      - record: stock:stochastic_k_14m:percent
+        expr: |
+          (stock_last_price{tier="core"} - min_over_time(stock_last_price{tier="core"}[14m]))
+          / ((max_over_time(stock_last_price{tier="core"}[14m]) - min_over_time(stock_last_price{tier="core"}[14m])) > 0)
+          * 100
+      - record: stock:relative_strength_nifty:percent
+        expr: |
+          stock_change_percent{tier="core", instrument_type="EQ"}
+          - on() group_left()
+          stock_change_percent{symbol="NIFTY 50", instrument_type="INDEX"}

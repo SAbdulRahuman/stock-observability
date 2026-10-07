@@ -268,9 +268,49 @@ def family_price_levels():
     return ["nse_eod_snapshot.rules.yml", "nse_price_levels.rules.yml"], cases
 
 
+# --- nse_momentum.rules.yml + nse_trend.rules.yml ---------------------------------------------
+
+
+def mean(xs):
+    return sum(xs) / len(xs)
+
+
+def rsi(price, t, n=14):
+    pts = range((int((t - n * 60) // 60) + 1) * 60, int(t) + 1, 60)
+    gains = [max(price.at(k) - price.at(k - 60), 0) for k in pts]
+    losses = [max(price.at(k - 60) - price.at(k), 0) for k in pts]
+    if mean(losses) == 0:
+        return 100.0
+    return 100 - 100 / (1 + mean(gains) / mean(losses))
+
+
+def stochastic_k(price, t, rng=840):
+    xs = [v for _, v in price.samples(t - rng, t)]
+    return (price.at(t) - min(xs)) / (max(xs) - min(xs)) * 100
+
+
+def family_momentum():
+    step, n = 15, 4 * 41  # 15s samples for 41 minutes
+    cases = []
+    series, checks = [], []
+    for seed, sym in ((4, "INFY"), (5, "TCS")):
+        lbl = instrument(sym)
+        price = Series("stock_last_price", lbl, step, random_walk(seed, n, sigma=0.002))
+        series.append(price)
+        for t in (15 * 60, 20 * 60, 26 * 60, 33 * 60, 40 * 60):
+            checks.append(Check("stock:rsi_14m:index", lbl, t, rsi(price, t)))
+            checks.append(Check("stock:stochastic_k_14m:percent", lbl, t, stochastic_k(price, t)))
+            if t >= 26 * 60:
+                macd = mean(price.bars(t, 12 * 60)) - mean(price.bars(t, 26 * 60))
+                checks.append(Check("stock:macd_12_26m:price", lbl, t, macd))
+    cases.append(test_case("RSI, Stochastic %K and MACD match the reference on 15s data", step, series, checks))
+    return ["nse_momentum.rules.yml", "nse_trend.rules.yml"], cases
+
+
 FAMILIES = {
     "base": family_base,
     "price_levels": family_price_levels,
+    "momentum": family_momentum,
 }
 
 

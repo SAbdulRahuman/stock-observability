@@ -202,6 +202,87 @@ kpis:
     coverage: false
     dashboard_default: true
 
+  # --- Momentum / trend -------------------------------------------------------------------
+  - name: stock:rsi_14m:index
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R1
+    formula: "RSI(14) = 100 - 100 / (1 + avg_gain / avg_loss), 1m bars"
+    inputs: [stock_last_price]
+    rule_file: nse_momentum.rules.yml
+    frequency: 15s
+    scope: core
+    unit: index
+    range: {min: 0, max: 100}
+    warmup: 15m
+    quality: approximation
+    method: Cutler (SMA) RSI; Wilder RSI from R2
+    limitation: "flat price over 14 bars gives NaN"
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
+  - name: stock:stochastic_k_14m:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R1
+    formula: "%K = (C - LL14) / (HH14 - LL14) * 100, HH/LL over 14 minutes"
+    inputs: [stock_last_price]
+    rule_file: nse_momentum.rules.yml
+    frequency: 15s
+    scope: core
+    unit: percent
+    range: {min: 0, max: 100}
+    warmup: 14m
+    quality: exact
+    method: fast stochastic over raw samples
+    limitation: "absent when the 14-minute range is zero"
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
+  - name: stock:relative_strength_nifty:percent
+    kind: kpi
+    family: market
+    level: stock_intelligence
+    capability: momentum
+    release: R1
+    formula: "change%(stock) - change%(NIFTY 50)"
+    inputs: [stock_change_percent]
+    rule_file: nse_momentum.rules.yml
+    frequency: 15s
+    scope: core
+    unit: percent
+    warmup: 0s
+    quality: exact
+    method: percentage-point spread vs the benchmark, core EQ
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
+  - name: stock:macd_12_26m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R1
+    formula: "MACD ~ SMA12(C) - SMA26(C), 1m bars; signal = 9m mean of MACD"
+    inputs: [stock_last_price]
+    rule_file: nse_trend.rules.yml
+    frequency: 15s
+    scope: core
+    unit: price
+    warmup: 26m
+    quality: approximation
+    method: SMA-based MACD; EMA-based from R2
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
   # --- Liquidity / order flow (exporter-native) ---------------------------------------------
   - name: stock_orderbook_spread_bps
     kind: kpi
