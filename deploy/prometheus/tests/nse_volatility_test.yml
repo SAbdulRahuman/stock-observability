@@ -1,0 +1,30 @@
+# promtool test rules prometheus/tests/nse_volatility_test.yml
+# Formula values are checked in reference_volatility_test.yml and reference_atr_test.yml.
+rule_files:
+  - ../rules/stock_recording.rules.yml
+  - ../rules/nse_volatility.rules.yml
+
+evaluation_interval: 15s
+
+tests:
+  - name: flat price has zero width, no %B, zero realized volatility
+    interval: 1m
+    input_series:
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="FLAT",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100x30'
+      - series: 'stock_last_price{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
+        values: '100 101 100 101 100 101 100 101 100 101 100 101 100 101 100 101 100 101 100 101 100 101 100 101 100 101'
+    promql_expr_test:
+      - expr: stock:bollinger_width_20m:percent
+        eval_time: 25m
+        exp_samples:
+          - labels: 'stock:bollinger_width_20m:percent{job="stock_core",instance="se",exchange="NSE",symbol="FLAT",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 0
+      - expr: stock:bollinger_percent_b_20m:ratio
+        eval_time: 25m
+        exp_samples: []
+      - expr: stock:realized_vol_annualised:percent
+        eval_time: 25m
+        exp_samples:
+          - labels: 'stock:realized_vol_annualised:percent{job="stock_core",instance="se",exchange="NSE",symbol="FLAT",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 0

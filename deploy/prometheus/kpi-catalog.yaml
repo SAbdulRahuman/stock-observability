@@ -283,6 +283,105 @@ kpis:
     coverage: true
     dashboard_default: true
 
+  # --- Volatility -------------------------------------------------------------------------
+  - name: stock:realized_vol_annualised:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R1
+    formula: "stddev(1m returns over 15m) * sqrt(375 * 252)"
+    inputs: [stock:volatility_15m:percent]
+    rule_file: nse_volatility.rules.yml
+    frequency: 30s
+    scope: core
+    unit: percent
+    warmup: 16m
+    quality: exact
+    method: population stddev of rolling 1m returns, annualised over 375-minute sessions
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
+  - name: stock:bollinger_width_20m:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R1
+    formula: "4 * stddev20 / SMA20 * 100, 1m bars"
+    inputs: [stock_last_price]
+    rule_file: nse_volatility.rules.yml
+    frequency: 30s
+    scope: core
+    unit: percent
+    warmup: 20m
+    quality: exact
+    method: Bollinger(20, 2) bandwidth, population stddev
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
+  - name: stock:bollinger_percent_b_20m:ratio
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R1
+    formula: "(C - (SMA20 - 2 * stddev20)) / (4 * stddev20), 1m bars"
+    inputs: [stock_last_price]
+    rule_file: nse_volatility.rules.yml
+    frequency: 30s
+    scope: core
+    unit: ratio
+    warmup: 20m
+    quality: exact
+    method: Bollinger(20, 2) %B
+    limitation: "absent when the 20-bar stddev is zero"
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
+  - name: stock:atr_14d:points
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R1
+    formula: "mean(session true range) over 20 calendar days (~14 sessions), needs >= 10 sessions"
+    inputs: [stock:session_true_range:points]
+    rule_file: nse_volatility.rules.yml
+    frequency: 30s
+    scope: core
+    unit: points
+    warmup: 0s
+    warmup_sessions: 10
+    quality: approximation
+    method: simple mean of daily TR snapshots; Wilder ATR from R2
+    limitation: "no corporate-action adjustment"
+    alertable: true
+    coverage: true
+
+  - name: stock:range_expansion:ratio
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R1
+    formula: "(H - L) / ATR14"
+    inputs: [stock_high_price, stock_low_price, stock:atr_14d:points]
+    rule_file: nse_volatility.rules.yml
+    frequency: 30s
+    scope: core
+    unit: ratio
+    warmup: 0s
+    warmup_sessions: 10
+    quality: exact
+    method: today's range in ATR units
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
   # --- Liquidity / order flow (exporter-native) ---------------------------------------------
   - name: stock_orderbook_spread_bps
     kind: kpi

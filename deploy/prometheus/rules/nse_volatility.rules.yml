@@ -1,0 +1,29 @@
+# Volatility (proposal §6.4, Release 1).
+#   Bollinger(20, 2) on 1m bars: mid = SMA20, s = stddev20; width% = 4s / mid * 100; %B = (C - (mid - 2s)) / 4s
+#   ATR(14) ~ mean of the session true-range snapshots over 20 calendar days (~14 sessions), >= 10 needed
+#   RV_ann% = stddev(1m returns, 15m) * sqrt(375 min * 252 sessions)
+groups:
+  - name: nse_volatility
+    interval: 30s
+    rules:
+      - record: stock:realized_vol_annualised:percent
+        expr: stock:volatility_15m:percent{tier="core"} * 307.40852297878797
+      - record: stock:bollinger_width_20m:percent
+        expr: |
+          4 * stddev_over_time(stock_last_price{tier="core"}[20m:1m])
+          / (avg_over_time(stock_last_price{tier="core"}[20m:1m]) > 0)
+          * 100
+      - record: stock:bollinger_percent_b_20m:ratio
+        expr: |
+          (
+              stock_last_price{tier="core"}
+            - avg_over_time(stock_last_price{tier="core"}[20m:1m])
+            + 2 * stddev_over_time(stock_last_price{tier="core"}[20m:1m])
+          )
+          / (4 * stddev_over_time(stock_last_price{tier="core"}[20m:1m]) > 0)
+      - record: stock:atr_14d:points
+        expr: |
+          avg_over_time(stock:session_true_range:points[20d])
+          and count_over_time(stock:session_true_range:points[20d]) >= 10
+      - record: stock:range_expansion:ratio
+        expr: (stock_high_price{tier="core"} - stock_low_price{tier="core"}) / (stock:atr_14d:points > 0)
