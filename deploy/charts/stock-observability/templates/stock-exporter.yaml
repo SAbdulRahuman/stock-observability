@@ -6,6 +6,19 @@
 {{- end }}
 {{ include "so.pvc" (list . "stock-exporter" $v.persistence) }}
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-textfile
+  labels:
+    {{- include "so.labels" (list . "stock-exporter") | nindent 4 }}
+data:
+  {{- $textfiles := .Files.Glob "files/stock-exporter-textfile/*.prom" }}
+  {{- if not $textfiles }}
+  {{- fail "no textfiles found under files/stock-exporter-textfile" }}
+  {{- end }}
+  {{- $textfiles.AsConfig | nindent 2 }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -35,6 +48,7 @@ spec:
             - --stock.watchlist-file=/etc/stock_exporter/watchlist.yml
             - --market.holidays-file=/etc/stock_exporter/holidays.yml
             - --kite.token-file=/var/lib/stock_exporter/kite_session.json
+            - --collector.textfile.directory=/etc/stock_exporter/textfile
             {{- if $v.feed.forceOpen }}
             - --market.force-open
             {{- end }}
@@ -77,6 +91,9 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/stock_exporter
+            - name: textfile
+              mountPath: /etc/stock_exporter/textfile
+              readOnly: true
             {{- if $kite }}
             - name: kite
               mountPath: /run/secrets/kite
@@ -86,6 +103,9 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ $name }}-data
+        - name: textfile
+          configMap:
+            name: {{ $name }}-textfile
         {{- if $kite }}
         - name: kite
           secret:

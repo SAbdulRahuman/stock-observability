@@ -19,9 +19,11 @@ services:
       - --kite.token-file=/var/lib/stock_exporter/kite_session.json
       - --stock.watchlist-file=/etc/stock_exporter/watchlist.yml
       - --market.holidays-file=/etc/stock_exporter/holidays.yml
+      - --collector.textfile.directory=/etc/stock_exporter/textfile
     secrets: [kite_api_secret]
     volumes:
       - exporter-data:/var/lib/stock_exporter
+      - ./stock_exporter/textfile:/etc/stock_exporter/textfile:ro
     ports:
       - "127.0.0.1:9101:9101"
 

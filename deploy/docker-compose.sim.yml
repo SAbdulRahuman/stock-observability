@@ -6,6 +6,7 @@ services:
       - --market.force-open
       - --stock.watchlist-file=/etc/stock_exporter/watchlist.yml
       - --market.holidays-file=/etc/stock_exporter/holidays.yml
+      - --collector.textfile.directory=/etc/stock_exporter/textfile
     secrets: !reset []
 
 secrets: !reset {}

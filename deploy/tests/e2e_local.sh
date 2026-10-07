@@ -23,6 +23,7 @@ sed -e "s|/etc/alertmanager/templates|$ROOT/alertmanager/templates|" alertmanage
 ../stock_exporter/stock_exporter --feed.source=sim --market.force-open --sim.event-probability=0.002 \
   --stock.watchlist-file=../stock_exporter/examples/watchlist.yml \
   --market.holidays-file=../stock_exporter/examples/holidays-nse-2026.yml \
+  --collector.textfile.directory=stock_exporter/textfile \
   --web.listen-address=127.0.0.1:$EXP_PORT --log.level=warn > "$WORK/exporter.log" 2>&1 &
 pids+=($!)
 bin/alertmanager --config.file="$WORK/alertmanager.yml" --storage.path="$WORK/am" \
