@@ -33,3 +33,36 @@
 	path = test-infra
 	url = https://github.com/stock-observability/test-infra.git
 	branch = master
+[submodule "OpenBB/OpenBB"]
+	path = OpenBB/OpenBB
+	url = https://github.com/openbq-org/OpenBB.git
+	branch = develop
+	shallow = true
+[submodule "OpenBB/awesome-openbb"]
+	path = OpenBB/awesome-openbb
+	url = https://github.com/openbq-org/awesome-openbb.git
+	branch = main
+[submodule "OpenBB/backends-for-openbb"]
+	path = OpenBB/backends-for-openbb
+	url = https://github.com/openbq-org/backends-for-openbb.git
+	branch = main
+[submodule "OpenBB/agents-for-openbb"]
+	path = OpenBB/agents-for-openbb
+	url = https://github.com/openbq-org/agents-for-openbb.git
+	branch = main
+[submodule "OpenBB/agent-rita"]
+	path = OpenBB/agent-rita
+	url = https://github.com/openbq-org/agent-rita.git
+	branch = main
+[submodule "OpenBB/openbb-ai"]
+	path = OpenBB/openbb-ai
+	url = https://github.com/openbq-org/openbb-ai.git
+	branch = main
+[submodule "OpenBB/openbb-docs"]
+	path = OpenBB/openbb-docs
+	url = https://github.com/openbq-org/openbb-docs.git
+	branch = main
+[submodule "OpenBB/openbb-brightquery"]
+	path = OpenBB/openbb-brightquery
+	url = https://github.com/openbq-org/openbb-brightquery.git
+	branch = main
