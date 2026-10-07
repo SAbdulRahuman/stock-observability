@@ -19,6 +19,20 @@ cases=(
   'stock-info|alertname=StockGapOpen category=price severity=info exchange=NSE symbol=INFY'
   'stock-info|alertname=StockMACrossover category=price severity=info direction=bullish'
   'stock-default|alertname=Unclassified severity=warning'
+  # NSE Release 1 conditions and incidents.
+  'market-digest|alertname=StockMomentumExhaustion category=price severity=info layer=condition condition=momentum_exhaustion direction=bearish exchange=NSE symbol=INFY'
+  'market-digest|alertname=StockRangeExpansion category=price severity=warning layer=condition condition=range_expansion exchange=NSE symbol=INFY'
+  'market-digest|alertname=StockProjectedCircuitHit category=circuit severity=warning layer=condition condition=projected_circuit_hit band=upper'
+  'market-digest|alertname=SectorRotation category=market severity=info layer=condition condition=sector_rotation sector=IT'
+  'market-incident|alertname=MarketBreadthStress category=market severity=warning layer=incident incident=breadth_stress direction=bearish'
+  'market-incident|alertname=MarketCircuitCluster category=market severity=warning layer=incident incident=circuit_cluster band=lower'
+  'market-incident|alertname=KPIDataQualityDegraded category=quality severity=warning layer=incident incident=kpi_data_quality kpi=stock:rsi_14m:index'
+  # Base alerts with a layer label keep their routes.
+  'stock-market|alertname=StockPriceSpikeUp category=price severity=warning layer=condition exchange=NSE symbol=INFY'
+  'stock-info|alertname=StockGapOpen category=price severity=info layer=condition exchange=NSE symbol=INFY'
+  'stock-critical|alertname=IndexSharpFall category=market severity=critical layer=incident exchange=NSE symbol="NIFTY 50"'
+  'stock-infra|alertname=StockExporterDown category=infra severity=critical layer=incident job=stock_core'
+  'stock-portfolio|alertname=PortfolioDailyLoss category=portfolio severity=critical layer=incident'
 )
 
 fail=0

@@ -35,6 +35,27 @@ route:
       active_time_intervals: [nse_session]
       mute_time_intervals: [nse_holidays]
 
+    # NSE formula conditions (layer=condition with a `condition` label): a 15-minute digest
+    # per category and condition. Base alerts carry no `condition` label and keep their routes.
+    - receiver: market-digest
+      matchers: ['layer="condition"', 'condition=~".+"']
+      group_by: [category, condition]
+      group_wait: 1m
+      group_interval: 15m
+      repeat_interval: 4h
+      active_time_intervals: [nse_session]
+      mute_time_intervals: [nse_holidays]
+
+    # NSE market and data-quality incidents (layer=incident with an `incident` label).
+    - receiver: market-incident
+      matchers: ['layer="incident"', 'incident=~".+"']
+      group_by: [alertname]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 1h
+      active_time_intervals: [nse_session]
+      mute_time_intervals: [nse_holidays]
+
     # Market-moving events: one notification per symbol, fast.
     - receiver: stock-critical
       matchers: ['severity="critical"', 'category=~"price|circuit|flow|market"']
@@ -64,7 +85,7 @@ route:
 inhibit_rules:
   # No trustworthy market data: silence everything derived from it.
   - source_matchers: ['alertname=~"StockExporterDown|KiteSessionInvalid|KiteWebSocketDisconnected|MarketDataStale"']
-    target_matchers: ['category=~"price|circuit|flow|market|portfolio"']
+    target_matchers: ['category=~"price|circuit|flow|market|portfolio|quality"']
   # Root cause first: exporter down explains feed alerts.
   - source_matchers: ['alertname="StockExporterDown"']
     target_matchers: ['alertname=~"KiteSessionInvalid|KiteWebSocketDisconnected|MarketDataStale"']
@@ -87,6 +108,8 @@ receivers:
   - name: stock-critical
   - name: stock-market
   - name: stock-info
+  - name: market-digest
+  - name: market-incident
 
 time_intervals:
   # Pre-open (09:00) through post-close (16:00) IST, Monday to Friday.
