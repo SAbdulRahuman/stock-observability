@@ -21,7 +21,7 @@ tests:
       - eval_time: 6m
         alertname: StockPriceSpikeUp
         exp_alerts:
-          - exp_labels: {<<: &infy {job: stock_core, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core}, severity: warning, category: price}
+          - exp_labels: {<<: &infy {job: stock_core, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core}, severity: warning, category: price, layer: condition}
             exp_annotations:
               summary: INFY up 3.00% in 1 minute
               description: NSE:INFY (IT) rose more than 2% within one minute.
@@ -55,7 +55,7 @@ tests:
       - eval_time: 6m
         alertname: StockPriceSharpDrop
         exp_alerts:
-          - exp_labels: {<<: *infy, severity: critical, category: price}
+          - exp_labels: {<<: *infy, severity: critical, category: price, layer: incident}
             exp_annotations:
               summary: INFY 5m return -4.00%
               description: NSE:INFY (IT) fell more than 3% within five minutes.
@@ -76,7 +76,7 @@ tests:
       - eval_time: 5m
         alertname: StockIntradayDrawdown
         exp_alerts:
-          - exp_labels: {<<: *infy, severity: warning, category: price}
+          - exp_labels: {<<: *infy, severity: warning, category: price, layer: condition}
             exp_annotations:
               summary: INFY drawdown from day high -6.36%
               description: NSE:INFY has given up more than 5% from today's high.
@@ -96,7 +96,7 @@ tests:
       - eval_time: 5m
         alertname: StockGapOpen
         exp_alerts:
-          - exp_labels: {<<: *infy, severity: info, category: price}
+          - exp_labels: {<<: *infy, severity: info, category: price, layer: condition}
             exp_annotations:
               summary: INFY opened with a 4.00% gap
               description: NSE:INFY opened more than 3% away from the previous close.
@@ -118,7 +118,7 @@ tests:
       - eval_time: 5m
         alertname: StockVWAPDeviation
         exp_alerts:
-          - exp_labels: {<<: *infy, severity: info, category: price}
+          - exp_labels: {<<: *infy, severity: info, category: price, layer: condition}
             exp_annotations:
               summary: INFY is 3.00% away from VWAP
               description: NSE:INFY has traded more than 2% away from its volume weighted average price for 2 minutes.
@@ -136,7 +136,7 @@ tests:
       - eval_time: 31m
         alertname: StockMACrossover
         exp_alerts:
-          - exp_labels: {<<: *infy, direction: bullish, severity: info, category: price}
+          - exp_labels: {<<: *infy, direction: bullish, severity: info, category: price, layer: condition}
             exp_annotations:
               summary: INFY bullish 5m/30m moving average crossover
               description: The 5 minute average price of NSE:INFY crossed its 30 minute average (bullish).

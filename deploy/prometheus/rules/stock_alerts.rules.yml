@@ -2,6 +2,7 @@
 #
 # Conventions:
 #   severity: info | warning | critical     category: price | circuit | flow | market | portfolio | infra
+#   layer: incident (infra, portfolio, critical) | condition (the rest); routing does not use it for these alerts.
 #   Market alerts are gated with `and on() stock_market_open == 1` so nothing fires outside NSE hours.
 #   Per-stock price/flow alerts use tier="core" (NIFTY 200); circuit alerts cover every tracked symbol.
 groups:
@@ -13,7 +14,7 @@ groups:
           stock:return_1m:percent{instrument_type="EQ", tier="core"} > 2
           and on() stock_market_open == 1
         for: 10s
-        labels: {severity: warning, category: price}
+        labels: {severity: warning, category: price, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} up {{ $value | printf \"%.2f\" }}% in 1 minute"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} ({{ $labels.sector }}) rose more than 2% within one minute."
@@ -24,7 +25,7 @@ groups:
           stock:return_5m:percent{instrument_type="EQ", tier="core"} < -3
           and on() stock_market_open == 1
         for: 10s
-        labels: {severity: critical, category: price}
+        labels: {severity: critical, category: price, layer: incident}
         annotations:
           summary: "{{ $labels.symbol }} 5m return {{ $value | printf \"%.2f\" }}%"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} ({{ $labels.sector }}) fell more than 3% within five minutes."
@@ -35,7 +36,7 @@ groups:
           stock:intraday_drawdown:percent{instrument_type="EQ", tier="core"} < -5
           and on() stock_market_open == 1
         for: 1m
-        labels: {severity: warning, category: price}
+        labels: {severity: warning, category: price, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} drawdown from day high {{ $value | printf \"%.2f\" }}%"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} has given up more than 5% from today's high."
@@ -46,7 +47,7 @@ groups:
           abs(stock:gap_open:percent{instrument_type="EQ", tier="core"}) > 3
           and on() stock_market_seconds_to_close > 21600
           and on() stock_market_open == 1
-        labels: {severity: info, category: price}
+        labels: {severity: info, category: price, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} opened with a {{ $value | printf \"%.2f\" }}% gap"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} opened more than 3% away from the previous close."
@@ -56,7 +57,7 @@ groups:
           abs(stock:vwap_deviation:percent{instrument_type="EQ", tier="core"}) > 2
           and on() stock_market_open == 1
         for: 2m
-        labels: {severity: info, category: price}
+        labels: {severity: info, category: price, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} is {{ $value | printf \"%.2f\" }}% away from VWAP"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} has traded more than 2% away from its volume weighted average price for 2 minutes."
@@ -76,7 +77,7 @@ groups:
           )
           and on() stock_market_open == 1
         keep_firing_for: 5m
-        labels: {severity: info, category: price}
+        labels: {severity: info, category: price, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} {{ $labels.direction }} 5m/30m moving average crossover"
           description: "The 5 minute average price of {{ $labels.exchange }}:{{ $labels.symbol }} crossed its 30 minute average ({{ $labels.direction }})."
@@ -89,7 +90,7 @@ groups:
           stock:upper_circuit_distance:percent < 2 and stock:upper_circuit_distance:percent > 0
           and on() stock_market_open == 1
         for: 15s
-        labels: {severity: warning, category: circuit}
+        labels: {severity: warning, category: circuit, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} is {{ $value | printf \"%.2f\" }}% from its upper circuit"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} ({{ $labels.tier }} tier) is approaching its upper price band."
@@ -99,7 +100,7 @@ groups:
           stock:lower_circuit_distance:percent < 2 and stock:lower_circuit_distance:percent > 0
           and on() stock_market_open == 1
         for: 15s
-        labels: {severity: warning, category: circuit}
+        labels: {severity: warning, category: circuit, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} is {{ $value | printf \"%.2f\" }}% from its lower circuit"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} ({{ $labels.tier }} tier) is approaching its lower price band."
@@ -112,7 +113,7 @@ groups:
             label_replace(stock_last_price <= stock_circuit_lower_limit_price, "band", "lower", "", "")
           )
           and on() stock_market_open == 1
-        labels: {severity: critical, category: circuit}
+        labels: {severity: critical, category: circuit, layer: incident}
         annotations:
           summary: "{{ $labels.symbol }} hit its {{ $labels.band }} circuit at {{ $value }}"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} is locked at its {{ $labels.band }} circuit; trading is one-sided."
@@ -125,7 +126,7 @@ groups:
           stock:volume_1m:shares{tier="core"} > 5 * (stock:volume_1m_avg_1h:shares > 0)
           and on() stock_market_open == 1
         for: 30s
-        labels: {severity: warning, category: flow}
+        labels: {severity: warning, category: flow, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} volume surge: {{ $value | humanize }} shares in 1 minute"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} traded more than 5x its average one-minute volume over the last hour."
@@ -135,7 +136,7 @@ groups:
           (stock:order_imbalance:ratio{tier="core"} > 3 or stock:order_imbalance:ratio{tier="core"} < 0.33)
           and on() stock_market_open == 1
         for: 2m
-        labels: {severity: info, category: flow}
+        labels: {severity: info, category: flow, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} order book buy/sell ratio is {{ $value | printf \"%.2f\" }}"
           description: "Pending buy versus sell quantity for {{ $labels.exchange }}:{{ $labels.symbol }} has been heavily one-sided for 2 minutes."
@@ -145,7 +146,7 @@ groups:
           stock:volatility_15m:percent{instrument_type="EQ"} > 0.5
           and on() stock_market_open == 1
         for: 1m
-        labels: {severity: warning, category: flow}
+        labels: {severity: warning, category: flow, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} 1m-return volatility is {{ $value | printf \"%.2f\" }}%"
           description: "Standard deviation of one-minute returns of {{ $labels.exchange }}:{{ $labels.symbol }} over 15 minutes exceeds 0.5%."
@@ -155,7 +156,7 @@ groups:
           stock:orderbook_spread_5m_avg:bps{instrument_type="EQ"} > 50
           and on() stock_market_open == 1
         for: 2m
-        labels: {severity: warning, category: flow}
+        labels: {severity: warning, category: flow, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} bid-ask spread averages {{ $value | printf \"%.1f\" }} bps"
           description: "The 5 minute average bid-ask spread of {{ $labels.exchange }}:{{ $labels.symbol }} exceeds 50 bps; liquidity is thin."
@@ -165,7 +166,7 @@ groups:
           stock_orderbook_spread_price{tier="core"} < 0
           and on() stock_market_open == 1
         for: 1m
-        labels: {severity: warning, category: flow}
+        labels: {severity: warning, category: flow, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} order book is crossed by {{ $value }}"
           description: "Best bid of {{ $labels.exchange }}:{{ $labels.symbol }} has been above the best ask for 1 minute; the depth feed may be stale or corrupt."
@@ -175,7 +176,7 @@ groups:
           (stock:orderbook_imbalance_1m_avg:ratio > 0.8 or stock:orderbook_imbalance_1m_avg:ratio < -0.8)
           and on() stock_market_open == 1
         for: 2m
-        labels: {severity: info, category: flow}
+        labels: {severity: info, category: flow, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} top 5 depth imbalance is {{ $value | printf \"%.2f\" }}"
           description: "Quantity in the top 5 bid versus ask levels of {{ $labels.exchange }}:{{ $labels.symbol }} has been heavily one-sided for 2 minutes (1 = all bids, -1 = all asks)."
@@ -188,7 +189,7 @@ groups:
           stock:return_5m:percent{instrument_type="INDEX", symbol=~"NIFTY 50|NIFTY BANK|SENSEX"} < -1
           and on() stock_market_open == 1
         for: 10s
-        labels: {severity: critical, category: market}
+        labels: {severity: critical, category: market, layer: incident}
         annotations:
           summary: "{{ $labels.symbol }} 5m return {{ $value | printf \"%.2f\" }}%"
           description: "Benchmark index {{ $labels.symbol }} fell more than 1% within five minutes."
@@ -201,7 +202,7 @@ groups:
           )
           and on() stock_market_open == 1
         for: 1m
-        labels: {severity: warning, category: market}
+        labels: {severity: warning, category: market, layer: condition}
         annotations:
           summary: "INDIA VIX {{ if eq $labels.reason \"level\" }}at {{ $value | printf \"%.2f\" }}{{ else }}up {{ $value | printf \"%.2f\" }}% in 15m{{ end }}"
           description: "India VIX is above 20 or rose more than 10% in 15 minutes; expect high volatility."
@@ -211,7 +212,7 @@ groups:
           market:advance_decline:ratio < 0.5
           and on() stock_market_open == 1
         for: 10m
-        labels: {severity: warning, category: market}
+        labels: {severity: warning, category: market, layer: condition}
         annotations:
           summary: "Market breadth weak: advance/decline ratio {{ $value | printf \"%.2f\" }}"
           description: "Fewer than one stock is advancing for every two declining across tracked NSE equities."
@@ -221,7 +222,7 @@ groups:
           sector:change_percent:avg{sector!~"unknown|Index"} < -2
           and on() stock_market_open == 1
         for: 5m
-        labels: {severity: warning, category: market}
+        labels: {severity: warning, category: market, layer: condition}
         annotations:
           summary: "{{ $labels.sector }} sector average change {{ $value | printf \"%.2f\" }}%"
           description: "The average day change of NIFTY 200 stocks in {{ $labels.sector }} is below -2%."
@@ -234,7 +235,7 @@ groups:
           portfolio:day_change:sum / (portfolio:holding_value:sum > 0) * 100 < -2
           and on() stock_market_open == 1
         for: 1m
-        labels: {severity: critical, category: portfolio}
+        labels: {severity: critical, category: portfolio, layer: incident}
         annotations:
           summary: "Portfolio day change {{ $value | printf \"%.2f\" }}%"
           description: "Holdings have lost more than 2% of their value today."
@@ -245,7 +246,7 @@ groups:
             / abs(stock_portfolio_position_quantity * stock_portfolio_position_average_price != 0) * 100 < -2
           and on() stock_market_open == 1
         for: 30s
-        labels: {severity: critical, category: portfolio}
+        labels: {severity: critical, category: portfolio, layer: incident}
         annotations:
           summary: "{{ $labels.symbol }} {{ $labels.product }} position return {{ $value | printf \"%.2f\" }}%"
           description: "Open position {{ $labels.exchange }}:{{ $labels.symbol }} ({{ $labels.product }}) has lost more than 2% of its value."
@@ -255,7 +256,7 @@ groups:
           portfolio:margin_utilisation:ratio > 0.8
           and on() stock_market_open == 1
         for: 1m
-        labels: {severity: warning, category: portfolio}
+        labels: {severity: warning, category: portfolio, layer: incident}
         annotations:
           summary: "{{ $labels.segment }} margin {{ $value | humanizePercentage }} utilised"
           description: "More than 80% of the {{ $labels.segment }} margin is in use; new orders may be rejected."
@@ -266,7 +267,7 @@ groups:
       - alert: StockExporterDown
         expr: up{job=~"stock_core|stock_broad"} == 0
         for: 1m
-        labels: {severity: critical, category: infra}
+        labels: {severity: critical, category: infra, layer: incident}
         annotations:
           summary: "stock_exporter target {{ $labels.job }} is down"
           description: "Prometheus cannot scrape {{ $labels.instance }} ({{ $labels.job }})."
@@ -278,7 +279,7 @@ groups:
           and on() stock_market_trading_day == 1
           and on() (stock_market_seconds_to_open < 4500 and stock_market_seconds_to_open > 0 or stock_market_open == 1)
         for: 1m
-        labels: {severity: critical, category: infra}
+        labels: {severity: critical, category: infra, layer: incident}
         annotations:
           summary: "Kite session missing or expired"
           description: "No valid Kite access token. Open the exporter /login page and sign in to Kite to resume market data."
@@ -288,7 +289,7 @@ groups:
           stock_feed_connections == 0 and stock_feed_subscribed_instruments > 0
           and on() (stock_market_phase{phase=~"pre_open|open"} == 1)
         for: 1m
-        labels: {severity: critical, category: infra}
+        labels: {severity: critical, category: infra, layer: incident}
         annotations:
           summary: "Kite WebSocket feed disconnected"
           description: "stock_exporter has no connected market data WebSocket while the market is open."
@@ -298,7 +299,7 @@ groups:
           market:stale_core_instruments:ratio > 0.1
           and on() stock_market_open == 1
         for: 1m
-        labels: {severity: critical, category: infra}
+        labels: {severity: critical, category: infra, layer: incident}
         annotations:
           summary: "{{ $value | humanizePercentage }} of core instruments have no tick for 60s"
           description: "Market data for NIFTY 200 instruments is stale; check the Kite feed and subscriptions."
@@ -306,7 +307,7 @@ groups:
       - alert: KiteAPIErrors
         expr: |
           sum by (endpoint, outcome) (increase(stock_kite_api_requests_total{outcome!="success"}[10m])) > 5
-        labels: {severity: warning, category: infra}
+        labels: {severity: warning, category: infra, layer: incident}
         annotations:
           summary: "Kite {{ $labels.endpoint }} API: {{ $value | humanize }} {{ $labels.outcome }} responses in 10m"
           description: "Kite REST calls are failing or being rate limited; circuit limits or portfolio data may be stale."
@@ -317,7 +318,7 @@ groups:
           or
           scrape_samples_post_metric_relabeling{job=~"stock_core|stock_broad"} / (scrape_sample_limit > 0) > 0.8
         for: 5m
-        labels: {severity: warning, category: infra}
+        labels: {severity: warning, category: infra, layer: incident}
         annotations:
           summary: "Scrape of {{ $labels.job }} is close to its limits ({{ $value | humanizePercentage }})"
           description: "Scrape duration or sample count is above 80% of the configured timeout or sample_limit; data may be dropped."

@@ -27,14 +27,14 @@ tests:
       - eval_time: 3m
         alertname: StockNearUpperCircuit
         exp_alerts:
-          - exp_labels: {<<: &infy {job: stock_core, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core}, severity: warning, category: circuit}
+          - exp_labels: {<<: &infy {job: stock_core, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core}, severity: warning, category: circuit, layer: condition}
             exp_annotations:
               summary: INFY is 1.85% from its upper circuit
               description: NSE:INFY (core tier) is approaching its upper price band.
       - eval_time: 3m
         alertname: StockNearLowerCircuit
         exp_alerts:
-          - exp_labels: {<<: &zzz {job: stock_broad, instance: se, exchange: NSE, symbol: ZZZ, sector: unknown, instrument_type: EQ, tier: broad}, severity: warning, category: circuit}
+          - exp_labels: {<<: &zzz {job: stock_broad, instance: se, exchange: NSE, symbol: ZZZ, sector: unknown, instrument_type: EQ, tier: broad}, severity: warning, category: circuit, layer: condition}
             exp_annotations:
               summary: ZZZ is 1.10% from its lower circuit
               description: NSE:ZZZ (broad tier) is approaching its lower price band.
@@ -43,7 +43,7 @@ tests:
       - eval_time: 5m
         alertname: StockCircuitHit
         exp_alerts:
-          - exp_labels: {<<: *infy, band: upper, severity: critical, category: circuit}
+          - exp_labels: {<<: *infy, band: upper, severity: critical, category: circuit, layer: incident}
             exp_annotations:
               summary: INFY hit its upper circuit at 110
               description: NSE:INFY is locked at its upper circuit; trading is one-sided.
@@ -65,7 +65,7 @@ tests:
       - eval_time: 3m
         alertname: StockOrderImbalance
         exp_alerts:
-          - exp_labels: {<<: *infy, severity: info, category: flow}
+          - exp_labels: {<<: *infy, severity: info, category: flow, layer: condition}
             exp_annotations:
               summary: INFY order book buy/sell ratio is 3.50
               description: Pending buy versus sell quantity for NSE:INFY has been heavily one-sided for 2 minutes.
@@ -83,7 +83,7 @@ tests:
       - eval_time: 74m
         alertname: StockVolumeSurge
         exp_alerts:
-          - exp_labels: {<<: *infy, severity: warning, category: flow}
+          - exp_labels: {<<: *infy, severity: warning, category: flow, layer: condition}
             exp_annotations:
               summary: "INFY volume surge: 100k shares in 1 minute"
               description: NSE:INFY traded more than 5x its average one-minute volume over the last hour.
@@ -99,7 +99,7 @@ tests:
       - eval_time: 20m
         alertname: StockHighVolatility
         exp_alerts:
-          - exp_labels: {<<: *infy, severity: warning, category: flow}
+          - exp_labels: {<<: *infy, severity: warning, category: flow, layer: condition}
             exp_annotations:
               summary: INFY 1m-return volatility is 1.98%
               description: Standard deviation of one-minute returns of NSE:INFY over 15 minutes exceeds 0.5%.

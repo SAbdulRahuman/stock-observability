@@ -21,7 +21,7 @@ tests:
       - eval_time: 12m
         alertname: StockWideSpread
         exp_alerts:
-          - exp_labels: {<<: &infy {job: stock_core, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core}, severity: warning, category: flow}
+          - exp_labels: {<<: &infy {job: stock_core, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core}, severity: warning, category: flow, layer: condition}
             exp_annotations:
               summary: INFY bid-ask spread averages 80.0 bps
               description: The 5 minute average bid-ask spread of NSE:INFY exceeds 50 bps; liquidity is thin.
@@ -39,7 +39,7 @@ tests:
       - eval_time: 4m
         alertname: StockOrderBookCrossed
         exp_alerts:
-          - exp_labels: {<<: *infy, severity: warning, category: flow}
+          - exp_labels: {<<: *infy, severity: warning, category: flow, layer: condition}
             exp_annotations:
               summary: INFY order book is crossed by -0.5
               description: Best bid of NSE:INFY has been above the best ask for 1 minute; the depth feed may be stale or corrupt.
@@ -59,7 +59,7 @@ tests:
       - eval_time: 4m
         alertname: StockOrderBookImbalance
         exp_alerts:
-          - exp_labels: {<<: *infy, severity: info, category: flow}
+          - exp_labels: {<<: *infy, severity: info, category: flow, layer: condition}
             exp_annotations:
               summary: INFY top 5 depth imbalance is -0.90
               description: Quantity in the top 5 bid versus ask levels of NSE:INFY has been heavily one-sided for 2 minutes (1 = all bids, -1 = all asks).

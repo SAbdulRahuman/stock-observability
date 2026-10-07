@@ -17,7 +17,7 @@ tests:
       - eval_time: 3m
         alertname: StockExporterDown
         exp_alerts:
-          - exp_labels: {job: stock_core, instance: se, severity: critical, category: infra}
+          - exp_labels: {job: stock_core, instance: se, severity: critical, category: infra, layer: incident}
             exp_annotations:
               summary: stock_exporter target stock_core is down
               description: Prometheus cannot scrape se (stock_core).
@@ -37,7 +37,7 @@ tests:
       - eval_time: 2m
         alertname: KiteSessionInvalid
         exp_alerts:
-          - exp_labels: {job: stock_core, instance: se, severity: critical, category: infra}
+          - exp_labels: {job: stock_core, instance: se, severity: critical, category: infra, layer: incident}
             exp_annotations:
               summary: Kite session missing or expired
               description: No valid Kite access token. Open the exporter /login page and sign in to Kite to resume market data.
@@ -70,7 +70,7 @@ tests:
       - eval_time: 3m
         alertname: KiteWebSocketDisconnected
         exp_alerts:
-          - exp_labels: {job: stock_core, instance: se, severity: critical, category: infra}
+          - exp_labels: {job: stock_core, instance: se, severity: critical, category: infra, layer: incident}
             exp_annotations:
               summary: Kite WebSocket feed disconnected
               description: stock_exporter has no connected market data WebSocket while the market is open.
@@ -94,7 +94,7 @@ tests:
       - eval_time: 2m
         alertname: MarketDataStale
         exp_alerts:
-          - exp_labels: {severity: critical, category: infra}
+          - exp_labels: {severity: critical, category: infra, layer: incident}
             exp_annotations:
               summary: 20% of core instruments have no tick for 60s
               description: Market data for NIFTY 200 instruments is stale; check the Kite feed and subscriptions.
@@ -110,7 +110,7 @@ tests:
       - eval_time: 10m
         alertname: KiteAPIErrors
         exp_alerts:
-          - exp_labels: {endpoint: quote, outcome: rate_limited, severity: warning, category: infra}
+          - exp_labels: {endpoint: quote, outcome: rate_limited, severity: warning, category: infra, layer: incident}
             exp_annotations:
               summary: "Kite quote API: 40 rate_limited responses in 10m"
               description: Kite REST calls are failing or being rate limited; circuit limits or portfolio data may be stale.
@@ -130,7 +130,7 @@ tests:
       - eval_time: 6m
         alertname: StockScrapeUnhealthy
         exp_alerts:
-          - exp_labels: {job: stock_core, instance: se, severity: warning, category: infra}
+          - exp_labels: {job: stock_core, instance: se, severity: warning, category: infra, layer: incident}
             exp_annotations:
               summary: Scrape of stock_core is close to its limits (94.44%)
               description: Scrape duration or sample count is above 80% of the configured timeout or sample_limit; data may be dropped.

@@ -19,7 +19,7 @@ tests:
       - eval_time: 6m
         alertname: IndexSharpFall
         exp_alerts:
-          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: NIFTY 50, sector: Index, instrument_type: INDEX, tier: core, severity: critical, category: market}
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: NIFTY 50, sector: Index, instrument_type: INDEX, tier: core, severity: critical, category: market, layer: incident}
             exp_annotations:
               summary: NIFTY 50 5m return -1.20%
               description: Benchmark index NIFTY 50 fell more than 1% within five minutes.
@@ -37,7 +37,7 @@ tests:
       - eval_time: 7m
         alertname: IndiaVIXSpike
         exp_alerts:
-          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: INDIA VIX, sector: Index, instrument_type: INDEX, tier: core, reason: level, severity: warning, category: market}
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: INDIA VIX, sector: Index, instrument_type: INDEX, tier: core, reason: level, severity: warning, category: market, layer: condition}
             exp_annotations:
               summary: INDIA VIX at 21.00
               description: India VIX is above 20 or rose more than 10% in 15 minutes; expect high volatility.
@@ -59,14 +59,14 @@ tests:
       - eval_time: 12m
         alertname: MarketBreadthWeak
         exp_alerts:
-          - exp_labels: {severity: warning, category: market}
+          - exp_labels: {severity: warning, category: market, layer: condition}
             exp_annotations:
               summary: "Market breadth weak: advance/decline ratio 0.33"
               description: Fewer than one stock is advancing for every two declining across tracked NSE equities.
       - eval_time: 7m
         alertname: SectorSelloff
         exp_alerts:
-          - exp_labels: {sector: IT, severity: warning, category: market}
+          - exp_labels: {sector: IT, severity: warning, category: market, layer: condition}
             exp_annotations:
               summary: IT sector average change -2.75%
               description: The average day change of NIFTY 200 stocks in IT is below -2%.
@@ -96,21 +96,21 @@ tests:
       - eval_time: 2m
         alertname: PortfolioDailyLoss
         exp_alerts:
-          - exp_labels: {severity: critical, category: portfolio}
+          - exp_labels: {severity: critical, category: portfolio, layer: incident}
             exp_annotations:
               summary: Portfolio day change -3.00%
               description: Holdings have lost more than 2% of their value today.
       - eval_time: 2m
         alertname: PositionStopLossBreach
         exp_alerts:
-          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: TCS, product: MIS, severity: critical, category: portfolio}
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: TCS, product: MIS, severity: critical, category: portfolio, layer: incident}
             exp_annotations:
               summary: TCS MIS position return -3.00%
               description: Open position NSE:TCS (MIS) has lost more than 2% of its value.
       - eval_time: 2m
         alertname: MarginUtilisationHigh
         exp_alerts:
-          - exp_labels: {job: stock_core, instance: se, segment: equity, severity: warning, category: portfolio}
+          - exp_labels: {job: stock_core, instance: se, segment: equity, severity: warning, category: portfolio, layer: incident}
             exp_annotations:
               summary: equity margin 85% utilised
               description: More than 80% of the equity margin is in use; new orders may be rejected.
