@@ -165,8 +165,112 @@ def family_base():
     ]
 
 
+# --- multi-session timeline (30m slots) -------------------------------------------------------
+
+SLOT = 1800
+SLOTS_PER_DAY = 48
+PRE_OPEN_SLOT, FIRST_OPEN_SLOT, LAST_OPEN_SLOT, POST_CLOSE_SLOT = 18, 19, 30, 31  # 09:00 .. 15:30
+
+
+class Calendar:
+    """`days` days of 30m slots; holidays have no pre_open/open/post_close phase."""
+
+    def __init__(self, days, holidays=()):
+        self.days, self.holidays = days, set(holidays)
+        self.n = days * SLOTS_PER_DAY
+
+    def trading(self, d):
+        return d not in self.holidays
+
+    def t(self, d, slot):
+        return (d * SLOTS_PER_DAY + slot) * SLOT
+
+    def _flags(self, pred):
+        return [1 if self.trading(i // SLOTS_PER_DAY) and pred(i % SLOTS_PER_DAY) else 0 for i in range(self.n)]
+
+    def series(self):
+        phase = lambda p: dict(CORE, phase=p)
+        is_open = lambda s: FIRST_OPEN_SLOT <= s <= LAST_OPEN_SLOT
+        open_flags = self._flags(is_open)
+        stc = [(POST_CLOSE_SLOT - i % SLOTS_PER_DAY) * SLOT if f else 0 for i, f in enumerate(open_flags)]
+        return [
+            Series("stock_market_phase", phase("pre_open"), SLOT, self._flags(lambda s: s == PRE_OPEN_SLOT), "%d"),
+            Series("stock_market_phase", phase("open"), SLOT, open_flags, "%d"),
+            Series("stock_market_phase", phase("post_close"), SLOT, self._flags(lambda s: s == POST_CLOSE_SLOT), "%d"),
+            Series("stock_market_open", CORE, SLOT, open_flags, "%d"),
+            Series("stock_market_seconds_to_close", CORE, SLOT, stc, "%d"),
+        ]
+
+    def daily(self, values):
+        """Expand one value per day into a 30m series (the exporter keeps the last state)."""
+        return [values[i // SLOTS_PER_DAY] for i in range(self.n)]
+
+
+def daily_bars(seed, days, start=100.0):
+    """Per-day (PC, H, L) with PC = previous day's close."""
+    rnd = random.Random(seed)
+    close, out = start, []
+    for _ in range(days):
+        pc = close
+        close = round(pc * math.exp(rnd.gauss(0, 0.015)), 2)
+        h = round(max(pc, close) * (1 + rnd.uniform(0, 0.01)), 2)
+        lo = round(min(pc, close) * (1 - rnd.uniform(0, 0.01)), 2)
+        if rnd.random() < 0.2:  # gap day: PC outside today's range
+            h, lo = round(pc * 1.03, 2), round(pc * 1.015, 2)
+        out.append((pc, h, lo))
+    return out
+
+
+def previous_session(cal, d):
+    """Last trading day before d within 7 days, or None."""
+    for p in range(d - 1, max(d - 8, -1), -1):
+        if cal.trading(p) and cal.t(d, FIRST_OPEN_SLOT + 1) - cal.t(p, POST_CLOSE_SLOT) < 7 * 86400:
+            return p
+    return None
+
+
+# --- nse_price_levels.rules.yml ---------------------------------------------------------------
+
+
+def family_price_levels():
+    infy = instrument("INFY")
+    cases = []
+
+    # Intraday return on 1m data.
+    n = 31
+    price = Series("stock_last_price", infy, 60, random_walk(2, n))
+    opn = Series("stock_open_price", infy, 60, constant(99.75, n))
+    checks = [Check("stock:intraday_return:percent", infy, t, (price.at(t) - opn.at(t)) / opn.at(t) * 100) for t in (60, 600, 1800)]
+    cases.append(test_case("intraday return matches the reference", 60, [price, opn], checks))
+
+    # Floor pivots over 4 sessions with a holiday on day 2.
+    cal = Calendar(4, holidays=[2])
+    bars = daily_bars(3, cal.days)
+    pc = Series("stock_previous_close_price", infy, SLOT, cal.daily([b[0] for b in bars]))
+    hi = Series("stock_high_price", infy, SLOT, cal.daily([b[1] for b in bars]))
+    lo = Series("stock_low_price", infy, SLOT, cal.daily([b[2] for b in bars]))
+    checks = []
+    for d in range(cal.days):
+        p = previous_session(cal, d)
+        for slot in (PRE_OPEN_SLOT, FIRST_OPEN_SLOT + 1, LAST_OPEN_SLOT):
+            t = cal.t(d, slot)
+            if p is None or not cal.trading(d):
+                checks.append(Absent("stock:pivot:price", dict(infy, level="P"), t))
+                continue
+            ph, pl, c = bars[p][1], bars[p][2], pc.at(t)
+            pp = (ph + pl + c) / 3
+            for level, v in (("P", pp), ("R1", 2 * pp - pl), ("S1", 2 * pp - ph), ("R2", pp + (ph - pl)), ("S2", pp - (ph - pl))):
+                checks.append(Check("stock:pivot:price", dict(infy, level=level), t, v))
+        # Not published outside pre_open/open.
+        checks.append(Absent("stock:pivot:price", dict(infy, level="P"), cal.t(d, POST_CLOSE_SLOT)))
+    cases.append(test_case("floor pivots from the previous session's snapshot", SLOT, cal.series() + [pc, hi, lo], checks))
+
+    return ["nse_eod_snapshot.rules.yml", "nse_price_levels.rules.yml"], cases
+
+
 FAMILIES = {
     "base": family_base,
+    "price_levels": family_price_levels,
 }
 
 

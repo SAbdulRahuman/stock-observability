@@ -144,6 +144,64 @@ kpis:
     coverage: true
     dashboard_default: true
 
+  - name: stock:intraday_return:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: price
+    release: R1
+    formula: "(C - O) / O * 100"
+    inputs: [stock_last_price, stock_open_price]
+    rule_file: nse_price_levels.rules.yml
+    frequency: 15s
+    scope: core
+    unit: percent
+    warmup: 0s
+    quality: exact
+    method: return since today's open
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
+  - name: stock:pivot:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: price
+    release: R1
+    formula: "P = (PH + PL + PC)/3; R1 = 2P - PL; S1 = 2P - PH; R2 = P + (PH - PL); S2 = P - (PH - PL)"
+    inputs: [stock:session_high:price, stock:session_low:price, stock_previous_close_price]
+    rule_file: nse_price_levels.rules.yml
+    frequency: 15s
+    scope: core
+    unit: price
+    warmup: 0s
+    warmup_sessions: 1
+    quality: exact
+    method: classic floor pivots, label level=P|R1|R2|S1|S2, pre_open and open only
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
+  - name: stock:opening_range:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: price
+    release: R1
+    formula: "[L, H] over 09:15-09:30 (ORB-15)"
+    inputs: [stock_high_price, stock_low_price, stock_market_seconds_to_close]
+    rule_file: nse_price_levels.rules.yml
+    frequency: 15s
+    scope: core
+    unit: price
+    warmup: 0s
+    quality: exact
+    method: day high/low recorded during the first 15 minutes, label bound=high|low; read with last_over_time(...[6h15m])
+    alertable: true
+    coverage: false
+    dashboard_default: true
+
   # --- Liquidity / order flow (exporter-native) ---------------------------------------------
   - name: stock_orderbook_spread_bps
     kind: kpi

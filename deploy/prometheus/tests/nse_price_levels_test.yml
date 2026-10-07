@@ -1,0 +1,69 @@
+# promtool test rules prometheus/tests/nse_price_levels_test.yml
+# Pivot and intraday-return values are checked in reference_price_levels_test.yml.
+rule_files:
+  - ../rules/nse_eod_snapshot.rules.yml
+  - ../rules/nse_price_levels.rules.yml
+
+evaluation_interval: 15s
+
+tests:
+  - name: opening range is the day high/low of the first 15 minutes
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x40'
+      - series: 'stock_market_seconds_to_close{job="stock_core",instance="se"}'
+        values: '22500-60x40'
+      - series: 'stock_high_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100+0.5x40'
+      - series: 'stock_low_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '99-0.25x40'
+    promql_expr_test:
+      - expr: stock:opening_range:price
+        eval_time: 10m
+        exp_samples:
+          - labels: 'stock:opening_range:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",bound="high"}'
+            value: 105
+          - labels: 'stock:opening_range:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",bound="low"}'
+            value: 96.5
+      - expr: stock:opening_range:price
+        eval_time: 15m
+        exp_samples: []
+      # Last value recorded at 14m45s from the 14m sample.
+      - expr: last_over_time(stock:opening_range:price[6h15m])
+        eval_time: 40m
+        exp_samples:
+          - labels: 'stock:opening_range:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",bound="high"}'
+            value: 107
+          - labels: 'stock:opening_range:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",bound="low"}'
+            value: 95.5
+
+  - name: no opening range while the market is closed
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '0x20'
+      - series: 'stock_market_seconds_to_close{job="stock_core",instance="se"}'
+        values: '0x20'
+      - series: 'stock_high_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100x20'
+    promql_expr_test:
+      - expr: stock:opening_range:price
+        eval_time: 5m
+        exp_samples: []
+
+  - name: intraday return skips broad tier and zero open
+    interval: 1m
+    input_series:
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '101x5'
+      - series: 'stock_open_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '0x5'
+      - series: 'stock_last_price{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
+        values: '101x5'
+      - series: 'stock_open_price{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
+        values: '100x5'
+    promql_expr_test:
+      - expr: stock:intraday_return:percent
+        eval_time: 2m
+        exp_samples: []

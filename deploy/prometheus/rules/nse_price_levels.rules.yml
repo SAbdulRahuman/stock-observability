@@ -1,0 +1,51 @@
+# Price levels (proposal §6.1, Release 1): intraday return, floor pivots, opening range.
+#   P = (PH + PL + PC) / 3   R1 = 2P - PL   S1 = 2P - PH   R2 = P + (PH - PL)   S2 = P - (PH - PL)
+# PH/PL come from the previous session's EOD snapshot (nse_eod_snapshot), PC from Kite ohlc.close.
+groups:
+  - name: nse_price_levels
+    interval: 15s
+    rules:
+      - record: stock:intraday_return:percent
+        expr: (stock_last_price{tier="core"} - stock_open_price{tier="core"}) / (stock_open_price{tier="core"} > 0) * 100
+
+      - record: stock:pivot:price
+        labels: {level: P}
+        expr: |
+          (
+              last_over_time(stock:session_high:price[7d])
+            + last_over_time(stock:session_low:price[7d])
+            + stock_previous_close_price{tier="core"}
+          ) / 3
+          and on() stock_market_phase{phase=~"pre_open|open"} == 1
+      - record: stock:pivot:price
+        labels: {level: R1}
+        expr: |
+          2 * stock:pivot:price{level="P"} - ignoring(level) last_over_time(stock:session_low:price[7d])
+      - record: stock:pivot:price
+        labels: {level: S1}
+        expr: |
+          2 * stock:pivot:price{level="P"} - ignoring(level) last_over_time(stock:session_high:price[7d])
+      - record: stock:pivot:price
+        labels: {level: R2}
+        expr: |
+          stock:pivot:price{level="P"}
+          + ignoring(level) (last_over_time(stock:session_high:price[7d]) - last_over_time(stock:session_low:price[7d]))
+      - record: stock:pivot:price
+        labels: {level: S2}
+        expr: |
+          stock:pivot:price{level="P"}
+          - ignoring(level) (last_over_time(stock:session_high:price[7d]) - last_over_time(stock:session_low:price[7d]))
+
+      # Day high/low during the first 15 minutes (09:15-09:30). Read with last_over_time(...[6h15m]).
+      - record: stock:opening_range:price
+        labels: {bound: high}
+        expr: |
+          stock_high_price{tier="core"}
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close > 21600
+      - record: stock:opening_range:price
+        labels: {bound: low}
+        expr: |
+          stock_low_price{tier="core"}
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close > 21600
