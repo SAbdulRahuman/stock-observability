@@ -446,6 +446,63 @@ def family_order_flow():
     ]
 
 
+# --- nse_market_breadth.rules.yml ------------------------------------------------------------
+
+
+def family_breadth():
+    rnd = random.Random(12)
+    n, step = 11, 60
+    sectors = ["IT", "Financial Services", "Energy"]
+    names = [("C%02d" % i, sectors[i % 3], "core") for i in range(12)] + [("B%02d" % i, "unknown", "broad") for i in range(6)]
+    series, inst = [], []
+    for sym, sec, tier in names:
+        lbl = instrument(sym, sector=sec, tier=tier)
+        pc = rnd.uniform(100, 2000)
+        chg = [rnd.gauss(0, 1.5) if rnd.random() > 0.05 else 0.0 for _ in range(n)]
+        ltp = [round(pc * (1 + c / 100), 2) for c in chg]
+        vwap = [round(p * (1 + rnd.gauss(0, 0.004)), 2) for p in ltp]
+        vol = [rnd.randint(10_000, 5_000_000) for _ in range(n)]
+        up = [round(pc * 1.05, 2) if rnd.random() > 0.15 else round(p, 2) for p in ltp]
+        lo = [round(pc * 0.95, 2) if rnd.random() > 0.1 else round(p, 2) for p in ltp]
+        s = {
+            "chg": Series("stock_change_percent", lbl, step, chg, "%.4f"),
+            "ltp": Series("stock_last_price", lbl, step, ltp),
+            "vwap": Series("stock_average_traded_price", lbl, step, vwap),
+            "vol": Series("stock_day_volume_shares", lbl, step, vol, "%d"),
+            "up": Series("stock_circuit_upper_limit_price", lbl, step, up),
+            "lo": Series("stock_circuit_lower_limit_price", lbl, step, lo),
+        }
+        series += list(s.values())
+        inst.append((sec, tier, s))
+    nifty = Series(
+        "stock_change_percent", instrument("NIFTY 50", sector="Index", itype="INDEX"), step,
+        [rnd.gauss(0, 0.8) for _ in range(n)], "%.4f",
+    )
+    series.append(nifty)
+
+    checks = []
+    for t in (0, 5 * 60, 10 * 60):
+        v = lambda s, k: s[k].at(t)
+        above = sum(1 for _, _, s in inst if v(s, "ltp") > v(s, "vwap"))
+        checks.append(Check("market:above_vwap:ratio", {}, t, above / len(inst)))
+        adv = [s for _, _, s in inst if v(s, "chg") > 0]
+        dec = [s for _, _, s in inst if v(s, "chg") < 0]
+        trin = (len(adv) / len(dec)) / (sum(v(s, "vol") for s in adv) / sum(v(s, "vol") for s in dec))
+        checks.append(Check("market:trin:ratio", {}, t, trin))
+        core = [v(s, "chg") for _, tier, s in inst if tier == "core"]
+        checks.append(Check("market:dispersion:percent", {}, t, pstdev(core)))
+        hits_up = sum(1 for _, _, s in inst if v(s, "ltp") >= v(s, "up"))
+        hits_lo = sum(1 for _, _, s in inst if v(s, "ltp") <= v(s, "lo"))
+        checks.append(Check("market:circuit_hits:count", {"band": "upper"}, t, hits_up))
+        checks.append(Check("market:circuit_hits:count", {"band": "lower"}, t, hits_lo))
+        for sec in sectors:
+            avg = mean([v(s, "chg") for ssec, tier, s in inst if ssec == sec and tier == "core"])
+            checks.append(Check("sector:relative_strength:percent", {"sector": sec}, t, avg - nifty.at(t)))
+    return ["nse_market_breadth.rules.yml"], [
+        test_case("breadth, TRIN, dispersion, circuit hits and sector RS match the reference", step, series, checks)
+    ]
+
+
 FAMILIES = {
     "base": family_base,
     "price_levels": family_price_levels,
@@ -455,6 +512,7 @@ FAMILIES = {
     "atr": family_atr,
     "rvol": family_rvol,
     "order_flow": family_order_flow,
+    "breadth": family_breadth,
 }
 
 

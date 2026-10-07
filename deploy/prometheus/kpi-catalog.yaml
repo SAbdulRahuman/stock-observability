@@ -562,6 +562,102 @@ kpis:
     coverage: true
     dashboard_default: true
 
+  - name: market:above_vwap:ratio
+    kind: kpi
+    family: market
+    level: market_health
+    capability: breadth
+    release: R1
+    formula: "count(C > VWAP) / count(VWAP > 0), all EQ"
+    inputs: [stock_last_price, stock_average_traded_price]
+    rule_file: nse_market_breadth.rules.yml
+    frequency: 15s
+    scope: market
+    unit: ratio
+    range: {min: 0, max: 1}
+    warmup: 0s
+    quality: exact
+    method: share of equities trading above their exchange VWAP
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
+  - name: market:trin:ratio
+    kind: kpi
+    family: market
+    level: market_health
+    capability: breadth
+    release: R1
+    formula: "(advancers / decliners) / (advancing volume / declining volume), all EQ"
+    inputs: [stock_change_percent, stock_day_volume_shares]
+    rule_file: nse_market_breadth.rules.yml
+    frequency: 15s
+    scope: market
+    unit: ratio
+    warmup: 0s
+    quality: exact
+    method: Arms index on day change and day volume; > 1 bearish, < 1 bullish
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
+  - name: sector:relative_strength:percent
+    kind: kpi
+    family: market
+    level: sector_intelligence
+    capability: sector
+    release: R1
+    formula: "avg change% of core EQ in the sector - NIFTY 50 change%"
+    inputs: [stock_change_percent]
+    rule_file: nse_market_breadth.rules.yml
+    frequency: 15s
+    scope: sector
+    unit: percent
+    warmup: 0s
+    quality: exact
+    method: equal-weight sector average vs benchmark, excluding unknown and Index
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
+  - name: market:dispersion:percent
+    kind: kpi
+    family: market
+    level: market_health
+    capability: market
+    release: R1
+    formula: "stddev of change% across core EQ"
+    inputs: [stock_change_percent]
+    rule_file: nse_market_breadth.rules.yml
+    frequency: 15s
+    scope: market
+    unit: percent
+    warmup: 0s
+    quality: exact
+    method: cross-sectional population stddev
+    alertable: false
+    coverage: true
+    dashboard_default: true
+
+  - name: market:circuit_hits:count
+    kind: kpi
+    family: market
+    level: market_health
+    capability: market
+    release: R1
+    formula: "count(C >= upper band), count(C <= lower band), all EQ"
+    inputs: [stock_last_price, stock_circuit_upper_limit_price, stock_circuit_lower_limit_price]
+    rule_file: nse_market_breadth.rules.yml
+    frequency: 15s
+    scope: market
+    unit: count
+    warmup: 0s
+    quality: exact
+    method: equities locked at a price band, label band=upper|lower
+    alertable: true
+    coverage: true
+    dashboard_default: true
+
   # --- Circuit ------------------------------------------------------------------------------
   - name: stock:upper_circuit_distance:percent
     kind: kpi

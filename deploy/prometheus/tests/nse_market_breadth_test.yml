@@ -1,0 +1,66 @@
+# promtool test rules prometheus/tests/nse_market_breadth_test.yml
+# Formula values are checked in reference_breadth_test.yml; this file covers edge cases.
+rule_files:
+  - ../rules/nse_market_breadth.rules.yml
+
+evaluation_interval: 15s
+
+tests:
+  - name: zero counts are reported, undefined ratios are absent
+    interval: 1m
+    input_series:
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '99x5'
+      - series: 'stock_average_traded_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100x5'
+      - series: 'stock_circuit_upper_limit_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '110x5'
+      - series: 'stock_circuit_lower_limit_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '90x5'
+      - series: 'stock_change_percent{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1.5x5'
+      - series: 'stock_day_volume_shares{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1000x5'
+      # Indices never count towards breadth.
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '25000x5'
+      - series: 'stock_change_percent{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '-0.5x5'
+    promql_expr_test:
+      - expr: market:above_vwap:ratio
+        eval_time: 2m
+        exp_samples:
+          - labels: 'market:above_vwap:ratio'
+            value: 0
+      - expr: market:circuit_hits:count
+        eval_time: 2m
+        exp_samples:
+          - labels: 'market:circuit_hits:count{band="upper"}'
+            value: 0
+          - labels: 'market:circuit_hits:count{band="lower"}'
+            value: 0
+      # No decliners: TRIN is undefined.
+      - expr: market:trin:ratio
+        eval_time: 2m
+        exp_samples: []
+      # A single core equity has zero dispersion.
+      - expr: market:dispersion:percent
+        eval_time: 2m
+        exp_samples:
+          - labels: 'market:dispersion:percent'
+            value: 0
+      - expr: sector:relative_strength:percent
+        eval_time: 2m
+        exp_samples:
+          - labels: 'sector:relative_strength:percent{sector="IT"}'
+            value: 2
+
+  - name: no VWAP data means no above-VWAP ratio
+    interval: 1m
+    input_series:
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '99x5'
+    promql_expr_test:
+      - expr: market:above_vwap:ratio
+        eval_time: 2m
+        exp_samples: []

@@ -1,0 +1,36 @@
+# Market breadth and sentiment (proposal §6.7, Release 1).
+#   % above VWAP = count(C > VWAP) / count(VWAP > 0)                       all EQ
+#   TRIN (Arms)  = (advancers / decliners) / (adv volume / dec volume)       > 1 bearish, < 1 bullish
+#   Dispersion   = stddev of change% across core EQ
+#   Sector RS    = sector avg change% - NIFTY 50 change%
+groups:
+  - name: nse_market_breadth
+    interval: 15s
+    rules:
+      - record: market:above_vwap:ratio
+        expr: |
+          (count(stock_last_price{instrument_type="EQ"} > (stock_average_traded_price{instrument_type="EQ"} > 0)) or on() vector(0))
+          / count(stock_average_traded_price{instrument_type="EQ"} > 0)
+      - record: market:trin:ratio
+        expr: |
+          (
+              count(stock_change_percent{instrument_type="EQ"} > 0)
+            / count(stock_change_percent{instrument_type="EQ"} < 0)
+          )
+          / (
+              sum(stock_day_volume_shares{instrument_type="EQ"} and stock_change_percent{instrument_type="EQ"} > 0)
+            / (sum(stock_day_volume_shares{instrument_type="EQ"} and stock_change_percent{instrument_type="EQ"} < 0) > 0)
+          )
+      - record: market:dispersion:percent
+        expr: stddev(stock_change_percent{tier="core", instrument_type="EQ"})
+      - record: market:circuit_hits:count
+        labels: {band: upper}
+        expr: count(stock_last_price{instrument_type="EQ"} >= stock_circuit_upper_limit_price) or on() vector(0)
+      - record: market:circuit_hits:count
+        labels: {band: lower}
+        expr: count(stock_last_price{instrument_type="EQ"} <= stock_circuit_lower_limit_price) or on() vector(0)
+      - record: sector:relative_strength:percent
+        expr: |
+          avg by (sector) (stock_change_percent{tier="core", instrument_type="EQ", sector!~"unknown|Index"})
+          - on() group_left()
+          stock_change_percent{symbol="NIFTY 50", instrument_type="INDEX"}
