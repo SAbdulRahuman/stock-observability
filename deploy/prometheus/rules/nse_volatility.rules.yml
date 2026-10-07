@@ -27,3 +27,18 @@ groups:
           and count_over_time(stock:session_true_range:points[20d]) >= 10
       - record: stock:range_expansion:ratio
         expr: (stock_high_price{tier="core"} - stock_low_price{tier="core"}) / (stock:atr_14d:points > 0)
+
+  - name: nse_volatility_alerts
+    interval: 30s
+    rules:
+      - alert: StockRangeExpansion
+        expr: |
+          stock:range_expansion:ratio{instrument_type="EQ"} > 2
+          and stock:relative_volume:ratio > 2
+          and on() stock_market_open == 1
+        for: 1m
+        labels: {severity: warning, category: price, layer: condition, condition: range_expansion}
+        annotations:
+          summary: "{{ $labels.symbol }} day range is {{ $value | printf \"%.1f\" }}x its ATR(14)"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} has a wide-range day (more than 2x its 14-session average true range) on more than 2x relative volume."
+          link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"

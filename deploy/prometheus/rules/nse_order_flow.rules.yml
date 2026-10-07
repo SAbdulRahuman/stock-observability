@@ -15,3 +15,29 @@ groups:
         expr: |
           sum_over_time((stock:volume_1m:shares{tier="core", instrument_type="EQ"} * sgn(stock:return_1m:percent))[1h:1m])
           / (sum_over_time(stock:volume_1m:shares{tier="core", instrument_type="EQ"}[1h:1m]) > 0)
+
+  - name: nse_order_flow_alerts
+    interval: 5s
+    rules:
+      - alert: StockOrderFlowPressure
+        expr: |
+          (
+            label_replace(
+                stock:volume_delta_1h:ratio > 0.6
+              and stock:microprice_deviation:bps > 0
+              and stock_orderbook_imbalance_ratio > 0.3,
+              "direction", "bullish", "", "")
+            or
+            label_replace(
+                stock:volume_delta_1h:ratio < -0.6
+              and stock:microprice_deviation:bps < 0
+              and stock_orderbook_imbalance_ratio < -0.3,
+              "direction", "bearish", "", "")
+          )
+          and on() stock_market_open == 1
+        for: 2m
+        labels: {severity: info, category: flow, layer: condition, condition: order_flow_pressure}
+        annotations:
+          summary: "{{ $labels.symbol }} {{ $labels.direction }} order flow pressure (volume delta {{ $value | printf \"%.2f\" }})"
+          description: "Tick-rule volume delta, microprice and top-5 depth imbalance of {{ $labels.exchange }}:{{ $labels.symbol }} all point {{ if eq $labels.direction \"bullish\" }}up{{ else }}down{{ end }}."
+          link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"

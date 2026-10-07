@@ -29,3 +29,19 @@ groups:
         expr: sum without (side) (stock_orderbook_notional{tier="core"})
       - record: stock:depth_vs_1h:ratio
         expr: stock:orderbook_depth:inr / (avg_over_time(stock:orderbook_depth:inr[1h]) > 0)
+
+  - name: nse_volume_liquidity_alerts
+    interval: 15s
+    rules:
+      # The 1h spread mean uses the 15s-recorded 5m average to avoid reading 1s samples.
+      - alert: StockLiquidityDrain
+        expr: |
+          stock:depth_vs_1h:ratio{instrument_type="EQ"} < 0.25
+          and stock_orderbook_spread_bps > 2 * avg_over_time(stock:orderbook_spread_5m_avg:bps[1h])
+          and on() stock_market_open == 1
+        for: 2m
+        labels: {severity: warning, category: flow, layer: condition, condition: liquidity_drain}
+        annotations:
+          summary: "{{ $labels.symbol }} top-5 depth at {{ $value | humanizePercentage }} of its 1h average"
+          description: "Order book depth of {{ $labels.exchange }}:{{ $labels.symbol }} fell below 25% of its 1h average while the spread widened to more than twice its 1h mean."
+          link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"

@@ -9,3 +9,24 @@ groups:
         expr: |
           avg_over_time(stock_last_price{tier="core"}[12m:1m])
           - avg_over_time(stock_last_price{tier="core"}[26m:1m])
+
+  - name: nse_trend_alerts
+    interval: 15s
+    rules:
+      # Least-squares projection of the last 10 minutes, 15 minutes ahead; all EQ tiers.
+      - alert: StockProjectedCircuitHit
+        expr: |
+          (
+              label_replace(predict_linear(stock_last_price{instrument_type="EQ"}[10m], 900) >= stock_circuit_upper_limit_price, "band", "upper", "", "")
+            or
+              label_replace(predict_linear(stock_last_price{instrument_type="EQ"}[10m], 900) <= stock_circuit_lower_limit_price, "band", "lower", "", "")
+          )
+          unless ignoring(band) stock_last_price >= stock_circuit_upper_limit_price
+          unless ignoring(band) stock_last_price <= stock_circuit_lower_limit_price
+          and on() stock_market_open == 1
+        for: 1m
+        labels: {severity: warning, category: circuit, layer: condition, condition: projected_circuit_hit}
+        annotations:
+          summary: "{{ $labels.symbol }} on pace to hit its {{ $labels.band }} circuit within 15 minutes"
+          description: "At the trend of the last 10 minutes {{ $labels.exchange }}:{{ $labels.symbol }} ({{ $labels.tier }} tier) projects to {{ $value | printf \"%.2f\" }}, beyond its {{ $labels.band }} price band."
+          link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"

@@ -49,3 +49,56 @@ groups:
           stock_low_price{tier="core"}
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close > 21600
+
+  - name: nse_price_levels_alerts
+    interval: 15s
+    rules:
+      # 20-session high/low from the EOD snapshots (28 calendar days), with volume confirmation.
+      - alert: StockMultiSessionBreakout
+        expr: |
+          (
+            label_replace(
+                stock_last_price{tier="core", instrument_type="EQ"} > max_over_time(stock:session_high:price[28d])
+              and count_over_time(stock:session_high:price[28d]) >= 15
+              and stock:relative_volume:ratio > 1.5,
+              "direction", "bullish", "", "")
+            or
+            label_replace(
+                stock_last_price{tier="core", instrument_type="EQ"} < min_over_time(stock:session_low:price[28d])
+              and count_over_time(stock:session_low:price[28d]) >= 15
+              and stock:relative_volume:ratio > 1.5,
+              "direction", "bearish", "", "")
+          )
+          and on() stock_market_open == 1
+        for: 1m
+        keep_firing_for: 30m
+        labels: {severity: info, category: price, layer: condition, condition: multi_session_breakout}
+        annotations:
+          summary: "{{ $labels.symbol }} {{ $labels.direction }} 20-session breakout at {{ $value }}"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} is trading beyond its 20-session {{ if eq $labels.direction \"bullish\" }}high{{ else }}low{{ end }} on more than 1.5x relative volume."
+          link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"
+
+      # Relative volume only exists from 09:45, so in practice this fires from 09:45.
+      - alert: StockOpeningRangeBreakout
+        expr: |
+          (
+            label_replace(
+                stock_last_price{tier="core", instrument_type="EQ"} > ignoring(bound) last_over_time(stock:opening_range:price{bound="high"}[6h15m])
+              unless stock_last_price{tier="core", instrument_type="EQ"} offset 1m > ignoring(bound) last_over_time(stock:opening_range:price{bound="high"}[6h15m] offset 1m)
+              and stock:relative_volume:ratio > 1.5,
+              "direction", "bullish", "", "")
+            or
+            label_replace(
+                stock_last_price{tier="core", instrument_type="EQ"} < ignoring(bound) last_over_time(stock:opening_range:price{bound="low"}[6h15m])
+              unless stock_last_price{tier="core", instrument_type="EQ"} offset 1m < ignoring(bound) last_over_time(stock:opening_range:price{bound="low"}[6h15m] offset 1m)
+              and stock:relative_volume:ratio > 1.5,
+              "direction", "bearish", "", "")
+          )
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close < 21600
+        keep_firing_for: 15m
+        labels: {severity: info, category: price, layer: condition, condition: opening_range_breakout}
+        annotations:
+          summary: "{{ $labels.symbol }} {{ $labels.direction }} opening range breakout at {{ $value }}"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} crossed its 09:15-09:30 opening range {{ if eq $labels.direction \"bullish\" }}high{{ else }}low{{ end }} on more than 1.5x relative volume."
+          link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"

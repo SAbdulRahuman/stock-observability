@@ -24,3 +24,35 @@ groups:
           stock_change_percent{tier="core", instrument_type="EQ"}
           - on() group_left()
           stock_change_percent{symbol="NIFTY 50", instrument_type="INDEX"}
+
+  - name: nse_momentum_alerts
+    interval: 15s
+    rules:
+      # Overbought/oversold on two oscillators, MACD histogram turning against the move, and
+      # tick-rule volume flowing the other way. histogram = macd - avg_over_time(macd[9m]).
+      - alert: StockMomentumExhaustion
+        expr: |
+          (
+            label_replace(
+                stock:rsi_14m:index{instrument_type="EQ"} > 70
+              and stock:stochastic_k_14m:percent > 80
+              and (stock:macd_12_26m:price - avg_over_time(stock:macd_12_26m:price[9m]))
+                < (stock:macd_12_26m:price offset 2m - avg_over_time(stock:macd_12_26m:price[9m] offset 2m))
+              and stock:volume_delta_1h:ratio < 0,
+              "direction", "bearish", "", "")
+            or
+            label_replace(
+                stock:rsi_14m:index{instrument_type="EQ"} < 30
+              and stock:stochastic_k_14m:percent < 20
+              and (stock:macd_12_26m:price - avg_over_time(stock:macd_12_26m:price[9m]))
+                > (stock:macd_12_26m:price offset 2m - avg_over_time(stock:macd_12_26m:price[9m] offset 2m))
+              and stock:volume_delta_1h:ratio > 0,
+              "direction", "bullish", "", "")
+          )
+          and on() stock_market_open == 1
+        for: 2m
+        labels: {severity: info, category: price, layer: condition, condition: momentum_exhaustion}
+        annotations:
+          summary: "{{ $labels.symbol }} {{ $labels.direction }} momentum exhaustion (RSI {{ $value | printf \"%.1f\" }})"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} is {{ if eq $labels.direction \"bearish\" }}overbought{{ else }}oversold{{ end }} on RSI(14) and %K, its MACD histogram is turning and volume delta opposes the move."
+          link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"

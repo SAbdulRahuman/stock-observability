@@ -34,3 +34,52 @@ groups:
           avg by (sector) (stock_change_percent{tier="core", instrument_type="EQ", sector!~"unknown|Index"})
           - on() group_left()
           stock_change_percent{symbol="NIFTY 50", instrument_type="INDEX"}
+
+  - name: nse_market_breadth_alerts
+    interval: 15s
+    rules:
+      - alert: SectorRotation
+        expr: |
+          (
+              label_replace(sector:relative_strength:percent > 2, "direction", "bullish", "", "")
+            or
+              label_replace(sector:relative_strength:percent < -2, "direction", "bearish", "", "")
+          )
+          and on() stock_market_open == 1
+        for: 10m
+        labels: {severity: info, category: market, layer: condition, condition: sector_rotation}
+        annotations:
+          summary: "{{ $labels.sector }} {{ if eq $labels.direction \"bullish\" }}outperforms{{ else }}underperforms{{ end }} NIFTY 50 by {{ $value | printf \"%.2f\" }} pp"
+          description: "The average day change of NIFTY 200 stocks in {{ $labels.sector }} has differed from NIFTY 50 by more than 2 percentage points for 10 minutes."
+
+      - alert: MarketBreadthStress
+        expr: |
+          market:trin:ratio > 2
+          and on() market:above_vwap:ratio < 0.2
+          and on() stock_market_open == 1
+        for: 10m
+        labels: {severity: warning, category: market, layer: incident, incident: breadth_stress, direction: bearish}
+        annotations:
+          summary: "Market breadth stress: TRIN {{ $value | printf \"%.2f\" }}"
+          description: "TRIN is above 2 and fewer than 20% of tracked equities trade above VWAP; selling is broad and volume-heavy."
+      - alert: MarketBreadthStress
+        expr: |
+          market:trin:ratio < 0.5
+          and on() market:above_vwap:ratio > 0.8
+          and on() stock_market_open == 1
+        for: 10m
+        labels: {severity: info, category: market, layer: incident, incident: breadth_stress, direction: bullish}
+        annotations:
+          summary: "Market breadth euphoria: TRIN {{ $value | printf \"%.2f\" }}"
+          description: "TRIN is below 0.5 and more than 80% of tracked equities trade above VWAP; buying is broad and volume-heavy."
+
+      # Initial thresholds; calibrate after 20 sessions.
+      - alert: MarketCircuitCluster
+        expr: |
+          (market:circuit_hits:count{band="lower"} >= 20 or market:circuit_hits:count{band="upper"} >= 40)
+          and on() stock_market_open == 1
+        for: 1m
+        labels: {severity: warning, category: market, layer: incident, incident: circuit_cluster}
+        annotations:
+          summary: "{{ $value }} equities locked at their {{ $labels.band }} circuit"
+          description: "A cluster of tracked NSE equities is at the {{ $labels.band }} price band; expect one-sided liquidity across the market."
