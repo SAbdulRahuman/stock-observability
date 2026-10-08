@@ -1,0 +1,145 @@
+{
+  "uid": "nse-r4-r5",
+  "title": "NSE Derivatives and Predictive Intelligence (R4/R5)",
+  "description": "Release 4 F&O KPIs (PCR, basis, carry, OI change; IV, Greeks and max pain from the Quant Lab) and Release 5 forecasts with their out-of-sample evaluation against the naive benchmark. Observability signals, not trading advice.",
+  "tags": ["nse", "kpi", "release-4", "release-5"],
+  "timezone": "Asia/Kolkata",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "1m",
+  "schemaVersion": 41,
+  "version": 1,
+  "time": {"from": "now-6h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "underlying", "label": "Underlying", "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": {"query": "label_values(stock_instrument_info, underlying)", "refId": "underlying"},
+        "definition": "label_values(stock_instrument_info, underlying)",
+        "refresh": 2, "includeAll": false, "multi": false, "sort": 1
+      },
+      {
+        "name": "symbol", "label": "Symbol", "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": {"query": "label_values(stock:prob_up:ratio, symbol)", "refId": "symbol"},
+        "definition": "label_values(stock:prob_up:ratio, symbol)",
+        "refresh": 2, "includeAll": false, "multi": false, "sort": 1
+      }
+    ]
+  },
+  "annotations": {"list": []},
+  "panels": [
+    {"type": "row", "title": "F&O: $underlying", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}, "panels": []},
+    {
+      "type": "stat", "title": "PCR (OI)", "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "underlying:pcr_oi:ratio{underlying=\"$underlying\"}", "instant": true, "legendFormat": "{{expiry}}"}],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "text", "value": 0.5}, {"color": "red", "value": 1.5}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area", "textMode": "value_and_name"}
+    },
+    {
+      "type": "stat", "title": "Futures premium / carry (annualised)", "gridPos": {"h": 4, "w": 6, "x": 4, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "underlying:futures_premium:percent{underlying=\"$underlying\"}", "instant": true, "legendFormat": "premium {{expiry}}"},
+        {"refId": "B", "expr": "underlying:cost_of_carry:percent{underlying=\"$underlying\"}", "instant": true, "legendFormat": "carry {{expiry}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name"}
+    },
+    {
+      "type": "stat", "title": "Max pain vs spot", "gridPos": {"h": 4, "w": 6, "x": 10, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "underlying_max_pain_strike_price from the Quant Lab; distance = spot / max pain - 1.",
+      "targets": [
+        {"refId": "A", "expr": "underlying_max_pain_strike_price{underlying=\"$underlying\"}", "instant": true, "legendFormat": "max pain {{expiry}}"},
+        {"refId": "B", "expr": "underlying:max_pain_distance:percent{underlying=\"$underlying\"}", "instant": true, "legendFormat": "spot vs max pain %"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 2}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name"}
+    },
+    {
+      "type": "stat", "title": "Futures basis (points)", "gridPos": {"h": 4, "w": 8, "x": 16, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "underlying:futures_basis:points{underlying=\"$underlying\"}", "instant": true, "legendFormat": "{{expiry}}"}],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 1}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area", "textMode": "value_and_name"}
+    },
+    {
+      "type": "barchart", "title": "Implied volatility by strike (smile)", "gridPos": {"h": 9, "w": 12, "x": 0, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "stock_option_implied_volatility_ratio{underlying=\"$underlying\"}", "instant": true, "format": "table"}],
+      "transformations": [
+        {"id": "groupingToMatrix", "options": {"columnField": "instrument_type", "rowField": "strike", "valueField": "Value"}}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []},
+      "options": {"xField": "strike\\instrument_type", "orientation": "vertical"}
+    },
+    {
+      "type": "table", "title": "Option chain: IV and Greeks", "gridPos": {"h": 9, "w": 12, "x": 12, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "stock_option_implied_volatility_ratio{underlying=\"$underlying\"}", "instant": true, "format": "table"},
+        {"refId": "B", "expr": "stock_option_delta{underlying=\"$underlying\"}", "instant": true, "format": "table"},
+        {"refId": "C", "expr": "stock_option_gamma{underlying=\"$underlying\"}", "instant": true, "format": "table"},
+        {"refId": "D", "expr": "stock_option_theta{underlying=\"$underlying\"}", "instant": true, "format": "table"},
+        {"refId": "E", "expr": "stock_option_vega{underlying=\"$underlying\"}", "instant": true, "format": "table"},
+        {"refId": "F", "expr": "stock:oi_change:percent * on(exchange, symbol) group_left(underlying, strike) stock_instrument_info{underlying=\"$underlying\"}", "instant": true, "format": "table"}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "job": true, "instance": true, "exchange": true, "tier": true, "sector": true, "underlying": true, "__name__": true}, "renameByName": {"Value #A": "IV", "Value #B": "delta", "Value #C": "gamma", "Value #D": "theta/day", "Value #E": "vega/pp", "Value #F": "OI change %"}}}
+      ],
+      "fieldConfig": {"defaults": {"decimals": 4}, "overrides": [{"matcher": {"id": "byName", "options": "IV"}, "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 1}]}]},
+      "options": {"showHeader": true, "sortBy": [{"displayName": "strike", "desc": false}]}
+    },
+    {
+      "type": "timeseries", "title": "PCR and futures premium over time", "gridPos": {"h": 8, "w": 24, "x": 0, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "underlying:pcr_oi:ratio{underlying=\"$underlying\"}", "legendFormat": "PCR OI {{expiry}}"},
+        {"refId": "B", "expr": "underlying:futures_premium:percent{underlying=\"$underlying\"}", "legendFormat": "premium % {{expiry}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none"}, "overrides": [{"matcher": {"id": "byRegexp", "options": "premium.*"}, "properties": [{"id": "custom.axisPlacement", "value": "right"}]}]}
+    },
+
+    {"type": "row", "title": "Predictive intelligence", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 22}, "panels": []},
+    {
+      "type": "table", "title": "Model leaderboard (last day, median across instruments)", "gridPos": {"h": 7, "w": 12, "x": 0, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Theil U < 1 beats the random walk; Brier skill > 0 beats the base rate. Differences in Theil U below ~0.02 are noise.",
+      "targets": [
+        {"refId": "A", "expr": "model:theil_u_1d:median", "instant": true, "format": "table"},
+        {"refId": "B", "expr": "model:prob_skill_1d:median", "instant": true, "format": "table"},
+        {"refId": "C", "expr": "quantile by (model, horizon) (0.5, stock:forecast_hit_rate_1d:ratio)", "instant": true, "format": "table"}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {"id": "organize", "options": {"excludeByName": {"Time": true}, "renameByName": {"Value #A": "Theil U", "Value #B": "Brier skill", "Value #C": "hit rate"}}}
+      ],
+      "fieldConfig": {"defaults": {"decimals": 3}, "overrides": [{"matcher": {"id": "byName", "options": "Theil U"}, "properties": [{"id": "custom.cellOptions", "value": {"type": "color-background"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}]}]},
+      "options": {"showHeader": true}
+    },
+    {
+      "type": "stat", "title": "$symbol: P(up 15m), expected return, volatility", "gridPos": {"h": 7, "w": 12, "x": 12, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "stock:prob_up:ratio{symbol=\"$symbol\", horizon=\"15m\"}", "instant": true, "legendFormat": "P(up) {{model}}"},
+        {"refId": "B", "expr": "stock:model_return:percent{symbol=\"$symbol\", horizon=\"15m\"}", "instant": true, "legendFormat": "E[R] % {{model}}"},
+        {"refId": "C", "expr": "stock:vol_forecast:percent{symbol=\"$symbol\", horizon=\"15m\"}", "instant": true, "legendFormat": "sigma % {{model}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 3}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name"}
+    },
+    {
+      "type": "timeseries", "title": "$symbol: price, naive and model forecasts (15m)", "gridPos": {"h": 8, "w": 24, "x": 0, "y": 30},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "max by (symbol) (stock_last_price{symbol=\"$symbol\", instrument_type=\"EQ\"})", "legendFormat": "price"},
+        {"refId": "B", "expr": "stock:forecast:price{symbol=\"$symbol\", horizon=\"15m\"} offset -15m", "legendFormat": "{{model}} forecast (plotted at its target time)"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "currencyINR"}, "overrides": []}
+    }
+  ]
+}

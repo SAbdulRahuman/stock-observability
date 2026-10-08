@@ -346,6 +346,8 @@ KPIs with `coverage: true` also need a `kpi:coverage:ratio` rule in `nse_kpi_qua
 
 Release 2 adds 1m bars, stateful EMA/Wilder/OBV rules (they read their own previous value, so promtool tests use `evaluation_interval: 1m` and `group_eval_order`), market/sector/stock regimes (`nse_regimes`), events (`stock:event:bool`) and the effectiveness ledger (`nse_effectiveness`), which condition alerts quote in their `effectiveness` annotation. Catalogue kinds: `kpi`, `snapshot`, `signal`, `regime`, `effectiveness`, `quality`, `helper`. Dashboards: `grafana/dashboards/nse-r1.json` (R1) and `nse-r2.json` (R2); `make check` parses every dashboard query (`tests/check_dashboards.sh`).
 
+Release 3 adds daily and intraday risk (`nse_risk`: VaR, CVaR, drawdown, beta, alpha, EWMA volatility, market model, portfolio Sharpe/Sortino/VaR; R_f in `stock_exporter/textfile/risk_free_rate.prom`) and 52-week/daily SMA levels from the exporter's `reference` collector (Kite day candles, needs the historical data add-on). Release 4 adds F&O (`nse_derivatives`) on the exporter's `stock_instrument_info{underlying, expiry, strike}`; `--sim.derivatives` simulates a NIFTY future and option chain. Release 5 adds the Quant Lab (`quantlab/`, stdlib Python: IV, Greeks, max pain, AR(1)/EWMA forecasts; `make test-quantlab`; chart `quantlab.enabled`) and the Prometheus-side feature store, intake and forecast evaluation (`nse_predict`). Release 6 is the stock_home analyst (`GET /api/v1/analyst?symbol=`). Dashboards `nse-r3.json` and `nse-r4-r5.json` cover R3-R5.
+
 ### Release a new stock_exporter version
 
 ```bash
