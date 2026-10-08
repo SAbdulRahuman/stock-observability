@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 
@@ -167,6 +168,17 @@ type Ref struct {
 	Symbol         string
 	Segment        string
 	InstrumentType string
+	Name           string // underlying of derivatives
+	Expiry         time.Time
+	Strike         float64
+}
+
+func (r Ref) instrument(sector, typ, tier string) store.Instrument {
+	in := store.Instrument{Token: r.Token, Exchange: strings.ToUpper(r.Exchange), Symbol: strings.ToUpper(r.Symbol), Sector: sector, Type: typ, Tier: tier}
+	if in.IsDerivative() {
+		in.Underlying, in.Expiry, in.Strike = strings.ToUpper(r.Name), r.Expiry, r.Strike
+	}
+	return in
 }
 
 // Resolve maps watchlist entries (core tier) and universes (broad tier) to
@@ -193,7 +205,9 @@ func (w *Watchlist) Resolve(refs []Ref) ([]store.Instrument, []string) {
 			typ = refType(r)
 		}
 		taken[r.Token] = true
-		out = append(out, store.Instrument{Token: r.Token, Exchange: e.Exchange, Symbol: e.Symbol, Sector: e.Sector, Type: typ, Tier: store.TierCore})
+		in := r.instrument(e.Sector, typ, store.TierCore)
+		in.Exchange, in.Symbol = e.Exchange, e.Symbol
+		out = append(out, in)
 	}
 	for _, u := range w.Universes {
 		for _, r := range refs {
@@ -204,10 +218,7 @@ func (w *Watchlist) Resolve(refs []Ref) ([]store.Instrument, []string) {
 				continue
 			}
 			taken[r.Token] = true
-			out = append(out, store.Instrument{
-				Token: r.Token, Exchange: strings.ToUpper(r.Exchange), Symbol: strings.ToUpper(r.Symbol),
-				Sector: UnknownSector, Type: refType(r), Tier: store.TierBroad,
-			})
+			out = append(out, r.instrument(UnknownSector, refType(r), store.TierBroad))
 		}
 	}
 	return out, missing

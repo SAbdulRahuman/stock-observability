@@ -17,9 +17,11 @@ package sim
 
 import (
 	"context"
+	"fmt"
 	"hash/fnv"
 	"math"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/seenimo/stock_exporter/internal/store"
@@ -35,6 +37,8 @@ type Config struct {
 
 type state struct {
 	in        store.Instrument
+	spot      uint32 // underlying spot token of a derivative
+	oi        float64
 	day       string
 	last      float64
 	open      float64
@@ -68,16 +72,102 @@ type Simulator struct {
 // New creates a simulator for the instruments currently in the store.
 func New(cfg Config, st *store.Store, health *store.Health, loc *time.Location) *Simulator {
 	s := &Simulator{cfg: cfg, st: st, health: health, loc: loc, rng: rand.New(rand.NewSource(cfg.Seed)), states: map[uint32]*state{}}
+	spots := map[string]uint32{}
+	var derivatives []uint32
 	for _, in := range st.Instruments() {
-		s.order = append(s.order, in.Token)
 		base := basePrice(in)
-		s.states[in.Token] = &state{in: in, last: base, prevClose: base, sigma: sigmaPerTick(in, cfg.Interval)}
+		x := &state{in: in, last: base, prevClose: base, sigma: sigmaPerTick(in, cfg.Interval)}
+		s.states[in.Token] = x
+		if in.IsDerivative() {
+			x.oi = float64(100_000 + hash(in.Symbol)%900_000)
+			derivatives = append(derivatives, in.Token)
+			continue
+		}
+		spots[underlyingOf(in.Symbol)] = in.Token
+		s.order = append(s.order, in.Token)
 		if in.Type == store.TypeEquity && in.Tier == store.TierCore && len(s.holdings) < cfg.Holdings {
 			s.holdings = append(s.holdings, holding{token: in.Token, qty: float64(10 * (1 + s.rng.Intn(10))), avg: round(base * (0.9 + 0.2*s.rng.Float64()))})
 		}
 	}
+	// Derivatives tick after their underlying.
+	for _, tok := range derivatives {
+		x := s.states[tok]
+		if spot, ok := spots[x.in.Underlying]; ok {
+			x.spot = spot
+			x.last = derivativePrice(x.in, s.states[spot].last, time.Now())
+			x.prevClose = x.last
+			s.order = append(s.order, tok)
+		}
+	}
 	health.SetSubscribed(len(s.order))
 	return s
+}
+
+// underlyingOf maps a spot symbol to the NFO underlying name.
+func underlyingOf(symbol string) string {
+	switch symbol {
+	case "NIFTY 50":
+		return "NIFTY"
+	case "NIFTY BANK":
+		return "BANKNIFTY"
+	}
+	return symbol
+}
+
+// Derivatives returns a monthly future and a 7-strike option chain (calls and puts) for NIFTY 50,
+// expiring on the last Tuesday of the month, with tokens after the highest existing token.
+func Derivatives(ins []store.Instrument, now time.Time) []store.Instrument {
+	var next uint32
+	var spot *store.Instrument
+	for i := range ins {
+		next = max(next, ins[i].Token)
+		if ins[i].Symbol == "NIFTY 50" {
+			spot = &ins[i]
+		}
+	}
+	if spot == nil {
+		return nil
+	}
+	expiry := lastTuesday(now.Year(), now.Month())
+	if now.After(expiry.Add(16 * time.Hour)) {
+		expiry = lastTuesday(now.Year(), now.Month()+1)
+	}
+	prefix := "NIFTY" + expiry.Format("06Jan")
+	newIn := func(symbol, typ string, strike float64) store.Instrument {
+		next++
+		return store.Instrument{Token: next, Exchange: "NFO", Symbol: strings.ToUpper(symbol), Sector: "Index", Type: typ, Tier: store.TierCore,
+			Underlying: "NIFTY", Expiry: expiry, Strike: strike}
+	}
+	out := []store.Instrument{newIn(prefix+"FUT", store.TypeFuture, 0)}
+	atm := math.Round(basePrice(*spot)/50) * 50
+	for k := -3; k <= 3; k++ {
+		strike := atm + float64(k)*50
+		out = append(out, newIn(fmt.Sprintf("%s%.0fCE", prefix, strike), store.TypeCall, strike), newIn(fmt.Sprintf("%s%.0fPE", prefix, strike), store.TypePut, strike))
+	}
+	return out
+}
+
+func lastTuesday(y int, m time.Month) time.Time {
+	d := time.Date(y, m+1, 0, 0, 0, 0, 0, time.UTC)
+	for d.Weekday() != time.Tuesday {
+		d = d.AddDate(0, 0, -1)
+	}
+	return d
+}
+
+// derivativePrice prices a future at 7% carry and an option as intrinsic value plus a
+// Gaussian-shaped time value (15% volatility), both from the underlying spot.
+func derivativePrice(in store.Instrument, spot float64, now time.Time) float64 {
+	t := math.Max(in.Expiry.Add(10*time.Hour).Sub(now).Hours()/24/365, 1.0/365)
+	if in.Type == store.TypeFuture {
+		return round(spot * (1 + 0.07*t))
+	}
+	sd := spot * 0.15 * math.Sqrt(t)
+	tv := 0.4 * sd * math.Exp(-math.Pow((spot-in.Strike)/sd, 2)/2)
+	if in.Type == store.TypeCall {
+		return round(math.Max(spot-in.Strike, 0) + tv)
+	}
+	return round(math.Max(in.Strike-spot, 0) + tv)
 }
 
 func hash(s string) uint32 {
@@ -145,21 +235,26 @@ func (s *Simulator) Step(now time.Time) {
 		if x.day != day {
 			s.rollover(x, day, now)
 		}
-		ret := x.bias + x.sigma*s.rng.NormFloat64()
-		if s.cfg.EventProbability > 0 && s.rng.Float64() < s.cfg.EventProbability {
-			ret += math.Copysign(0.02+0.03*s.rng.Float64(), s.rng.Float64()-0.5)
-		}
-		x.last = x.last * math.Exp(ret)
-		if x.in.Type == store.TypeIndex {
-			x.last = math.Round(x.last*100) / 100
+		if x.spot != 0 {
+			x.last = derivativePrice(x.in, s.states[x.spot].last, now)
+			x.oi = math.Round(x.oi * math.Exp(0.002*s.rng.NormFloat64()))
 		} else {
-			x.last = math.Min(math.Max(round(x.last), round(x.prevClose*0.9)), round(x.prevClose*1.1))
+			ret := x.bias + x.sigma*s.rng.NormFloat64()
+			if s.cfg.EventProbability > 0 && s.rng.Float64() < s.cfg.EventProbability {
+				ret += math.Copysign(0.02+0.03*s.rng.Float64(), s.rng.Float64()-0.5)
+			}
+			x.last = x.last * math.Exp(ret)
+			if x.in.Type == store.TypeIndex {
+				x.last = math.Round(x.last*100) / 100
+			} else {
+				x.last = math.Min(math.Max(round(x.last), round(x.prevClose*0.9)), round(x.prevClose*1.1))
+			}
 		}
 		x.high = math.Max(x.high, x.last)
 		x.low = math.Min(x.low, x.last)
 
 		q := store.Quote{
-			LastPrice: x.last, Open: x.open, High: x.high, Low: x.low, PrevClose: x.prevClose,
+			LastPrice: x.last, Open: x.open, High: x.high, Low: x.low, PrevClose: x.prevClose, OpenInterest: x.oi,
 			LastTradeTime: now, ExchangeTime: now, ReceivedAt: now,
 		}
 		if x.in.Type != store.TypeIndex {
@@ -190,7 +285,7 @@ func (s *Simulator) rollover(x *state, day string, now time.Time) {
 	if x.in.Type != store.TypeIndex {
 		s.st.UpdateCircuit(x.in.Token, store.Circuit{Upper: round(x.prevClose * 1.1), Lower: round(x.prevClose * 0.9), UpdatedAt: now})
 	}
-	if x.in.Tier == store.TierCore {
+	if x.in.Tier == store.TierCore && !x.in.IsDerivative() {
 		// Hash-based (not rng) so the tick sequence of existing seeds is unchanged; ~1 in 10
 		// instruments sits within 2% of its 52-week high.
 		u := func(salt string) float64 { return float64(hash(x.in.Symbol+day+salt)%1000) / 1000 }

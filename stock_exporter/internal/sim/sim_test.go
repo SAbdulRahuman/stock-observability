@@ -89,3 +89,50 @@ func TestDayRollover(t *testing.T) {
 		t.Fatalf("prev close = %v, want %v", q.PrevClose, last)
 	}
 }
+
+func TestDerivatives(t *testing.T) {
+	now := time.Date(2026, 10, 6, 4, 0, 0, 0, time.UTC)
+	spot := []store.Instrument{{Token: 2, Exchange: "NSE", Symbol: "NIFTY 50", Type: store.TypeIndex, Tier: store.TierCore}}
+	ins := Derivatives(spot, now)
+	if len(ins) != 15 || ins[0].Type != store.TypeFuture || ins[0].Symbol != "NIFTY26OCTFUT" || ins[0].Token != 3 {
+		t.Fatalf("future %+v of %d contracts", ins[0], len(ins))
+	}
+	if exp := ins[0].Expiry; exp.Weekday() != time.Tuesday || exp.Day() != 27 {
+		t.Fatalf("expiry %v, want the last Tuesday (27 Oct 2026)", exp)
+	}
+	if ins[1].Symbol != "NIFTY26OCT24850CE" || ins[2].Type != store.TypePut || ins[1].Underlying != "NIFTY" {
+		t.Fatalf("options %+v %+v", ins[1], ins[2])
+	}
+	if Derivatives(nil, now) != nil {
+		t.Fatal("no NIFTY 50, no derivatives")
+	}
+
+	st := store.New()
+	st.SetInstruments(append(spot, ins...))
+	s := New(Config{Seed: 1, Interval: time.Second}, st, store.NewHealth("sim", "full"), time.UTC)
+	for i := range 100 {
+		s.Step(now.Add(time.Duration(i) * time.Second))
+	}
+	var nifty float64
+	for _, e := range st.Snapshot() {
+		if e.Instrument.Symbol == "NIFTY 50" {
+			nifty = e.Quote.LastPrice
+		}
+	}
+	for _, e := range st.Snapshot() {
+		in, q := e.Instrument, e.Quote
+		if !in.IsDerivative() {
+			continue
+		}
+		switch {
+		case q.LastPrice <= 0 || q.OpenInterest <= 0:
+			t.Fatalf("%s: price %v OI %v", in.Symbol, q.LastPrice, q.OpenInterest)
+		case in.Type == store.TypeFuture && q.LastPrice <= nifty:
+			t.Fatalf("future %v must trade above spot %v (positive carry)", q.LastPrice, nifty)
+		case in.Type == store.TypeCall && q.LastPrice < nifty-in.Strike-0.05:
+			t.Fatalf("%s below intrinsic value: %v (spot %v)", in.Symbol, q.LastPrice, nifty)
+		case in.Type == store.TypePut && q.LastPrice < in.Strike-nifty-0.05:
+			t.Fatalf("%s below intrinsic value: %v (spot %v)", in.Symbol, q.LastPrice, nifty)
+		}
+	}
+}

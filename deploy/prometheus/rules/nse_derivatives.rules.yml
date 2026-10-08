@@ -1,0 +1,98 @@
+# F&O intelligence (proposal §6.8, §7.9, Release 4). Contract metadata comes from the exporter's
+# `derivatives` collector: stock_instrument_info{underlying, expiry, strike} = 1 is joined with
+#   x * on(exchange, symbol) group_left(underlying, expiry) stock_instrument_info
+# Spot symbols map to NFO underlyings (NIFTY 50 -> NIFTY, NIFTY BANK -> BANKNIFTY, ...).
+#   PCR = sum OI(PE) / sum OI(CE) per underlying and expiry     basis = F - S     premium = (F / S - 1) * 100
+#   cost of carry = (F / S - 1) * 365 / days to expiry * 100    OI change = (OI / previous session OI - 1) * 100
+# IV, Greeks and max pain are computed by the Quant Lab (§A9), not here.
+groups:
+  - name: nse_derivatives_eod
+    interval: 30m
+    rules:
+      - record: stock:session_open_interest:contracts
+        expr: stock_open_interest and on() stock_market_phase{phase="post_close"} == 1
+
+  - name: nse_derivatives
+    interval: 15s
+    rules:
+      - record: underlying:spot:price
+        expr: |
+          max by (underlying) (
+            label_replace(label_replace(label_replace(label_replace(label_replace(
+                stock_last_price{exchange="NSE", instrument_type=~"EQ|INDEX"},
+              "underlying", "$1", "symbol", "(.*)"),
+              "underlying", "NIFTY", "symbol", "NIFTY 50"),
+              "underlying", "BANKNIFTY", "symbol", "NIFTY BANK"),
+              "underlying", "FINNIFTY", "symbol", "NIFTY FIN SERVICE"),
+              "underlying", "MIDCPNIFTY", "symbol", "NIFTY MID SELECT")
+          )
+          and on(underlying) count by (underlying) (stock_instrument_info)
+      - record: underlying:pcr_oi:ratio
+        expr: |
+          sum by (underlying, expiry) (stock_open_interest * on(exchange, symbol) group_left(underlying, expiry) stock_instrument_info{instrument_type="PE"})
+          / (sum by (underlying, expiry) (stock_open_interest * on(exchange, symbol) group_left(underlying, expiry) stock_instrument_info{instrument_type="CE"}) > 0)
+      - record: underlying:pcr_volume:ratio
+        expr: |
+          sum by (underlying, expiry) (stock_day_volume_shares * on(exchange, symbol) group_left(underlying, expiry) stock_instrument_info{instrument_type="PE"})
+          / (sum by (underlying, expiry) (stock_day_volume_shares * on(exchange, symbol) group_left(underlying, expiry) stock_instrument_info{instrument_type="CE"}) > 0)
+      - record: underlying:futures_price:price
+        expr: max by (underlying, expiry) (stock_last_price * on(exchange, symbol) group_left(underlying, expiry) stock_instrument_info{instrument_type="FUT"})
+      - record: underlying:futures_basis:points
+        expr: underlying:futures_price:price - on(underlying) group_left() underlying:spot:price
+      - record: underlying:futures_premium:percent
+        expr: (underlying:futures_price:price / on(underlying) group_left() (underlying:spot:price > 0) - 1) * 100
+      - record: underlying:cost_of_carry:percent
+        expr: |
+          underlying:futures_premium:percent * 365
+          / on(underlying, expiry) (
+              (max by (underlying, expiry) (stock_instrument_expiry_timestamp_seconds * on(exchange, symbol) group_left(underlying, expiry) stock_instrument_info{instrument_type="FUT"}) - time())
+              / 86400 > 0.5
+            )
+      - record: stock:oi_change:percent
+        expr: |
+          (stock_open_interest / (last_over_time(stock:session_open_interest:contracts[7d]) > 0) - 1) * 100
+          and on() (stock_market_phase{phase=~"pre_open|open"} == 1)
+
+  - name: nse_derivatives_alerts
+    interval: 15s
+    rules:
+      # Price-OI matrix on the contract: price up + OI up = long build-up, down + up = short build-up,
+      # up + down = short covering, down + down = long unwinding.
+      - alert: StockOIBuildup
+        expr: |
+          (
+              label_replace(label_replace(stock:oi_change:percent > 10 and on(exchange, symbol) stock_change_percent > 1, "class", "long_buildup", "", ""), "direction", "bullish", "", "")
+            or label_replace(label_replace(stock:oi_change:percent > 10 and on(exchange, symbol) stock_change_percent < -1, "class", "short_buildup", "", ""), "direction", "bearish", "", "")
+            or label_replace(label_replace(stock:oi_change:percent < -10 and on(exchange, symbol) stock_change_percent > 1, "class", "short_covering", "", ""), "direction", "bullish", "", "")
+            or label_replace(label_replace(stock:oi_change:percent < -10 and on(exchange, symbol) stock_change_percent < -1, "class", "long_unwinding", "", ""), "direction", "bearish", "", "")
+          )
+          and on() stock_market_open == 1
+        for: 5m
+        labels: {severity: info, category: flow, layer: condition, condition: oi_buildup}
+        annotations:
+          summary: "{{ $labels.symbol }} {{ $labels.class }} (OI {{ $value | printf \"%+.1f\" }}%)"
+          description: "Open interest of {{ $labels.exchange }}:{{ $labels.symbol }} changed by more than 10% from the previous session while the price moved more than 1%."
+      - alert: PCRExtreme
+        expr: |
+          (
+              label_replace(underlying:pcr_oi:ratio > 1.5, "extreme", "high", "", "")
+            or label_replace(underlying:pcr_oi:ratio < 0.5, "extreme", "low", "", "")
+          )
+          and on() stock_market_open == 1
+        for: 15m
+        labels: {severity: info, category: market, layer: condition, condition: pcr_extreme}
+        annotations:
+          summary: "{{ $labels.underlying }} {{ $labels.expiry }} put-call ratio {{ $value | printf \"%.2f\" }}"
+          description: "Put-call open-interest ratio of {{ $labels.underlying }} (expiry {{ $labels.expiry }}) is {{ if eq $labels.extreme \"high\" }}above 1.5 (heavy put writing or hedging){{ else }}below 0.5 (heavy call positioning){{ end }} for 15 minutes."
+      - alert: FuturesBasisAnomaly
+        expr: |
+          (
+              label_replace(underlying:futures_premium:percent < -0.5, "basis", "discount", "", "")
+            or label_replace(underlying:cost_of_carry:percent > 25, "basis", "rich", "", "")
+          )
+          and on() stock_market_open == 1
+        for: 15m
+        labels: {severity: info, category: market, layer: condition, condition: basis_anomaly}
+        annotations:
+          summary: "{{ $labels.underlying }} {{ $labels.expiry }} futures at a {{ $labels.basis }} basis"
+          description: "The {{ $labels.underlying }} future (expiry {{ $labels.expiry }}) trades {{ if eq $labels.basis \"discount\" }}more than 0.5% below spot{{ else }}above a 25% annualised cost of carry{{ end }} for 15 minutes."

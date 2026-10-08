@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
-DURATION=${DURATION:-120}
+DURATION=${DURATION:-180}
 WORK=$(mktemp -d)
 EXP_PORT=19101 PROM_PORT=19090 AM_PORT=19093
 pids=()
@@ -20,7 +20,7 @@ sed -e "s|/etc/prometheus/rules|$WORK/rules|" \
     prometheus/prometheus.yml > "$WORK/prometheus.yml"
 sed -e "s|/etc/alertmanager/templates|$ROOT/alertmanager/templates|" alertmanager/alertmanager.yml > "$WORK/alertmanager.yml"
 
-../stock_exporter/stock_exporter --feed.source=sim --market.force-open --sim.event-probability=0.002 \
+../stock_exporter/stock_exporter --feed.source=sim --market.force-open --sim.derivatives --sim.event-probability=0.002 \
   --stock.watchlist-file=../stock_exporter/examples/watchlist.yml \
   --market.holidays-file=../stock_exporter/examples/holidays-nse-2026.yml \
   --collector.textfile.directory=stock_exporter/textfile \
@@ -49,7 +49,7 @@ check() { # name, value, python condition on v
 
 check "up stock_core"                       "$(q 'up{job="stock_core"}')"  "v==1"
 check "up stock_broad"                      "$(q 'up{job="stock_broad"}')" "v==1"
-check "core samples/scrape"                 "$(q 'scrape_samples_scraped{job="stock_core"}')" "v is not None and 11000<v<15000"
+check "core samples/scrape"                 "$(q 'scrape_samples_scraped{job="stock_core"}')" "v is not None and 11000<v<16000"
 check "broad samples/scrape"                "$(q 'scrape_samples_scraped{job="stock_broad"}')" "v is not None and v>20000"
 check "ingest samples/s (1m)"               "$(q 'rate(prometheus_tsdb_head_samples_appended_total[1m])')" "v is not None and v>5000"
 check "core scrape duration p_max (s)"      "$(q 'max_over_time(scrape_duration_seconds{job="stock_core"}[1m])')" "v is not None and v<0.9"
@@ -69,6 +69,8 @@ check "TRIN"                                "$(q 'market:trin:ratio')" "v is not
 check "sector relative strength sectors"    "$(q 'count(sector:relative_strength:percent)')" "v is not None and v>=5"
 check "KPI coverage series"                 "$(q 'count(kpi:coverage:ratio)')" "v is not None and v>=25"
 check "min intraday KPI coverage"           "$(q 'min(kpi:coverage:ratio{kpi=~"stock:(return_1m|rsi_14m|turnover|orderbook_depth|microprice_deviation).*"})')" "v is not None and v>=0.9"
+curl -fsS --get "http://127.0.0.1:$PROM_PORT/api/v1/query" --data-urlencode 'query=kpi:coverage:ratio < 0.9' \
+  | python3 -c 'import json,sys; [print("     low coverage %s = %s" % (r["metric"]["kpi"], r["value"][1])) for r in json.load(sys.stdin)["data"]["result"]]'
 nse_records=$(sed -n 's/^ *- record: \(.*\)$/\1/p' prometheus/rules/nse_*.rules.yml | sort -u | paste -sd'|')
 check "R1+R2 recorded series (cap 27000)"   "$(q "count({__name__=~\"$nse_records\"})")" "v is not None and v<27000"
 check "NSE rule group duration / interval"  "$(q 'max(prometheus_rule_group_last_duration_seconds{rule_group=~".*nse_.*"} / prometheus_rule_group_interval_seconds)')" "v is not None and v<=0.25"
@@ -79,6 +81,13 @@ check "market regime code"                  "$(q 'market:regime:code')" "v is no
 check "WOBI core equities"                  "$(q 'count(stock:orderbook_weighted_imbalance:ratio)')" "v is not None and v>150"
 check "1m bars core instruments"            "$(q 'count(stock:bar_1m_close:price)')" "v is not None and v>150"
 check "stock liquidity regimes"             "$(q 'count(stock:liquidity_regime:info)')" "v is not None and v>150"
+
+# NSE Release 3 (reference levels from the simulated reference collector) and Release 4 (simulated NIFTY F&O).
+check "52-week position core instruments"   "$(q 'count(stock:range_52w_position:ratio)')" "v is not None and v>150"
+check "NIFTY implied move"                  "$(q 'market:implied_move:points')" "v is not None and v>0"
+check "F&O contracts"                       "$(q 'count(stock_instrument_info)')" "v==15"
+check "NIFTY PCR(OI)"                       "$(q 'underlying:pcr_oi:ratio{underlying="NIFTY"}')" "v is not None and v>0"
+check "NIFTY futures premium (%)"           "$(q 'underlying:futures_premium:percent{underlying="NIFTY"}')" "v is not None and 0<v<2"
 
 # Every dashboard query must execute (empty results are fine).
 dash_errors=$(python3 - "$PROM_PORT" <<'EOF'

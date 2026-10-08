@@ -36,14 +36,22 @@ const (
 	TierBroad = "broad"
 )
 
-// Instrument is a resolved watchlist entry.
+// Instrument is a resolved watchlist entry. Underlying, Expiry and Strike are set for FUT/CE/PE.
 type Instrument struct {
-	Token    uint32
-	Exchange string
-	Symbol   string
-	Sector   string
-	Type     string
-	Tier     string
+	Token      uint32
+	Exchange   string
+	Symbol     string
+	Sector     string
+	Type       string
+	Tier       string
+	Underlying string
+	Expiry     time.Time
+	Strike     float64
+}
+
+// IsDerivative reports whether the instrument is a future or an option.
+func (i Instrument) IsDerivative() bool {
+	return i.Type == TypeFuture || i.Type == TypeCall || i.Type == TypePut
 }
 
 // DepthLevel is a single order book level.

@@ -1,0 +1,173 @@
+# promtool test rules prometheus/tests/nse_derivatives_test.yml
+rule_files:
+  - ../rules/nse_derivatives.rules.yml
+
+evaluation_interval: 1m
+
+group_eval_order:
+  - nse_derivatives_eod
+  - nse_derivatives
+  - nse_derivatives_alerts
+
+tests:
+  # NIFTY 25000, future 25125 expiring at t = 30 days; PCR(OI) = (1500 + 500) / (1000 + 1000) = 1.
+  - name: spot mapping, PCR, futures basis, premium and cost of carry
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x20'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '25000x20'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1500x20'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCTFUT",sector="Index",instrument_type="FUT",tier="core"}'
+        values: '25125x20'
+      - series: 'stock_instrument_info{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCTFUT",sector="Index",instrument_type="FUT",tier="core",underlying="NIFTY",expiry="2026-10-27"}'
+        values: '1x20'
+      - series: 'stock_instrument_expiry_timestamp_seconds{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCTFUT",sector="Index",instrument_type="FUT",tier="core"}'
+        values: '2592000x20'
+      - series: 'stock_instrument_info{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT25000CE",sector="Index",instrument_type="CE",tier="core",underlying="NIFTY",expiry="2026-10-27",strike="25000"}'
+        values: '1x20'
+      - series: 'stock_open_interest{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT25000CE",sector="Index",instrument_type="CE",tier="core"}'
+        values: '1000x20'
+      - series: 'stock_day_volume_shares{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT25000CE",sector="Index",instrument_type="CE",tier="core"}'
+        values: '500x20'
+      - series: 'stock_instrument_info{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT25100CE",sector="Index",instrument_type="CE",tier="core",underlying="NIFTY",expiry="2026-10-27",strike="25100"}'
+        values: '1x20'
+      - series: 'stock_open_interest{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT25100CE",sector="Index",instrument_type="CE",tier="core"}'
+        values: '1000x20'
+      - series: 'stock_day_volume_shares{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT25100CE",sector="Index",instrument_type="CE",tier="core"}'
+        values: '100x20'
+      - series: 'stock_instrument_info{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT25000PE",sector="Index",instrument_type="PE",tier="core",underlying="NIFTY",expiry="2026-10-27",strike="25000"}'
+        values: '1x20'
+      - series: 'stock_open_interest{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT25000PE",sector="Index",instrument_type="PE",tier="core"}'
+        values: '1500x20'
+      - series: 'stock_day_volume_shares{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT25000PE",sector="Index",instrument_type="PE",tier="core"}'
+        values: '400x20'
+      - series: 'stock_instrument_info{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT24900PE",sector="Index",instrument_type="PE",tier="core",underlying="NIFTY",expiry="2026-10-27",strike="24900"}'
+        values: '1x20'
+      - series: 'stock_open_interest{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT24900PE",sector="Index",instrument_type="PE",tier="core"}'
+        values: '500x20'
+      - series: 'stock_day_volume_shares{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT24900PE",sector="Index",instrument_type="PE",tier="core"}'
+        values: '100x20'
+    promql_expr_test:
+      # INFY has no derivatives, so no underlying spot.
+      - expr: underlying:spot:price
+        eval_time: 5m
+        exp_samples:
+          - labels: 'underlying:spot:price{underlying="NIFTY"}'
+            value: 25000
+      - expr: underlying:pcr_oi:ratio
+        eval_time: 5m
+        exp_samples:
+          - labels: 'underlying:pcr_oi:ratio{underlying="NIFTY",expiry="2026-10-27"}'
+            value: 1
+      - expr: abs(underlying:pcr_volume:ratio - 500 / 600) < bool 1e-12
+        eval_time: 5m
+        exp_samples:
+          - labels: '{underlying="NIFTY",expiry="2026-10-27"}'
+            value: 1
+      - expr: underlying:futures_basis:points
+        eval_time: 5m
+        exp_samples:
+          - labels: 'underlying:futures_basis:points{underlying="NIFTY",expiry="2026-10-27"}'
+            value: 125
+      - expr: abs(underlying:futures_premium:percent - 0.5) < bool 1e-9
+        eval_time: 5m
+        exp_samples:
+          - labels: '{underlying="NIFTY",expiry="2026-10-27"}'
+            value: 1
+      # 0.5% * 365 / ((2592000 - 300) / 86400 days)
+      - expr: abs(underlying:cost_of_carry:percent - 6.08403750434078) < bool 1e-9
+        eval_time: 5m
+        exp_samples:
+          - labels: '{underlying="NIFTY",expiry="2026-10-27"}'
+            value: 1
+    alert_rule_test:
+      - eval_time: 18m
+        alertname: PCRExtreme
+        exp_alerts: []
+      - eval_time: 18m
+        alertname: FuturesBasisAnomaly
+        exp_alerts: []
+
+  # PCR 2 and a 0.8% futures discount from 0m; both alerts need 15 minutes, and an open market.
+  - name: PCR extreme and futures discount after 15 minutes, only while open
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x20 0x10'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '25000x30'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCTFUT",sector="Index",instrument_type="FUT",tier="core"}'
+        values: '24800x30'
+      - series: 'stock_instrument_info{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCTFUT",sector="Index",instrument_type="FUT",tier="core",underlying="NIFTY",expiry="2026-10-27"}'
+        values: '1x30'
+      - series: 'stock_instrument_info{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT25000CE",sector="Index",instrument_type="CE",tier="core",underlying="NIFTY",expiry="2026-10-27",strike="25000"}'
+        values: '1x30'
+      - series: 'stock_open_interest{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT25000CE",sector="Index",instrument_type="CE",tier="core"}'
+        values: '2000x30'
+      - series: 'stock_instrument_info{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT25000PE",sector="Index",instrument_type="PE",tier="core",underlying="NIFTY",expiry="2026-10-27",strike="25000"}'
+        values: '1x30'
+      - series: 'stock_open_interest{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT25000PE",sector="Index",instrument_type="PE",tier="core"}'
+        values: '4000x30'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: PCRExtreme
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: PCRExtreme
+        exp_alerts:
+          - exp_labels: {underlying: NIFTY, expiry: "2026-10-27", extreme: high, severity: info, category: market, layer: condition, condition: pcr_extreme}
+            exp_annotations:
+              summary: NIFTY 2026-10-27 put-call ratio 2.00
+              description: Put-call open-interest ratio of NIFTY (expiry 2026-10-27) is above 1.5 (heavy put writing or hedging) for 15 minutes.
+      - eval_time: 15m
+        alertname: FuturesBasisAnomaly
+        exp_alerts:
+          - exp_labels: {underlying: NIFTY, expiry: "2026-10-27", basis: discount, severity: info, category: market, layer: condition, condition: basis_anomaly}
+            exp_annotations:
+              summary: NIFTY 2026-10-27 futures at a discount basis
+              description: The NIFTY future (expiry 2026-10-27) trades more than 0.5% below spot for 15 minutes.
+      - eval_time: 25m
+        alertname: PCRExtreme
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: FuturesBasisAnomaly
+        exp_alerts: []
+
+  # Day 0 closes with OI 1000 (post_close 15:30-16:00); day 1 opens at 33h30m with OI 1200 and the
+  # contract up 2%: long build-up after 5 minutes.
+  - name: OI change from the previous session and OI build-up
+    interval: 1m
+    input_series:
+      - series: 'stock_market_phase{job="stock_core",instance="se",phase="post_close"}'
+        values: '0x929 1x29 0x1100'
+      - series: 'stock_market_phase{job="stock_core",instance="se",phase="open"}'
+        values: '0x2009 1x40'
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '0x2009 1x40'
+      - series: 'stock_open_interest{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCTFUT",sector="Index",instrument_type="FUT",tier="core"}'
+        values: '1000x2009 1200x40'
+      - series: 'stock_change_percent{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCTFUT",sector="Index",instrument_type="FUT",tier="core"}'
+        values: '0x2009 2x40'
+    promql_expr_test:
+      - expr: stock:oi_change:percent
+        eval_time: 30h
+        exp_samples: []
+      - expr: abs(stock:oi_change:percent - 20) < bool 1e-9
+        eval_time: 33h30m
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCTFUT",sector="Index",instrument_type="FUT",tier="core"}'
+            value: 1
+    alert_rule_test:
+      - eval_time: 33h34m
+        alertname: StockOIBuildup
+        exp_alerts: []
+      - eval_time: 34h
+        alertname: StockOIBuildup
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, exchange: NFO, symbol: NIFTY26OCTFUT, sector: Index, instrument_type: FUT, tier: core, class: long_buildup, direction: bullish, severity: info, category: flow, layer: condition, condition: oi_buildup}
+            exp_annotations:
+              summary: NIFTY26OCTFUT long_buildup (OI +20.0%)
+              description: Open interest of NFO:NIFTY26OCTFUT changed by more than 10% from the previous session while the price moved more than 1%.

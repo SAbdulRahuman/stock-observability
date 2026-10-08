@@ -304,3 +304,41 @@ func TestNewScope(t *testing.T) {
 		t.Fatal("empty scope must include everything")
 	}
 }
+
+func TestReferenceAndDerivativesCollectors(t *testing.T) {
+	deps := testDeps(t)
+	st := deps.Store
+	st.UpdateReference(1, store.Reference{High52W: 1700, Low52W: 1200, SMA50D: 1500, Cross: 1})
+	want := `
+# HELP stock_52w_high_price Highest daily high of the last 52 weeks.
+# TYPE stock_52w_high_price gauge
+stock_52w_high_price{` + labels + `} 1700
+# HELP stock_sma_50d_200d_cross 1 if the latest daily close moved SMA50 above SMA200, -1 below; absent otherwise.
+# TYPE stock_sma_50d_200d_cross gauge
+stock_sma_50d_200d_cross{` + labels + `} 1
+`
+	c := mustCollector(t, NewReferenceCollector, deps)
+	if err := testutil.CollectAndCompare(adapter{c, Scope{}}, strings.NewReader(want), "stock_52w_high_price", "stock_sma_50d_200d_cross"); err != nil {
+		t.Fatal(err)
+	}
+	// SMA200 needs 200 candles: high, low, SMA50 and cross only.
+	if n := testutil.CollectAndCount(adapter{c, Scope{}}); n != 4 {
+		t.Fatalf("got %d reference series, want 4", n)
+	}
+
+	expiry := time.Date(2026, 10, 27, 0, 0, 0, 0, ist)
+	st.SetInstruments(append(st.Instruments(),
+		store.Instrument{Token: 9, Exchange: "NFO", Symbol: "NIFTY26OCT25000CE", Sector: "Index", Type: store.TypeCall, Tier: store.TierCore, Underlying: "NIFTY", Expiry: expiry, Strike: 25000}))
+	want = `
+# HELP stock_instrument_expiry_timestamp_seconds Expiry of a future or option (15:30 IST on the expiry date).
+# TYPE stock_instrument_expiry_timestamp_seconds gauge
+stock_instrument_expiry_timestamp_seconds{exchange="NFO",instrument_type="CE",sector="Index",symbol="NIFTY26OCT25000CE",tier="core"} 1.7930952e+09
+# HELP stock_instrument_info Contract metadata of a future or option (value 1).
+# TYPE stock_instrument_info gauge
+stock_instrument_info{exchange="NFO",expiry="2026-10-27",instrument_type="CE",sector="Index",strike="25000",symbol="NIFTY26OCT25000CE",tier="core",underlying="NIFTY"} 1
+`
+	d := mustCollector(t, NewDerivativesCollector, deps)
+	if err := testutil.CollectAndCompare(adapter{d, Scope{}}, strings.NewReader(want)); err != nil {
+		t.Fatal(err)
+	}
+}

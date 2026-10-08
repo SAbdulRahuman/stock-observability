@@ -2785,3 +2785,143 @@ kpis:
     method: daily golden/death-cross spread from Kite day candles (>= 200 candles)
     limitation: "needs the Kite historical data add-on"
     dashboard_default: true
+
+  # --- F&O intelligence (exporter `derivatives` collector, nse_derivatives, Release 4) ----------
+  - name: stock:session_open_interest:contracts
+    kind: snapshot
+    release: R4
+    formula: "OI at post_close"
+    inputs: [stock_open_interest, stock_market_phase]
+    rule_file: nse_derivatives.rules.yml
+    frequency: 30m
+    scope: core
+    unit: contracts
+
+  - name: underlying:spot:price
+    kind: helper
+    release: R4
+    formula: "spot LTP relabelled to the NFO underlying (NIFTY 50 -> NIFTY, NIFTY BANK -> BANKNIFTY, ...), underlyings with contracts only"
+    inputs: [stock_last_price, stock_instrument_info]
+    rule_file: nse_derivatives.rules.yml
+    frequency: 15s
+    scope: market
+    unit: price
+
+  - name: underlying:futures_price:price
+    kind: helper
+    release: R4
+    formula: "future LTP per underlying and expiry"
+    inputs: [stock_last_price, stock_instrument_info]
+    rule_file: nse_derivatives.rules.yml
+    frequency: 15s
+    scope: market
+    unit: price
+
+  - name: underlying:pcr_oi:ratio
+    kind: kpi
+    family: derivatives
+    level: derivatives_intelligence
+    capability: derivatives
+    release: R4
+    formula: "sum OI(PE) / sum OI(CE) per underlying and expiry"
+    inputs: [stock_open_interest, stock_instrument_info]
+    rule_file: nse_derivatives.rules.yml
+    frequency: 15s
+    scope: market
+    unit: ratio
+    warmup: 0s
+    quality: exact
+    method: open-interest put-call ratio over the tracked strikes
+    limitation: "covers only the strikes in the watchlist (Kite subscription limit)"
+    alertable: true
+    dashboard_default: true
+
+  - name: underlying:pcr_volume:ratio
+    kind: kpi
+    family: derivatives
+    level: derivatives_intelligence
+    capability: derivatives
+    release: R4
+    formula: "sum day volume(PE) / sum day volume(CE) per underlying and expiry"
+    inputs: [stock_day_volume_shares, stock_instrument_info]
+    rule_file: nse_derivatives.rules.yml
+    frequency: 15s
+    scope: market
+    unit: ratio
+    warmup: 0s
+    quality: exact
+    method: volume put-call ratio over the tracked strikes
+    dashboard_default: true
+
+  - name: underlying:futures_basis:points
+    kind: kpi
+    family: derivatives
+    level: derivatives_intelligence
+    capability: derivatives
+    release: R4
+    formula: "F - S per underlying and expiry"
+    inputs: [underlying:futures_price:price, underlying:spot:price]
+    rule_file: nse_derivatives.rules.yml
+    frequency: 15s
+    scope: market
+    unit: points
+    warmup: 0s
+    quality: exact
+    method: futures LTP minus spot LTP (asynchronous ticks)
+    dashboard_default: true
+
+  - name: underlying:futures_premium:percent
+    kind: kpi
+    family: derivatives
+    level: derivatives_intelligence
+    capability: derivatives
+    release: R4
+    formula: "(F / S - 1) * 100"
+    inputs: [underlying:futures_price:price, underlying:spot:price]
+    rule_file: nse_derivatives.rules.yml
+    frequency: 15s
+    scope: market
+    unit: percent
+    warmup: 0s
+    quality: exact
+    method: futures premium (negative = discount) over spot
+    alertable: true
+    dashboard_default: true
+
+  - name: underlying:cost_of_carry:percent
+    kind: kpi
+    family: derivatives
+    level: derivatives_intelligence
+    capability: derivatives
+    release: R4
+    formula: "(F / S - 1) * 365 / days to expiry * 100, > 0.5 days to expiry"
+    inputs: [underlying:futures_premium:percent, stock_instrument_expiry_timestamp_seconds]
+    rule_file: nse_derivatives.rules.yml
+    frequency: 15s
+    scope: market
+    unit: percent
+    warmup: 0s
+    quality: approximation
+    method: simple annualised carry (calendar days)
+    limitation: "explodes near expiry; suppressed in the last half day"
+    alertable: true
+    dashboard_default: true
+
+  - name: stock:oi_change:percent
+    kind: kpi
+    family: derivatives
+    level: derivatives_intelligence
+    capability: derivatives
+    release: R4
+    formula: "(OI / previous session OI - 1) * 100, pre_open and open"
+    inputs: [stock_open_interest, stock:session_open_interest:contracts]
+    rule_file: nse_derivatives.rules.yml
+    frequency: 15s
+    scope: core
+    unit: percent
+    warmup: 0s
+    warmup_sessions: 1
+    quality: exact
+    method: open-interest change vs the previous post-close snapshot
+    alertable: true
+    dashboard_default: true

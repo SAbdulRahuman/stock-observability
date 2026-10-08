@@ -182,11 +182,12 @@ type options struct {
 	kitePortfolioEvery time.Duration
 	kiteBaseURI        string
 
-	simSeed      int64
-	simInterval  time.Duration
-	simEventProb float64
-	simHoldings  int
-	simBroadSize int
+	simSeed        int64
+	simInterval    time.Duration
+	simEventProb   float64
+	simHoldings    int
+	simBroadSize   int
+	simDerivatives bool
 }
 
 func readSecretFile(path string) (string, error) {
@@ -227,7 +228,11 @@ func start(ctx context.Context, o options, b *bootstrap.Bootstrap) (collector.De
 	switch o.source {
 	case "sim":
 		deps.Health = store.NewHealth("sim", "full")
-		st.SetInstruments(wl.Synthetic(o.simBroadSize))
+		ins := wl.Synthetic(o.simBroadSize)
+		if o.simDerivatives {
+			ins = append(ins, sim.Derivatives(ins, time.Now().In(loc))...)
+		}
+		st.SetInstruments(ins)
 		deps.Health.SetSession(true, time.Time{})
 		s := sim.New(sim.Config{Seed: o.simSeed, Interval: o.simInterval, EventProbability: o.simEventProb, Holdings: o.simHoldings}, st, deps.Health, loc)
 		go s.Run(ctx)
@@ -295,6 +300,7 @@ func main() {
 	kingpin.Flag("sim.event-probability", "Per-tick probability of a 2-5% price jump.").Default("0.0005").Float64Var(&o.simEventProb)
 	kingpin.Flag("sim.holdings", "Number of simulated portfolio holdings.").Default("5").IntVar(&o.simHoldings)
 	kingpin.Flag("sim.broad-size", "Number of synthetic broad-tier instruments when universes are configured.").Default("2000").IntVar(&o.simBroadSize)
+	kingpin.Flag("sim.derivatives", "Add a NIFTY monthly future and a 7-strike option chain (core tier, NFO).").Default("false").BoolVar(&o.simDerivatives)
 
 	kingpin.CommandLine.UsageWriter(os.Stdout)
 	runner := bootstrap.New(bootstrap.Config{

@@ -135,7 +135,8 @@ func (c *Client) Instruments(ctx context.Context, wl *watchlist.Watchlist) ([]st
 			return nil, nil, err
 		}
 		for _, i := range ins {
-			refs = append(refs, watchlist.Ref{Token: uint32(i.InstrumentToken), Exchange: i.Exchange, Symbol: i.Tradingsymbol, Segment: i.Segment, InstrumentType: i.InstrumentType})
+			refs = append(refs, watchlist.Ref{Token: uint32(i.InstrumentToken), Exchange: i.Exchange, Symbol: i.Tradingsymbol, Segment: i.Segment, InstrumentType: i.InstrumentType,
+				Name: i.Name, Expiry: i.Expiry.Time, Strike: i.StrikePrice})
 		}
 	}
 	out, missing := wl.Resolve(refs)
