@@ -205,3 +205,39 @@ OCP cluster details
  
 kubeadmin/ABKHs-TnW6m-I2pmb-vYZZg
  
+---
+
+# Stock Home UX design
+
+## Stock_Home UI 
+
+<img width="1536" height="1024" alt="Image" src="https://github.com/user-attachments/assets/4f2a7ba1-d8c5-4f93-a263-cb5dc4fa89dc" />
+
+## Market Overview UI
+
+<img width="1536" height="1024" alt="Image" src="https://github.com/user-attachments/assets/f7c53f92-0e0a-4737-8e00-4671fcb8dc99" />
+
+## Watchlist 
+
+<img width="1536" height="1024" alt="Image" src="https://github.com/user-attachments/assets/a47fe846-2cd4-4b64-903e-485432406ed3" />
+
+## Alerts UI 
+
+<img width="1536" height="1024" alt="Image" src="https://github.com/user-attachments/assets/7127ef70-812f-4e01-9963-40f695a9a11a" />
+
+## Top Movers UI 
+
+<img width="1536" height="1024" alt="Image" src="https://github.com/user-attachments/assets/1af3e3ea-1cbf-45f8-bb6d-9dd687228a65" />
+
+# Sector View 
+
+<img width="1536" height="1024" alt="Image" src="https://github.com/user-attachments/assets/c178914f-fee9-4f37-aa15-22f10af1059b" />
+
+## Stock Exporter UI 
+
+<img width="1536" height="1024" alt="Image" src="https://github.com/user-attachments/assets/1553241b-bb65-4aca-bb3d-240332e09c52" />
+
+
+## Settings UI 
+
+<img width="1536" height="1024" alt="Image" src="https://github.com/user-attachments/assets/bd36cb83-9462-4a54-9484-106fb0822eef" />
