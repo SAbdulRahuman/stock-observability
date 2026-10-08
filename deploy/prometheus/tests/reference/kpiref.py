@@ -30,6 +30,7 @@ GROUP_ORDER = {
     "volume": ["stock_fast", "stock_slow", "portfolio", "nse_bars", "nse_volume_liquidity", "nse_volume_bars",
                "nse_volume_stateful", "nse_volume_liquidity_alerts"],
     "flow": ["nse_order_flow", "nse_order_flow_depth", "nse_order_flow_1m", "nse_order_flow_alerts"],
+    "regime": ["nse_regimes", "nse_regimes_stock", "nse_regimes_alerts"],
     "osc": ["nse_bars", "nse_momentum", "nse_momentum_wilder", "nse_momentum_bars", "nse_momentum_alerts"],
     "ma": ["stock_fast", "stock_slow", "portfolio", "nse_trend", "nse_trend_regression", "nse_trend_alerts", "nse_moving_averages"],
 }
@@ -1009,6 +1010,123 @@ def family_flow():
     ], 60
 
 
+# --- nse_regimes.rules.yml ----------------------------------------------------------------------
+
+
+def quantile(q, xs):
+    """Prometheus quantile(): linear interpolation between the closest ranks."""
+    xs = sorted(xs)
+    rank = q * (len(xs) - 1)
+    lo, hi = math.floor(rank), math.ceil(rank)
+    return xs[lo] + (xs[hi] - xs[lo]) * (rank - lo)
+
+
+def clamp(x, lo, hi):
+    return max(lo, min(hi, x))
+
+
+REGIMES = ["LIQUIDITY_STRESS", "HIGH_VOLATILITY", "BROAD_MARKET_SELL_OFF", "BROAD_MARKET_RALLY", "TRENDING_BEAR",
+           "TRENDING_BULL", "BREAKOUT_REGIME", "SECTOR_ROTATION", "LOW_VOLATILITY", "NORMAL"]
+
+
+def family_regime():
+    """One scenario per 5-minute block, each meant to select the next regime in precedence order."""
+    minutes, step = 60, 60
+    base = dict(adv=1000, dec=900, above=0.5, trin=1.0, nifty=0.3, vix=15.0, depth=[1.0, 1.0, 1.0, 1.0], lowc=5,
+                r2=0.2, slope=1.0, prices=[100.0] * 4, rs=[0.5, -0.5, 0.2], disp=1.6, width=1.0, adx=15.0, dip=20.0,
+                dim=20.0, vd=0.1, wobi=0.0)
+    blocks = [
+        {},
+        dict(depth=[0.2, 0.2, 0.25, 0.3]),
+        dict(vix=26.0, width=2.0),
+        dict(adv=200, dec=1800, above=0.1, trin=2.5, nifty=-1.5, lowc=30, vd=-0.5, wobi=-0.3),
+        dict(adv=1800, dec=200, above=0.9, trin=0.4, nifty=1.5, vd=0.5, wobi=0.3, depth=[2.0, 1.0, 1.0, 1.0]),
+        dict(r2=0.8, slope=-2.0, adx=30.0, dip=15.0, dim=25.0),
+        dict(r2=0.8, slope=2.0, adx=30.0, dip=25.0, dim=15.0),
+        dict(prices=[120.0, 100.0, 100.0, 100.0], adx=22.0),
+        dict(rs=[3.0, -2.0, 0.0]),
+        dict(vix=12.0, disp=1.0, width=0.4),
+        {},
+        {},
+    ]
+    sc = [dict(base, **blocks[min(m // 5, len(blocks) - 1)]) for m in range(minutes + 1)]
+    col = lambda k: [s[k] for s in sc]
+    syms = ["A", "B", "C", "D"]
+    sectors = ["IT", "Energy", "Pharma"]
+    nifty = instrument("NIFTY 50", sector="Index", itype="INDEX")
+    series = [
+        Series("stock_market_open", CORE, step, constant(1, minutes + 1), "%d"),
+        Series("market:advancers:count", {}, step, col("adv"), "%d"),
+        Series("market:decliners:count", {}, step, col("dec"), "%d"),
+        Series("market:above_vwap:ratio", {}, step, col("above"), "%.2f"),
+        Series("market:trin:ratio", {}, step, col("trin"), "%.2f"),
+        Series("stock_change_percent", nifty, step, col("nifty")),
+        Series("stock_last_price", instrument("INDIA VIX", sector="Index", itype="INDEX"), step, col("vix")),
+        Series("market:circuit_hits:count", {"band": "lower"}, step, col("lowc"), "%d"),
+        Series("stock:trend_r2_30m:ratio", nifty, step, col("r2")),
+        Series("stock:trend_slope_30m:percent_per_hour", nifty, step, col("slope")),
+        Series("market:dispersion:percent", {}, step, col("disp")),
+        Series("market:session_dispersion:percent", {}, step, [1.0 + 0.1 * i for i in range(10)]),
+    ]
+    for i, sym in enumerate(syms):
+        lbl = instrument(sym)
+        series += [
+            Series("stock:depth_vs_1h:ratio", lbl, step, [s["depth"][i] for s in sc]),
+            Series("stock_last_price", lbl, step, [s["prices"][i] for s in sc]),
+            Series("stock:session_high:price", lbl, step, constant(110.0, 16)),
+            Series("stock:session_low:price", lbl, step, constant(90.0, 16)),
+        ]
+    for i, sec in enumerate(sectors):
+        series.append(Series("sector:relative_strength:percent", {"sector": sec}, step, [s["rs"][i] for s in sc]))
+    a = instrument("A")
+    for metric, key in (("stock:bollinger_width_20m:percent", "width"), ("stock:adx_14m:index", "adx"), ("stock:di_plus_14m:percent", "dip"),
+                        ("stock:di_minus_14m:percent", "dim"), ("stock:volume_delta_1h:ratio", "vd"), ("stock:orderbook_weighted_imbalance:ratio", "wobi")):
+        series.append(Series(metric, a, step, col(key)))
+    width = series[-6]
+
+    checks = []
+    for b in range(len(blocks)):
+        m = 5 * b + 2
+        t, s = m * 60, sc[m]
+        breadth = 100 * (s["adv"] / (s["adv"] + s["dec"]) + s["above"] + clamp(1 - (s["trin"] - 0.5) / 1.5, 0, 1)) / 3
+        momentum = 50 + 50 * clamp(s["nifty"] / 2, -1, 1)
+        vol = 100 * clamp((s["vix"] - 10) / 20, 0, 1)
+        liq = 100 * clamp(quantile(0.5, s["depth"]), 0, 1)
+        stress = 0.3 * (100 - breadth) + 0.3 * vol + 0.2 * (100 - liq) + 0.2 * 100 * clamp(s["lowc"] / 50, 0, 1)
+        share = sum(1 for p in s["prices"] if p > 110 or p < 90) / len(syms)
+        rsd = pstdev(s["rs"])
+        low_vol = vol < 20 and s["disp"] < quantile(0.5, [1.0 + 0.1 * i for i in range(10)])
+        conds = [liq < 30, vol > 70, breadth < 25 and momentum < 30, breadth > 75 and momentum > 70,
+                 s["r2"] > 0.7 and s["slope"] < 0, s["r2"] > 0.7 and s["slope"] > 0, share >= 0.15,
+                 rsd > 1.5 and 40 <= breadth <= 60, low_vol, True]
+        code = conds.index(True) + 1
+        assert b == 0 or b >= 10 or code == b, (b, code)
+        for name, v in (("market:breadth_score:index", breadth), ("market:momentum_score:index", momentum),
+                        ("market:volatility_score:index", vol), ("market:liquidity_score:index", liq),
+                        ("market:stress_score:index", stress), ("market:risk_score:index", 0.5 * vol + 0.5 * stress),
+                        ("market:breakout_share:ratio", share), ("market:sector_rs_dispersion:percent", rsd),
+                        ("market:regime:code", code)):
+            checks.append(Check(name, {}, t, v))
+        checks.append(Check("market:regime:info", {"regime": REGIMES[code - 1]}, t, 1))
+        if code != 10:
+            checks.append(Absent("market:regime:info", {"regime": "NORMAL"}, t))
+        for sec, rs in zip(sectors, s["rs"]):
+            checks.append(Check("sector:regime:info", {"sector": sec, "regime": "LEADING" if rs > 1 else "LAGGING" if rs < -1 else "NEUTRAL"}, t, 1))
+        for sym, d in zip(syms, s["depth"]):
+            checks.append(Check("stock:liquidity_regime:info", dict(instrument(sym), regime="THIN" if d < 0.5 else "DEEP" if d > 1.5 else "NORMAL"), t, 1))
+        avg2h = mean([v for _, v in width.samples(t - 7200, t)])
+        vreg = "HIGH" if s["width"] > 1.5 * avg2h else "LOW" if s["width"] < 0.67 * avg2h else "NORMAL"
+        mreg = ("UPTREND" if s["adx"] > 25 and s["dip"] > s["dim"] else "DOWNTREND" if s["adx"] > 25 and s["dim"] > s["dip"]
+                else "RANGE" if s["adx"] < 20 else "NEUTRAL")
+        oreg = ("ACCUMULATION" if s["vd"] > 0.3 and s["wobi"] > 0.2 else "DISTRIBUTION" if s["vd"] < -0.3 and s["wobi"] < -0.2
+                else "BALANCED")
+        for name, reg in (("stock:volatility_regime:info", vreg), ("stock:momentum_regime:info", mreg), ("stock:orderflow_regime:info", oreg)):
+            checks.append(Check(name, dict(a, regime=reg), t, 1))
+    return ["nse_regimes.rules.yml"], [
+        test_case("regime scores, precedence chain, sector and stock regimes match the reference", step, series, checks)
+    ], 60
+
+
 FAMILIES = {
     "base": family_base,
     "price_levels": family_price_levels,
@@ -1026,6 +1144,7 @@ FAMILIES = {
     "strength": family_strength,
     "volume": family_volume,
     "flow": family_flow,
+    "regime": family_regime,
 }
 
 

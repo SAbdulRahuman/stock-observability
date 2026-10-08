@@ -1,0 +1,172 @@
+# Market, sector and stock regimes (proposal §A7, Release 2). Scores are 0-100 heuristics,
+# calibrated after 20 sessions. Regimes are precedence-ordered: `or on()` keeps the first match.
+#   breadth    = 100 * mean(adv / (adv + dec), above VWAP, clamp(1 - (TRIN - 0.5) / 1.5, 0, 1))
+#   momentum   = 50 + 50 * clamp(NIFTY 50 change% / 2, -1, 1)
+#   volatility = 100 * clamp((INDIA VIX - 10) / 20, 0, 1)
+#   liquidity  = 100 * clamp(median depth vs 1h of EQ, 0, 1)
+#   stress     = 0.3 (100 - breadth) + 0.3 volatility + 0.2 (100 - liquidity) + 0.2 * 100 * clamp(lower circuits / 50, 0, 1)
+#   risk       = 0.5 volatility + 0.5 stress
+groups:
+  - name: nse_regimes
+    interval: 1m
+    rules:
+      - record: market:breadth_score:index
+        expr: |
+          100 * (
+              (market:advancers:count or on() vector(0))
+              / ((market:advancers:count or on() vector(0)) + (market:decliners:count or on() vector(0)) > 0)
+            + on() market:above_vwap:ratio
+            + on() clamp(1 - (market:trin:ratio - 0.5) / 1.5, 0, 1)
+          ) / 3
+      - record: market:momentum_score:index
+        expr: 50 + 50 * clamp(max(stock_change_percent{symbol="NIFTY 50", instrument_type="INDEX"}) / 2, -1, 1)
+      - record: market:volatility_score:index
+        expr: 100 * clamp((max(stock_last_price{symbol="INDIA VIX"}) - 10) / 20, 0, 1)
+      - record: market:liquidity_score:index
+        expr: 100 * clamp(quantile(0.5, stock:depth_vs_1h:ratio{instrument_type="EQ"}), 0, 1)
+      - record: market:stress_score:index
+        expr: |
+          (
+              0.3 * (100 - market:breadth_score:index)
+            + 0.3 * market:volatility_score:index
+            + 0.2 * (100 - market:liquidity_score:index)
+            + 0.2 * 100 * clamp((max(market:circuit_hits:count{band="lower"}) or vector(0)) / 50, 0, 1)
+          )
+      - record: market:risk_score:index
+        expr: 0.5 * market:volatility_score:index + 0.5 * market:stress_score:index
+
+      # Regime inputs: share of core EQ beyond their 20-session range, spread of sector strength.
+      - record: market:breakout_share:ratio
+        expr: |
+          (
+            count(
+                (
+                    stock_last_price{tier="core", instrument_type="EQ"} > max_over_time(stock:session_high:price[28d])
+                  or stock_last_price{tier="core", instrument_type="EQ"} < min_over_time(stock:session_low:price[28d])
+                )
+              and count_over_time(stock:session_high:price[28d]) >= 15
+            )
+            or on() vector(0)
+          )
+          / count(stock_last_price{tier="core", instrument_type="EQ"})
+      - record: market:sector_rs_dispersion:percent
+        expr: stddev(sector:relative_strength:percent)
+
+      - record: market:regime:info
+        expr: |
+          (
+                label_replace(vector(1) and on() (market:liquidity_score:index < 30), "regime", "LIQUIDITY_STRESS", "", "")
+            or on() label_replace(vector(1) and on() (market:volatility_score:index > 70), "regime", "HIGH_VOLATILITY", "", "")
+            or on() label_replace(vector(1) and on() (market:breadth_score:index < 25 and on() market:momentum_score:index < 30), "regime", "BROAD_MARKET_SELL_OFF", "", "")
+            or on() label_replace(vector(1) and on() (market:breadth_score:index > 75 and on() market:momentum_score:index > 70), "regime", "BROAD_MARKET_RALLY", "", "")
+            or on() label_replace(vector(1) and on() (max(stock:trend_r2_30m:ratio{symbol="NIFTY 50"}) > 0.7 and on() max(stock:trend_slope_30m:percent_per_hour{symbol="NIFTY 50"}) < 0), "regime", "TRENDING_BEAR", "", "")
+            or on() label_replace(vector(1) and on() (max(stock:trend_r2_30m:ratio{symbol="NIFTY 50"}) > 0.7 and on() max(stock:trend_slope_30m:percent_per_hour{symbol="NIFTY 50"}) > 0), "regime", "TRENDING_BULL", "", "")
+            or on() label_replace(vector(1) and on() (market:breakout_share:ratio >= 0.15), "regime", "BREAKOUT_REGIME", "", "")
+            or on() label_replace(vector(1) and on() (market:sector_rs_dispersion:percent > 1.5 and on() market:breadth_score:index >= 40 and on() market:breadth_score:index <= 60), "regime", "SECTOR_ROTATION", "", "")
+            or on() label_replace(
+                  vector(1) and on() (
+                      market:volatility_score:index < 20
+                    and on() market:dispersion:percent < on() quantile_over_time(0.5, market:session_dispersion:percent[28d])
+                    and on() count_over_time(market:session_dispersion:percent[28d]) >= 10
+                  ),
+                  "regime", "LOW_VOLATILITY", "", "")
+            or on() label_replace(vector(1), "regime", "NORMAL", "", "")
+          )
+          and on() stock_market_open == 1
+      # Same precedence as a number for Grafana state timelines (1 = LIQUIDITY_STRESS ... 10 = NORMAL).
+      - record: market:regime:code
+        expr: |
+          (
+                (vector(1) and on() (market:liquidity_score:index < 30))
+            or on() (vector(2) and on() (market:volatility_score:index > 70))
+            or on() (vector(3) and on() (market:breadth_score:index < 25 and on() market:momentum_score:index < 30))
+            or on() (vector(4) and on() (market:breadth_score:index > 75 and on() market:momentum_score:index > 70))
+            or on() (vector(5) and on() (max(stock:trend_r2_30m:ratio{symbol="NIFTY 50"}) > 0.7 and on() max(stock:trend_slope_30m:percent_per_hour{symbol="NIFTY 50"}) < 0))
+            or on() (vector(6) and on() (max(stock:trend_r2_30m:ratio{symbol="NIFTY 50"}) > 0.7 and on() max(stock:trend_slope_30m:percent_per_hour{symbol="NIFTY 50"}) > 0))
+            or on() (vector(7) and on() (market:breakout_share:ratio >= 0.15))
+            or on() (vector(8) and on() (market:sector_rs_dispersion:percent > 1.5 and on() market:breadth_score:index >= 40 and on() market:breadth_score:index <= 60))
+            or on() (
+                  vector(9) and on() (
+                      market:volatility_score:index < 20
+                    and on() market:dispersion:percent < on() quantile_over_time(0.5, market:session_dispersion:percent[28d])
+                    and on() count_over_time(market:session_dispersion:percent[28d]) >= 10
+                  )
+                )
+            or on() vector(10)
+          )
+          and on() stock_market_open == 1
+
+      # Sector regime from relative strength vs NIFTY 50 (+/- 1 pp).
+      - record: sector:regime:info
+        expr: |
+          (
+                label_replace(sector:relative_strength:percent > 1, "regime", "LEADING", "", "")
+            or ignoring(regime) label_replace(sector:relative_strength:percent < -1, "regime", "LAGGING", "", "")
+            or ignoring(regime) label_replace(sector:relative_strength:percent, "regime", "NEUTRAL", "", "")
+          ) * 0 + 1
+          and on() stock_market_open == 1
+
+  # Stock regimes (core EQ), one series per instrument and family:
+  #   volatility: Bollinger width vs its 2h mean (> 1.5x HIGH, < 0.67x LOW)
+  #   liquidity:  depth vs 1h (< 0.5 THIN, > 1.5 DEEP)
+  #   momentum:   ADX > 25 with +DI/-DI direction (UPTREND/DOWNTREND), ADX < 20 RANGE, else NEUTRAL
+  #   orderflow:  volume delta and WOBI agree beyond 0.3 / 0.2 (ACCUMULATION/DISTRIBUTION), else BALANCED
+  - name: nse_regimes_stock
+    interval: 1m
+    rules:
+      - record: stock:volatility_regime:info
+        expr: |
+          (
+                label_replace(stock:bollinger_width_20m:percent{instrument_type="EQ"} > 1.5 * avg_over_time(stock:bollinger_width_20m:percent{instrument_type="EQ"}[2h]), "regime", "HIGH", "", "")
+            or ignoring(regime) label_replace(stock:bollinger_width_20m:percent{instrument_type="EQ"} < 0.67 * avg_over_time(stock:bollinger_width_20m:percent{instrument_type="EQ"}[2h]), "regime", "LOW", "", "")
+            or ignoring(regime) label_replace(stock:bollinger_width_20m:percent{instrument_type="EQ"}, "regime", "NORMAL", "", "")
+          ) * 0 + 1
+          and on() stock_market_open == 1
+      - record: stock:liquidity_regime:info
+        expr: |
+          (
+                label_replace(stock:depth_vs_1h:ratio{instrument_type="EQ"} < 0.5, "regime", "THIN", "", "")
+            or ignoring(regime) label_replace(stock:depth_vs_1h:ratio{instrument_type="EQ"} > 1.5, "regime", "DEEP", "", "")
+            or ignoring(regime) label_replace(stock:depth_vs_1h:ratio{instrument_type="EQ"}, "regime", "NORMAL", "", "")
+          ) * 0 + 1
+          and on() stock_market_open == 1
+      - record: stock:momentum_regime:info
+        expr: |
+          (
+                label_replace(stock:adx_14m:index{instrument_type="EQ"} > 25 and stock:di_plus_14m:percent > stock:di_minus_14m:percent, "regime", "UPTREND", "", "")
+            or ignoring(regime) label_replace(stock:adx_14m:index{instrument_type="EQ"} > 25 and stock:di_minus_14m:percent > stock:di_plus_14m:percent, "regime", "DOWNTREND", "", "")
+            or ignoring(regime) label_replace(stock:adx_14m:index{instrument_type="EQ"} < 20, "regime", "RANGE", "", "")
+            or ignoring(regime) label_replace(stock:adx_14m:index{instrument_type="EQ"}, "regime", "NEUTRAL", "", "")
+          ) * 0 + 1
+          and on() stock_market_open == 1
+      - record: stock:orderflow_regime:info
+        expr: |
+          (
+                label_replace(stock:volume_delta_1h:ratio{instrument_type="EQ"} > 0.3 and stock:orderbook_weighted_imbalance:ratio > 0.2, "regime", "ACCUMULATION", "", "")
+            or ignoring(regime) label_replace(stock:volume_delta_1h:ratio{instrument_type="EQ"} < -0.3 and stock:orderbook_weighted_imbalance:ratio < -0.2, "regime", "DISTRIBUTION", "", "")
+            or ignoring(regime) label_replace(stock:volume_delta_1h:ratio{instrument_type="EQ"}, "regime", "BALANCED", "", "")
+          ) * 0 + 1
+          and on() stock_market_open == 1
+
+  - name: nse_regimes_alerts
+    interval: 1m
+    rules:
+      # A regime that did not exist 15 minutes ago; not in the first 15 minutes of the session.
+      - alert: MarketRegimeChange
+        expr: |
+          market:regime:info unless market:regime:info offset 15m
+          and on() count(market:regime:info offset 15m) > 0
+          and on() stock_market_seconds_to_close < 21600
+        labels: {severity: info, category: market, layer: condition, condition: regime_change}
+        annotations:
+          summary: "Market regime is now {{ $labels.regime }}"
+          description: "The NSE market regime changed to {{ $labels.regime }} within the last 15 minutes (precedence-ordered heuristic from breadth, momentum, volatility, liquidity and trend scores)."
+      - alert: MarketStressIncident
+        expr: |
+          market:stress_score:index > 70
+          and on() stock_market_open == 1
+        for: 5m
+        labels: {severity: warning, category: market, layer: incident, incident: market_stress}
+        annotations:
+          summary: "Market stress score {{ $value | printf \"%.0f\" }}"
+          description: "Weak breadth, high volatility, thin liquidity and lower-circuit hits combine to a stress score above 70 for 5 minutes."

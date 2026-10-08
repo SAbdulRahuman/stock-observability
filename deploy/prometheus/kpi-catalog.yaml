@@ -1992,3 +1992,220 @@ kpis:
     quality: approximation
     method: lagged OFI regression slope (price impact per share of imbalance)
     limitation: "60 noisy bars; for ranking, not significance"
+
+  # --- Regimes and market scores (nse_regimes, heuristic, Release 2) ---------------------------
+  - name: market:breadth_score:index
+    kind: kpi
+    family: market
+    level: market_health
+    capability: breadth
+    release: R2
+    formula: "100 * mean(adv / (adv + dec), above-VWAP ratio, clamp(1 - (TRIN - 0.5) / 1.5, 0, 1))"
+    inputs: [market:advancers:count, market:decliners:count, market:above_vwap:ratio, market:trin:ratio]
+    rule_file: nse_regimes.rules.yml
+    frequency: 1m
+    scope: market
+    unit: index
+    range: {min: 0, max: 100}
+    warmup: 0s
+    quality: heuristic
+    method: equal-weight blend of advance share, VWAP participation and inverted TRIN
+    limitation: "weights and TRIN scaling uncalibrated until 20 sessions of history"
+    dashboard_default: true
+
+  - name: market:momentum_score:index
+    kind: kpi
+    family: market
+    level: market_health
+    capability: momentum
+    release: R2
+    formula: "50 + 50 * clamp(NIFTY 50 change% / 2, -1, 1)"
+    inputs: [stock_change_percent]
+    rule_file: nse_regimes.rules.yml
+    frequency: 1m
+    scope: market
+    unit: index
+    range: {min: 0, max: 100}
+    warmup: 0s
+    quality: heuristic
+    method: benchmark day change mapped linearly, saturating at +/- 2%
+    dashboard_default: true
+
+  - name: market:volatility_score:index
+    kind: kpi
+    family: market
+    level: market_health
+    capability: volatility
+    release: R2
+    formula: "100 * clamp((INDIA VIX - 10) / 20, 0, 1)"
+    inputs: [stock_last_price]
+    rule_file: nse_regimes.rules.yml
+    frequency: 1m
+    scope: market
+    unit: index
+    range: {min: 0, max: 100}
+    warmup: 0s
+    quality: heuristic
+    method: INDIA VIX mapped linearly from 10 (0) to 30 (100)
+    dashboard_default: true
+
+  - name: market:liquidity_score:index
+    kind: kpi
+    family: market
+    level: market_health
+    capability: liquidity
+    release: R2
+    formula: "100 * clamp(median depth vs 1h across EQ, 0, 1)"
+    inputs: [stock:depth_vs_1h:ratio]
+    rule_file: nse_regimes.rules.yml
+    frequency: 1m
+    scope: market
+    unit: index
+    range: {min: 0, max: 100}
+    warmup: 1h
+    quality: heuristic
+    method: cross-sectional median of book depth relative to its 1h average
+    dashboard_default: true
+
+  - name: market:stress_score:index
+    kind: kpi
+    family: market
+    level: market_health
+    capability: market
+    release: R2
+    formula: "0.3 (100 - breadth) + 0.3 volatility + 0.2 (100 - liquidity) + 0.2 * 100 * clamp(lower circuits / 50, 0, 1)"
+    inputs: [market:breadth_score:index, market:volatility_score:index, market:liquidity_score:index, market:circuit_hits:count]
+    rule_file: nse_regimes.rules.yml
+    frequency: 1m
+    scope: market
+    unit: index
+    range: {min: 0, max: 100}
+    warmup: 1h
+    quality: heuristic
+    method: weighted blend of weak breadth, volatility, thin liquidity and lower-circuit hits
+    limitation: "weights uncalibrated until 20 sessions of history"
+    alertable: true
+    dashboard_default: true
+
+  - name: market:risk_score:index
+    kind: kpi
+    family: market
+    level: market_health
+    capability: market
+    release: R2
+    formula: "0.5 volatility + 0.5 stress"
+    inputs: [market:volatility_score:index, market:stress_score:index]
+    rule_file: nse_regimes.rules.yml
+    frequency: 1m
+    scope: market
+    unit: index
+    range: {min: 0, max: 100}
+    warmup: 1h
+    quality: heuristic
+    method: equal blend of volatility and stress scores
+    dashboard_default: true
+
+  - name: market:breakout_share:ratio
+    kind: kpi
+    family: market
+    level: market_health
+    capability: breadth
+    release: R2
+    formula: "count(core EQ with C beyond its 20-session high/low) / count(core EQ)"
+    inputs: [stock_last_price, stock:session_high:price, stock:session_low:price]
+    rule_file: nse_regimes.rules.yml
+    frequency: 1m
+    scope: market
+    unit: ratio
+    range: {min: 0, max: 1}
+    warmup_sessions: 15
+    quality: exact
+    method: share of core equities outside the 28-day session range (>= 15 sessions of history)
+    dashboard_default: true
+
+  - name: market:sector_rs_dispersion:percent
+    kind: kpi
+    family: market
+    level: sector_intelligence
+    capability: sector
+    release: R2
+    formula: "stddev of sector relative strength"
+    inputs: [sector:relative_strength:percent]
+    rule_file: nse_regimes.rules.yml
+    frequency: 1m
+    scope: market
+    unit: percent
+    warmup: 0s
+    quality: exact
+    method: cross-sectional population stddev of sector RS vs NIFTY 50
+    dashboard_default: true
+
+  - name: market:regime:info
+    kind: regime
+    release: R2
+    formula: "first match of LIQUIDITY_STRESS, HIGH_VOLATILITY, BROAD_MARKET_SELL_OFF, BROAD_MARKET_RALLY, TRENDING_BEAR, TRENDING_BULL, BREAKOUT_REGIME, SECTOR_ROTATION, LOW_VOLATILITY, NORMAL; label regime"
+    inputs: [market:liquidity_score:index, market:volatility_score:index, market:breadth_score:index, market:momentum_score:index, stock:trend_r2_30m:ratio, stock:trend_slope_30m:percent_per_hour, market:breakout_share:ratio, market:sector_rs_dispersion:percent, market:dispersion:percent, market:session_dispersion:percent]
+    rule_file: nse_regimes.rules.yml
+    frequency: 1m
+    scope: market
+    unit: bool
+
+  - name: market:regime:code
+    kind: regime
+    release: R2
+    formula: "precedence index of market:regime:info (1 = LIQUIDITY_STRESS ... 10 = NORMAL)"
+    inputs: [market:regime:info]
+    rule_file: nse_regimes.rules.yml
+    frequency: 1m
+    scope: market
+    unit: code
+
+  - name: sector:regime:info
+    kind: regime
+    release: R2
+    formula: "LEADING if RS > 1, LAGGING if RS < -1, else NEUTRAL; label regime"
+    inputs: [sector:relative_strength:percent]
+    rule_file: nse_regimes.rules.yml
+    frequency: 1m
+    scope: sector
+    unit: bool
+
+  - name: stock:volatility_regime:info
+    kind: regime
+    release: R2
+    formula: "Bollinger width > 1.5x its 2h mean HIGH, < 0.67x LOW, else NORMAL; label regime"
+    inputs: [stock:bollinger_width_20m:percent]
+    rule_file: nse_regimes.rules.yml
+    frequency: 1m
+    scope: core
+    unit: bool
+
+  - name: stock:liquidity_regime:info
+    kind: regime
+    release: R2
+    formula: "depth vs 1h < 0.5 THIN, > 1.5 DEEP, else NORMAL; label regime"
+    inputs: [stock:depth_vs_1h:ratio]
+    rule_file: nse_regimes.rules.yml
+    frequency: 1m
+    scope: core
+    unit: bool
+
+  - name: stock:momentum_regime:info
+    kind: regime
+    release: R2
+    formula: "ADX > 25 with +DI > -DI UPTREND (-DI > +DI DOWNTREND), ADX < 20 RANGE, else NEUTRAL; label regime"
+    inputs: [stock:adx_14m:index, stock:di_plus_14m:percent, stock:di_minus_14m:percent]
+    rule_file: nse_regimes.rules.yml
+    frequency: 1m
+    scope: core
+    unit: bool
+
+  - name: stock:orderflow_regime:info
+    kind: regime
+    release: R2
+    formula: "volume delta > 0.3 and WOBI > 0.2 ACCUMULATION (< -0.3 and < -0.2 DISTRIBUTION), else BALANCED; label regime"
+    inputs: [stock:volume_delta_1h:ratio, stock:orderbook_weighted_imbalance:ratio]
+    rule_file: nse_regimes.rules.yml
+    frequency: 1m
+    scope: core
+    unit: bool
