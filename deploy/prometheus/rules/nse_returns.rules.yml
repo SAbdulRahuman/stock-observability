@@ -1,0 +1,23 @@
+# Price and return KPIs (proposal §7.1, Release 2), core tier.
+#   log return (1m bars) = ln(C / C[1m ago])        60m return = (C / C[60m ago] - 1) * 100
+#   day range = (H - L) / L * 100                     range position = (C - L) / (H - L)
+groups:
+  - name: nse_returns
+    interval: 15s
+    rules:
+      - record: stock:return_60m:percent
+        expr: (stock_last_price{tier="core"} / (stock_last_price{tier="core"} offset 60m > 0) - 1) * 100
+      - record: stock:day_range:percent
+        expr: (stock_high_price{tier="core"} - stock_low_price{tier="core"}) / (stock_low_price{tier="core"} > 0) * 100
+      - record: stock:range_position:ratio
+        expr: |
+          (stock_last_price{tier="core"} - stock_low_price{tier="core"})
+          / ((stock_high_price{tier="core"} - stock_low_price{tier="core"}) > 0)
+
+  - name: nse_returns_1m
+    interval: 1m
+    rules:
+      - record: stock:log_return_1m:ratio
+        expr: |
+          ln(stock_last_price{tier="core"} / (stock_last_price{tier="core"} offset 1m > 0))
+          and on() stock_market_open == 1

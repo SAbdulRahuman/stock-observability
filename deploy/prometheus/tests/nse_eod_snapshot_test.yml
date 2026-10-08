@@ -19,6 +19,12 @@ tests:
         values: '100x47 112x47 96x47'
       - series: 'stock_day_volume_shares{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '1000x47 2000x47 3000x47'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '102x47 108x47 100x47'
+      - series: 'stock_average_traded_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '101x143'
+      - series: 'market:dispersion:percent'
+        values: '1.5x143'
       - series: 'stock_high_price{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
         values: '25100x143'
       - series: 'stock_high_price{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
@@ -53,6 +59,41 @@ tests:
       - expr: stock:session_volume:shares
         eval_time: 16h
         exp_samples: []
+      # Release 2 snapshots: ln(102/100), 1000 * 101, ln(105/95)^2, closing dispersion.
+      - expr: round(stock:session_log_return:ratio, 1e-9)
+        eval_time: 15h30m
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 0.019802627000000003
+      - expr: stock:session_turnover:inr
+        eval_time: 15h30m
+        exp_samples:
+          - labels: 'stock:session_turnover:inr{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 101000
+      - expr: round(stock:session_log_range_sq:ratio, 1e-9)
+        eval_time: 15h30m
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 0.010016699
+      - expr: market:session_dispersion:percent
+        eval_time: 15h30m
+        exp_samples:
+          - labels: 'market:session_dispersion:percent'
+            value: 1.5
+      - expr: market:session_dispersion:percent
+        eval_time: 16h
+        exp_samples: []
+      # Day 2: ln(108/112) and ln(110/97)^2.
+      - expr: round(stock:session_log_return:ratio, 1e-9)
+        eval_time: 39h30m
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: -0.036367644000000005
+      - expr: round(stock:session_log_range_sq:ratio, 1e-9)
+        eval_time: 39h30m
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 0.015817939000000003
       # Gap down: PC 112 above H 110 -> PC - L.
       - expr: stock:session_true_range:points
         eval_time: 39h30m

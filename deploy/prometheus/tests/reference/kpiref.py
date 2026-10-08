@@ -580,6 +580,62 @@ def family_breadth():
     ]
 
 
+# --- nse_bars.rules.yml + nse_returns.rules.yml (1m evaluations) ------------------------------
+
+
+def running(values, fn):
+    out, cur = [], None
+    for v in values:
+        cur = v if cur is None else fn(cur, v)
+        out.append(cur)
+    return out
+
+
+def family_bars():
+    step, minutes = 15, 75
+    n = 4 * minutes + 1
+    series = [Series("stock_market_open", CORE, step, constant(1, n), "%d")]
+    checks = []
+    rnd = random.Random(15)
+    vols = []
+    for i in range(n):  # day volume resets to a small value at minute 30 (new session)
+        vols.append(rnd.randint(0, 400) if i == 120 else (vols[-1] if vols else 0) + rnd.randint(0, 900))
+    for sym, prices in (("INFY", random_walk(16, n, sigma=0.002)), ("FLAT", constant(250.0, n))):
+        lbl = instrument(sym)
+        price = Series("stock_last_price", lbl, step, prices)
+        hi = Series("stock_high_price", lbl, step, running(price.values, max))
+        lo = Series("stock_low_price", lbl, step, running(price.values, min))
+        vol = Series("stock_day_volume_shares", lbl, step, vols, "%d")
+        series += [price, hi, lo, vol]
+        for t in (60, 600, 1800, 1860, 2700, 3600, 3660, 4500):
+            window = [v for _, v in price.samples(t - 60, t)]
+            h, l, c = max(window), min(window), price.at(t)
+            dv = vol.at(t) - vol.at(t - 60)
+            v = dv if dv >= 0 else vol.at(t)
+            mfv = ((c - l) - (h - c)) / (h - l) * v if h > l else 0.0
+            checks += [
+                Check("stock:bar_1m_high:price", lbl, t, h),
+                Check("stock:bar_1m_low:price", lbl, t, l),
+                Check("stock:bar_1m_close:price", lbl, t, c),
+                Check("stock:bar_1m_volume:shares", lbl, t, v),
+                Check("stock:bar_1m_typical:price", lbl, t, (h + l + c) / 3),
+                Check("stock:bar_1m_money_flow_volume:shares", lbl, t, mfv, abs_tol=1e-6),
+                Check("stock:log_return_1m:ratio", lbl, t, math.log(c / price.at(t - 60)), abs_tol=1e-12),
+                Check("stock:day_range:percent", lbl, t, (hi.at(t) - lo.at(t)) / lo.at(t) * 100),
+            ]
+            if hi.at(t) > lo.at(t):
+                checks.append(Check("stock:range_position:ratio", lbl, t, (c - lo.at(t)) / (hi.at(t) - lo.at(t))))
+            else:
+                checks.append(Absent("stock:range_position:ratio", lbl, t))
+            if t >= 3600:
+                checks.append(Check("stock:return_60m:percent", lbl, t, (c / price.at(t - 3600) - 1) * 100, abs_tol=1e-9))
+            else:
+                checks.append(Absent("stock:return_60m:percent", lbl, t))
+    return ["nse_bars.rules.yml", "nse_returns.rules.yml"], [
+        test_case("1m bars (incl. a day-volume reset) and returns match the reference", step, series, checks)
+    ], 60
+
+
 FAMILIES = {
     "base": family_base,
     "price_levels": family_price_levels,
@@ -591,6 +647,7 @@ FAMILIES = {
     "rvol": family_rvol,
     "order_flow": family_order_flow,
     "breadth": family_breadth,
+    "bars": family_bars,
 }
 
 

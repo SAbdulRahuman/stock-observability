@@ -20,3 +20,18 @@ groups:
           and on() stock_market_phase{phase="post_close"} == 1
       - record: stock:session_volume:shares
         expr: stock_day_volume_shares{tier="core", instrument_type="EQ"} and on() stock_market_phase{phase="post_close"} == 1
+      # Release 2 additions (§7.0): ln(C / PC), V * VWAP, ln(H / L)^2 and the closing dispersion.
+      - record: stock:session_log_return:ratio
+        expr: |
+          ln(stock_last_price{tier="core"} / (stock_previous_close_price{tier="core"} > 0))
+          and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:session_turnover:inr
+        expr: |
+          stock_day_volume_shares{tier="core", instrument_type="EQ"} * stock_average_traded_price{tier="core", instrument_type="EQ"}
+          and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:session_log_range_sq:ratio
+        expr: |
+          ln(stock_high_price{tier="core"} / (stock_low_price{tier="core"} > 0)) ^ 2
+          and on() stock_market_phase{phase="post_close"} == 1
+      - record: market:session_dispersion:percent
+        expr: market:dispersion:percent and on() stock_market_phase{phase="post_close"} == 1

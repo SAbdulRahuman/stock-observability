@@ -52,6 +52,46 @@ kpis:
     scope: core
     unit: shares
 
+  - name: stock:session_log_return:ratio
+    kind: snapshot
+    release: R2
+    formula: "ln(C / PC) at post_close"
+    inputs: [stock_last_price, stock_previous_close_price, stock_market_phase]
+    rule_file: nse_eod_snapshot.rules.yml
+    frequency: 30m
+    scope: core
+    unit: ratio
+
+  - name: stock:session_turnover:inr
+    kind: snapshot
+    release: R2
+    formula: "V * VWAP at post_close, EQ only"
+    inputs: [stock_day_volume_shares, stock_average_traded_price, stock_market_phase]
+    rule_file: nse_eod_snapshot.rules.yml
+    frequency: 30m
+    scope: core
+    unit: inr
+
+  - name: stock:session_log_range_sq:ratio
+    kind: snapshot
+    release: R2
+    formula: "ln(H / L)^2 at post_close (Parkinson input)"
+    inputs: [stock_high_price, stock_low_price, stock_market_phase]
+    rule_file: nse_eod_snapshot.rules.yml
+    frequency: 30m
+    scope: core
+    unit: ratio
+
+  - name: market:session_dispersion:percent
+    kind: snapshot
+    release: R2
+    formula: "market:dispersion:percent at post_close"
+    inputs: [market:dispersion:percent, stock_market_phase]
+    rule_file: nse_eod_snapshot.rules.yml
+    frequency: 30m
+    scope: market
+    unit: percent
+
   # --- Signals and data quality -------------------------------------------------------------
   - name: stock:signal_active:bool
     kind: signal
@@ -910,3 +950,131 @@ kpis:
     limitation: "no movement since the seed gives NaN"
     alertable: true
     dashboard_default: true
+
+  # --- 1m bars (nse_bars) ----------------------------------------------------------------------
+  - name: stock:bar_1m_high:price
+    kind: helper
+    release: R2
+    formula: "max of the 1s LTP samples in the last minute"
+    inputs: [stock_last_price]
+    rule_file: nse_bars.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+
+  - name: stock:bar_1m_low:price
+    kind: helper
+    release: R2
+    formula: "min of the 1s LTP samples in the last minute"
+    inputs: [stock_last_price]
+    rule_file: nse_bars.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+
+  - name: stock:bar_1m_close:price
+    kind: helper
+    release: R2
+    formula: "LTP at the bar close"
+    inputs: [stock_last_price]
+    rule_file: nse_bars.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+
+  - name: stock:bar_1m_volume:shares
+    kind: helper
+    release: R2
+    formula: "V - V[1m ago], or V after the session reset; EQ only"
+    inputs: [stock_day_volume_shares]
+    rule_file: nse_bars.rules.yml
+    frequency: 1m
+    scope: core
+    unit: shares
+
+  - name: stock:bar_1m_typical:price
+    kind: helper
+    release: R2
+    formula: "(H + L + C) / 3 per 1m bar"
+    inputs: [stock:bar_1m_high:price, stock:bar_1m_low:price, stock:bar_1m_close:price]
+    rule_file: nse_bars.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+
+  - name: stock:bar_1m_money_flow_volume:shares
+    kind: helper
+    release: R2
+    formula: "((C - L) - (H - C)) / (H - L) * V per 1m bar, 0 when H = L"
+    inputs: [stock:bar_1m_high:price, stock:bar_1m_low:price, stock:bar_1m_close:price, stock:bar_1m_volume:shares]
+    rule_file: nse_bars.rules.yml
+    frequency: 1m
+    scope: core
+    unit: shares
+
+  # --- Returns (nse_returns) -------------------------------------------------------------------
+  - name: stock:log_return_1m:ratio
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: price
+    release: R2
+    formula: "ln(C / C[1m ago]), 1m bars"
+    inputs: [stock_last_price]
+    rule_file: nse_returns.rules.yml
+    frequency: 1m
+    scope: core
+    unit: ratio
+    warmup: 1m
+    quality: exact
+    method: non-overlapping 1m log return
+
+  - name: stock:return_60m:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: price
+    release: R2
+    formula: "(C / C[60m ago] - 1) * 100"
+    inputs: [stock_last_price]
+    rule_file: nse_returns.rules.yml
+    frequency: 15s
+    scope: core
+    unit: percent
+    warmup: 60m
+    quality: exact
+    method: simple return over 60 minutes
+
+  - name: stock:day_range:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R2
+    formula: "(H - L) / L * 100"
+    inputs: [stock_high_price, stock_low_price]
+    rule_file: nse_returns.rules.yml
+    frequency: 15s
+    scope: core
+    unit: percent
+    warmup: 0s
+    quality: exact
+    method: day range so far
+
+  - name: stock:range_position:ratio
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: price
+    release: R2
+    formula: "(C - L) / (H - L)"
+    inputs: [stock_last_price, stock_high_price, stock_low_price]
+    rule_file: nse_returns.rules.yml
+    frequency: 15s
+    scope: core
+    unit: ratio
+    range: {min: 0, max: 1}
+    warmup: 0s
+    quality: exact
+    method: close location within the day range; the post_close value is the daily close location
+    limitation: "absent while H = L"
