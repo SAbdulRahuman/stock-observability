@@ -28,6 +28,54 @@ groups:
       - record: stock:range_expansion:ratio
         expr: (stock_high_price{tier="core"} - stock_low_price{tier="core"}) / (stock:atr_14d:points > 0)
 
+  # Release 2 (§7.3): live true range, Bollinger bands, z-score, ATR %, volatility change, VIX premium,
+  # and daily estimators from the EOD snapshots (>= 10 sessions in 28 days):
+  #   HV20 = stddev(ln C/PC) * sqrt(252) * 100;  Parkinson = sqrt(mean(ln(H/L)^2) / (4 ln 2)) * sqrt(252) * 100
+  #   ATR ratio = mean TR over 7 days / mean TR over 28 days (>= 3 and >= 15 sessions)
+  - name: nse_volatility_r2
+    interval: 30s
+    rules:
+      - record: stock:true_range:points
+        expr: |
+          (
+              ((stock_high_price{tier="core"} > stock_previous_close_price{tier="core"}) or stock_previous_close_price{tier="core"})
+            - ((stock_low_price{tier="core"} < stock_previous_close_price{tier="core"}) or stock_previous_close_price{tier="core"})
+          )
+      - record: stock:bollinger_20m:price
+        labels: {band: upper}
+        expr: |
+          avg_over_time(stock_last_price{tier="core"}[20m:1m]) + 2 * stddev_over_time(stock_last_price{tier="core"}[20m:1m])
+      - record: stock:bollinger_20m:price
+        labels: {band: lower}
+        expr: |
+          avg_over_time(stock_last_price{tier="core"}[20m:1m]) - 2 * stddev_over_time(stock_last_price{tier="core"}[20m:1m])
+      - record: stock:price_zscore_20m:sigma
+        expr: |
+          (stock_last_price{tier="core"} - avg_over_time(stock_last_price{tier="core"}[20m:1m]))
+          / (stddev_over_time(stock_last_price{tier="core"}[20m:1m]) > 0)
+      - record: stock:atr_14d:percent
+        expr: stock:atr_14d:points / (stock_last_price{tier="core"} > 0) * 100
+      - record: stock:volatility_change_15m:percent
+        expr: (stock:volatility_15m:percent{tier="core"} / (stock:volatility_15m:percent{tier="core"} offset 15m > 0) - 1) * 100
+      # Implied minus realized; negative means realized volatility exceeds what INDIA VIX prices in.
+      - record: market:nifty_vol_risk_premium:points
+        expr: |
+          max(stock_last_price{symbol="INDIA VIX"})
+          - on() max(stock:realized_vol_annualised:percent{symbol="NIFTY 50"})
+      - record: stock:historical_vol_20d:percent
+        expr: |
+          stddev_over_time(stock:session_log_return:ratio[28d]) * 15.874507866387544 * 100
+          and count_over_time(stock:session_log_return:ratio[28d]) >= 10
+      - record: stock:parkinson_vol_20d:percent
+        expr: |
+          sqrt(avg_over_time(stock:session_log_range_sq:ratio[28d]) / 2.772588722239781) * 15.874507866387544 * 100
+          and count_over_time(stock:session_log_range_sq:ratio[28d]) >= 10
+      - record: stock:atr_ratio_5_20d:ratio
+        expr: |
+          avg_over_time(stock:session_true_range:points[7d]) / (avg_over_time(stock:session_true_range:points[28d]) > 0)
+          and count_over_time(stock:session_true_range:points[7d]) >= 3
+          and count_over_time(stock:session_true_range:points[28d]) >= 15
+
   - name: nse_volatility_alerts
     interval: 30s
     rules:

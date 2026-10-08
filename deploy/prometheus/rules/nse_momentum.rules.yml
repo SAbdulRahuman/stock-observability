@@ -24,6 +24,45 @@ groups:
           stock_change_percent{tier="core", instrument_type="EQ"}
           - on() group_left()
           stock_change_percent{symbol="NIFTY 50", instrument_type="INDEX"}
+      # Release 2 (§7.4 #44, #46): momentum C - C[10m ago]; %D = SMA3 of %K at the last three 1m closes.
+      - record: stock:momentum_10m:points
+        expr: stock_last_price{tier="core"} - stock_last_price{tier="core"} offset 10m
+      - record: stock:stochastic_d_3m:percent
+        expr: avg_over_time(stock:stochastic_k_14m:percent[3m:1m]) and count_over_time(stock:stochastic_k_14m:percent[3m:1m]) >= 3
+
+  # Bar oscillators (§7.4 #48, #49, #52, Release 2) on nse_bars, once the window holds a full session of bars:
+  #   CCI(20) = (TP - SMA20(TP)) / (0.015 * MD), MD = rolling mean of |TP - SMA20(TP)| (approximation)
+  #   MFI(14) = 100 - 100 / (1 + sum(TP*V, TP up) / sum(TP*V, TP down))
+  #   AO      = SMA5(median) - SMA34(median), median = (H + L) / 2
+  - name: nse_momentum_bars
+    interval: 1m
+    rules:
+      - record: stock:cci_20m:index
+        expr: |
+          (stock:bar_1m_typical:price - avg_over_time(stock:bar_1m_typical:price[20m]))
+          / (0.015 * avg_over_time(abs(stock:bar_1m_typical:price - avg_over_time(stock:bar_1m_typical:price[20m]))[20m:1m]) > 0)
+          and count_over_time(stock:bar_1m_typical:price[20m]) >= 20
+      # One-sided flow counts as 0 on the other side: no down-flow -> 100, no up-flow -> 0.
+      - record: stock:mfi_14m:index
+        expr: |
+          100 - 100 / (1 +
+              (
+                  sum_over_time((stock:bar_1m_typical:price * stock:bar_1m_volume:shares and stock:bar_1m_typical:price > stock:bar_1m_typical:price offset 1m)[14m:1m])
+                or 0 * sum_over_time((stock:bar_1m_typical:price * stock:bar_1m_volume:shares and stock:bar_1m_typical:price < stock:bar_1m_typical:price offset 1m)[14m:1m])
+              )
+            / (
+                  sum_over_time((stock:bar_1m_typical:price * stock:bar_1m_volume:shares and stock:bar_1m_typical:price < stock:bar_1m_typical:price offset 1m)[14m:1m])
+                or 0 * sum_over_time((stock:bar_1m_typical:price * stock:bar_1m_volume:shares and stock:bar_1m_typical:price > stock:bar_1m_typical:price offset 1m)[14m:1m])
+              )
+          )
+          and count_over_time(stock:bar_1m_typical:price[15m]) >= 15
+      - record: stock:awesome_oscillator:price
+        expr: |
+          (
+              (avg_over_time(stock:bar_1m_high:price[5m]) + avg_over_time(stock:bar_1m_low:price[5m])) / 2
+            - (avg_over_time(stock:bar_1m_high:price[34m]) + avg_over_time(stock:bar_1m_low:price[34m])) / 2
+          )
+          and count_over_time(stock:bar_1m_high:price[34m]) >= 34
 
   # Wilder RSI (§7.4 #41, Release 2): avg = avg[1m ago] + (x - avg[1m ago]) / 14 on 1m bars, seeded
   # with the Cutler averages of the session's first 14 bars (Wilder's own seed). Stateful, see nse_trend.

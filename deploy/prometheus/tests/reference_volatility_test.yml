@@ -8,16 +8,29 @@ evaluation_interval: 5s
 group_eval_order:
   - stock_fast
   - stock_slow
+  - portfolio
   - nse_volatility
+  - nse_volatility_r2
+  - nse_volatility_alerts
 
 tests:
-  - name: Bollinger width, %B and realized volatility match the reference
+  - name: Bollinger, z-score, realized volatility, volatility change, VRP and true range match the reference
     interval: 15s
     input_series:
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '24980.65 24941.40 24911.80 24907.95 24841.80 24894.10 24890.65 24904.30 24902.95 24922.25 24913.10 24930.50 24947.75 24961.60 24949.50 24979.50 24982.40 24991.55 25000.70 25030.60 24999.50 25025.70 25034.20 25009.70 25042.50 25066.10 25067.00 25041.85 25030.35 25012.70 25053.50 25029.30 25045.50 24985.60 24988.95 25020.15 25014.90 24970.30 24959.75 24968.45 24960.20 24951.85 24951.00 24948.20 24920.85 24928.85 24949.70 24969.20 24945.25 24945.25 24985.05 24954.70 24969.15 24957.25 24981.20 24985.15 25014.65 25040.30 25039.25 25052.30 25046.95 25071.85 25069.30 25041.55 25029.65 25065.40 25081.90 25086.75 25070.70 25032.05 25039.50 25045.05 25008.45 25007.15 25033.80 25036.55 25034.90 25045.30 25055.10 25073.20 25061.20 25063.75 25026.30 24991.05 24987.30 24978.70 24957.60 24929.20 24953.75 24955.10 24920.00 24870.10 24899.25 24885.30 24832.15 24798.95 24806.20 24834.95 24874.65 24890.85 24881.10 24867.05 24876.95 24905.60 24905.75 24892.30 24879.00 24905.75 24902.10 24953.75 24944.05 24882.65 24858.90 24829.80 24823.30 24852.00 24826.40 24838.60 24883.30 24901.85 24917.45 24940.20 24967.30 24954.55 24967.70 24953.45 24929.60 24934.65 24923.85 24945.25 24900.20 24916.35 24927.25 24925.25 24910.15 24883.60 24877.45 24881.15 24867.15 24883.70 24861.30 24886.05 24872.05 24887.50 24877.10 24944.85 24892.80 24934.85 24953.45 24985.30 24948.30 24935.10 24884.65 24880.05 24873.50 24869.50 24855.40 24824.20 24825.35 24865.60 24875.85 24858.70 24870.90 24887.40'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INDIA VIX",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25 14.25'
       - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '100.10 99.75 99.60 99.60 99.90 99.90 99.55 99.65 99.40 99.65 99.60 99.95 99.90 99.70 99.40 99.35 99.45 99.65 99.70 99.55 99.65 99.40 99.50 99.35 99.65 99.85 99.90 99.70 99.80 99.90 99.80 99.65 99.90 99.85 99.90 100.20 99.90 100.25 100.45 100.35 100.15 99.90 100.10 99.55 99.75 99.80 99.65 99.55 99.50 99.45 99.60 99.45 99.65 99.85 99.80 99.95 99.80 99.85 99.95 100.30 100.30 100.30 100.30 100.25 100.05 100.40 100.30 100.15 100.00 100.15 100.75 101.35 101.55 101.65 101.65 101.45 101.60 101.55 102.00 101.95 101.75 101.35 101.00 101.10 101.20 100.95 100.65 100.70 100.65 100.70 100.70 100.50 100.15 100.20 100.20 100.25 100.45 100.65 100.55 100.65 100.20 100.35 100.35 100.55 100.75 100.55 100.55 100.75 100.65 100.65 100.55 100.65 100.70 100.55 100.25 99.80 100.00 99.90 99.75 99.65 99.45 99.60 99.75 99.30 99.30 99.30 99.25 99.25 99.60 99.65 99.90 100.10 99.80 100.15 100.20 100.15 100.30 100.75 100.60 100.50 100.55 100.20 99.95 100.00 100.15 100.25 100.40 100.65 100.55 100.50 100.40 100.35 100.60 100.75 100.35 100.45 100.20 100.00 100.25 100.55 100.80 100.90 101.30 101.05'
       - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
         values: '99.95 100.05 100.00 99.95 99.75 99.70 99.95 100.00 100.25 100.30 100.35 100.40 100.05 100.25 100.35 100.45 100.10 99.75 99.55 99.50 99.55 99.55 99.65 99.50 99.55 99.65 99.50 99.85 99.95 100.20 100.10 99.95 99.85 99.85 99.95 100.00 99.95 99.75 99.65 99.90 99.70 99.75 99.85 99.55 99.55 99.80 99.40 99.35 99.35 99.20 99.25 99.25 98.95 99.15 99.25 99.45 99.75 99.80 99.85 99.60 99.70 99.60 99.50 99.25 99.05 98.95 99.20 98.80 98.50 98.55 98.85 98.95 98.60 98.10 98.15 98.00 97.80 98.00 98.20 98.25 98.30 98.35 98.70 98.80 98.90 99.00 98.70 98.95 99.15 99.25 98.85 98.75 98.90 98.55 98.50 98.70 98.45 98.75 98.85 98.85 98.90 99.05 99.05 99.30 99.15 99.05 99.30 99.30 99.10 99.30 99.60 99.50 99.25 99.20 99.15 99.10 99.40 99.20 99.45 99.20 99.05 99.15 99.40 99.55 99.60 99.65 99.70 99.80 99.75 99.80 99.95 99.95 100.10 100.20 100.60 100.65 100.60 100.50 100.50 100.70 100.60 100.70 101.05 100.55 100.30 100.35 100.45 100.50 100.40 100.55 100.60 100.50 101.00 101.05 100.95 100.90 100.90 100.85 100.30 100.20 100.40 100.20 100.15 100.35'
+      - series: 'stock_high_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00 105.00'
+      - series: 'stock_low_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00 99.00'
+      - series: 'stock_previous_close_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50 107.50'
     promql_expr_test:
       - eval_time: 20m
         expr: 'abs(stock:bollinger_width_20m:percent{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"} - (2.749658129901131)) <= bool 2.749658129901131e-09'
@@ -31,6 +44,26 @@ tests:
             value: 1
       - eval_time: 20m
         expr: 'abs(stock:realized_vol_annualised:percent{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"} - (129.180966574734)) <= bool 1.2918096657473398e-06'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1
+      - eval_time: 20m
+        expr: 'abs(stock:bollinger_20m:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",band="upper"} - (101.45846329892916)) <= bool 1.0145846329892917e-07'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",band="upper"}'
+            value: 1
+      - eval_time: 20m
+        expr: 'abs(stock:bollinger_20m:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",band="lower"} - (98.70653670107086)) <= bool 9.870653670107086e-08'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",band="lower"}'
+            value: 1
+      - eval_time: 20m
+        expr: 'abs(stock:price_zscore_20m:sigma{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"} - (2.4237565076012273)) <= bool 2.4237565076012272e-08'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1
+      - eval_time: 20m
+        expr: 'abs(stock:volatility_change_15m:percent{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"} - (40.72239297829785)) <= bool 4.072239297829784e-06'
         exp_samples:
           - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
             value: 1
@@ -49,6 +82,26 @@ tests:
         exp_samples:
           - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
             value: 1
+      - eval_time: 30m
+        expr: 'abs(stock:bollinger_20m:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",band="upper"} - (101.76222321896392)) <= bool 1.0176222321896393e-07'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",band="upper"}'
+            value: 1
+      - eval_time: 30m
+        expr: 'abs(stock:bollinger_20m:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",band="lower"} - (99.05277678103607)) <= bool 9.905277678103607e-08'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",band="lower"}'
+            value: 1
+      - eval_time: 30m
+        expr: 'abs(stock:price_zscore_20m:sigma{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"} - (-1.413572878351159)) <= bool 1.413572878351159e-08'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1
+      - eval_time: 30m
+        expr: 'abs(stock:volatility_change_15m:percent{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"} - (64.59938808366637)) <= bool 6.4599388083666364e-06'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1
       - eval_time: 40m
         expr: 'abs(stock:bollinger_width_20m:percent{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"} - (1.8963413785668026)) <= bool 1.896341378566803e-09'
         exp_samples:
@@ -61,6 +114,26 @@ tests:
             value: 1
       - eval_time: 40m
         expr: 'abs(stock:realized_vol_annualised:percent{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"} - (120.29750212896336)) <= bool 1.2029750212896337e-06'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1
+      - eval_time: 40m
+        expr: 'abs(stock:bollinger_20m:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",band="upper"} - (101.25353890561848)) <= bool 1.0125353890561849e-07'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",band="upper"}'
+            value: 1
+      - eval_time: 40m
+        expr: 'abs(stock:bollinger_20m:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",band="lower"} - (99.3514610943815)) <= bool 9.935146109438151e-08'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",band="lower"}'
+            value: 1
+      - eval_time: 40m
+        expr: 'abs(stock:price_zscore_20m:sigma{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"} - (1.046224286011656)) <= bool 1.046224286011656e-08'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1
+      - eval_time: 40m
+        expr: 'abs(stock:volatility_change_15m:percent{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"} - (-20.491964776303316)) <= bool 2.0491964776303315e-06'
         exp_samples:
           - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
             value: 1
@@ -79,6 +152,26 @@ tests:
         exp_samples:
           - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
             value: 1
+      - eval_time: 20m
+        expr: 'abs(stock:bollinger_20m:price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",band="upper"} - (100.71475765499765)) <= bool 1.0071475765499767e-07'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",band="upper"}'
+            value: 1
+      - eval_time: 20m
+        expr: 'abs(stock:bollinger_20m:price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",band="lower"} - (98.11024234500233)) <= bool 9.811024234500234e-08'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",band="lower"}'
+            value: 1
+      - eval_time: 20m
+        expr: 'abs(stock:price_zscore_20m:sigma{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"} - (-1.7085712581232577)) <= bool 1.7085712581232578e-08'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1
+      - eval_time: 20m
+        expr: 'abs(stock:volatility_change_15m:percent{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"} - (-13.962211624233156)) <= bool 1.3962211624233155e-06'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1
       - eval_time: 30m
         expr: 'abs(stock:bollinger_width_20m:percent{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"} - (1.9024030558777025)) <= bool 1.9024030558777028e-09'
         exp_samples:
@@ -91,6 +184,26 @@ tests:
             value: 1
       - eval_time: 30m
         expr: 'abs(stock:realized_vol_annualised:percent{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"} - (118.33087711773456)) <= bool 1.1833087711773455e-06'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1
+      - eval_time: 30m
+        expr: 'abs(stock:bollinger_20m:price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",band="upper"} - (99.93159439250667)) <= bool 9.993159439250667e-08'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",band="upper"}'
+            value: 1
+      - eval_time: 30m
+        expr: 'abs(stock:bollinger_20m:price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",band="lower"} - (98.04840560749332)) <= bool 9.804840560749333e-08'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",band="lower"}'
+            value: 1
+      - eval_time: 30m
+        expr: 'abs(stock:price_zscore_20m:sigma{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"} - (0.12744340976855878)) <= bool 1.274434097685588e-09'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1
+      - eval_time: 30m
+        expr: 'abs(stock:volatility_change_15m:percent{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"} - (8.094049852489826)) <= bool 8.094049852489826e-07'
         exp_samples:
           - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
             value: 1
@@ -108,4 +221,39 @@ tests:
         expr: 'abs(stock:realized_vol_annualised:percent{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"} - (97.60683259962977)) <= bool 9.760683259962978e-07'
         exp_samples:
           - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1
+      - eval_time: 40m
+        expr: 'abs(stock:bollinger_20m:price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",band="upper"} - (101.20658856836111)) <= bool 1.0120658856836112e-07'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",band="upper"}'
+            value: 1
+      - eval_time: 40m
+        expr: 'abs(stock:bollinger_20m:price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",band="lower"} - (98.1834114316389)) <= bool 9.81834114316389e-08'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",band="lower"}'
+            value: 1
+      - eval_time: 40m
+        expr: 'abs(stock:price_zscore_20m:sigma{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"} - (0.9327935057942002)) <= bool 9.327935057942002e-09'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1
+      - eval_time: 40m
+        expr: 'abs(stock:volatility_change_15m:percent{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"} - (-21.758812539230178)) <= bool 2.1758812539230176e-06'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 1
+      - eval_time: 20m
+        expr: 'abs(market:nifty_vol_risk_premium:points{} - (-27.406236733988685)) <= bool 2.7406236733988686e-07'
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - eval_time: 40m
+        expr: 'abs(market:nifty_vol_risk_premium:points{} - (-47.079931400423035)) <= bool 4.7079931400423035e-07'
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - eval_time: 20m
+        expr: 'abs(stock:true_range:points{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"} - (8.5)) <= bool 8.5e-09'
+        exp_samples:
+          - labels: '{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
             value: 1

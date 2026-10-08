@@ -24,7 +24,9 @@ TESTS_DIR = os.path.dirname(HERE)
 
 # promtool evaluates groups in random order unless told; reference values assume inputs first.
 GROUP_ORDER = {
-    "volatility": ["stock_fast", "stock_slow", "nse_volatility"],
+    "volatility": ["stock_fast", "stock_slow", "portfolio", "nse_volatility", "nse_volatility_r2", "nse_volatility_alerts"],
+    "atr": ["nse_eod_snapshot", "nse_volatility", "nse_volatility_r2", "nse_volatility_alerts"],
+    "osc": ["nse_bars", "nse_momentum", "nse_momentum_wilder", "nse_momentum_bars", "nse_momentum_alerts"],
     "ma": ["stock_fast", "stock_slow", "portfolio", "nse_trend", "nse_trend_regression", "nse_trend_alerts", "nse_moving_averages"],
 }
 
@@ -474,6 +476,9 @@ def realized_vol(price, t):
 def family_volatility():
     step, n = 15, 4 * 41
     series, checks = [], []
+    vix = 14.25
+    nifty = Series("stock_last_price", instrument("NIFTY 50", sector="Index", itype="INDEX"), step, random_walk(19, n, start=25000, sigma=0.001))
+    series += [nifty, Series("stock_last_price", instrument("INDIA VIX", sector="Index", itype="INDEX"), step, constant(vix, n))]
     for seed, sym in ((6, "INFY"), (7, "TCS")):
         lbl = instrument(sym)
         price = Series("stock_last_price", lbl, step, random_walk(seed, n, sigma=0.002))
@@ -481,11 +486,23 @@ def family_volatility():
         for t in (20 * 60, 30 * 60, 40 * 60):
             bars = price.bars(t, 20 * 60)
             mid, sd = mean(bars), pstdev(bars)
+            c = price.at(t)
             checks.append(Check("stock:bollinger_width_20m:percent", lbl, t, 4 * sd / mid * 100))
-            checks.append(Check("stock:bollinger_percent_b_20m:ratio", lbl, t, (price.at(t) - mid + 2 * sd) / (4 * sd)))
+            checks.append(Check("stock:bollinger_percent_b_20m:ratio", lbl, t, (c - mid + 2 * sd) / (4 * sd)))
             checks.append(Check("stock:realized_vol_annualised:percent", lbl, t, realized_vol(price, t), rel_tol=1e-8))
+            checks.append(Check("stock:bollinger_20m:price", dict(lbl, band="upper"), t, mid + 2 * sd))
+            checks.append(Check("stock:bollinger_20m:price", dict(lbl, band="lower"), t, mid - 2 * sd))
+            checks.append(Check("stock:price_zscore_20m:sigma", lbl, t, (c - mid) / sd, rel_tol=1e-8))
+            checks.append(Check("stock:volatility_change_15m:percent", lbl, t,
+                                (realized_vol(price, t) / realized_vol(price, t - 900) - 1) * 100, rel_tol=1e-7, abs_tol=1e-7))
+    for t in (20 * 60, 40 * 60):
+        checks.append(Check("market:nifty_vol_risk_premium:points", {}, t, vix - realized_vol(nifty, t), rel_tol=1e-8))
+    infy = instrument("INFY")
+    for metric, vals in (("stock_high_price", 105.0), ("stock_low_price", 99.0), ("stock_previous_close_price", 107.5)):
+        series.append(Series(metric, infy, step, constant(vals, n)))
+    checks.append(Check("stock:true_range:points", infy, 1200, 107.5 - 99.0))
     return ["stock_recording.rules.yml", "nse_volatility.rules.yml"], [
-        test_case("Bollinger width, %B and realized volatility match the reference", step, series, checks)
+        test_case("Bollinger, z-score, realized volatility, volatility change, VRP and true range match the reference", step, series, checks)
     ], 5
 
 
@@ -496,18 +513,33 @@ def true_range(pc, h, lo):
 def family_atr():
     infy = instrument("INFY")
     cal = Calendar(26, holidays=[5, 6, 12, 13, 19, 20])  # weekends
-    bars = daily_bars(8, cal.days)
+    ext = daily_bars(8, cal.days + 1)
+    bars, closes = ext[:-1], [b[0] for b in ext[1:]]
     pc = Series("stock_previous_close_price", infy, SLOT, cal.daily([b[0] for b in bars]))
     hi = Series("stock_high_price", infy, SLOT, cal.daily([b[1] for b in bars]))
     lo = Series("stock_low_price", infy, SLOT, cal.daily([b[2] for b in bars]))
+    last = Series("stock_last_price", infy, SLOT, cal.daily(closes))
     checks = []
     for d in range(cal.days):
         t = cal.t(d, FIRST_OPEN_SLOT + 1)
-        trs = [
-            true_range(*bars[p])
-            for p in range(d)
-            if cal.trading(p) and t - 20 * 86400 < cal.t(p, POST_CLOSE_SLOT) <= t
-        ]
+        past = lambda days: [p for p in range(d) if cal.trading(p) and t - days * 86400 < cal.t(p, POST_CLOSE_SLOT) <= t]
+        p28 = past(28)
+        if len(p28) >= 10:
+            logret = [math.log(closes[p] / bars[p][0]) for p in p28]
+            lrsq = [math.log(bars[p][1] / bars[p][2]) ** 2 for p in p28]
+            checks.append(Check("stock:historical_vol_20d:percent", infy, t, pstdev(logret) * math.sqrt(252) * 100, rel_tol=1e-8))
+            checks.append(Check("stock:parkinson_vol_20d:percent", infy, t,
+                                math.sqrt(mean(lrsq) / (4 * math.log(2))) * math.sqrt(252) * 100, rel_tol=1e-8))
+        else:
+            checks.append(Absent("stock:historical_vol_20d:percent", infy, t))
+            checks.append(Absent("stock:parkinson_vol_20d:percent", infy, t))
+        p7 = past(7)
+        if len(p7) >= 3 and len(p28) >= 15:
+            checks.append(Check("stock:atr_ratio_5_20d:ratio", infy, t,
+                                mean([true_range(*bars[p]) for p in p7]) / mean([true_range(*bars[p]) for p in p28])))
+        else:
+            checks.append(Absent("stock:atr_ratio_5_20d:ratio", infy, t))
+        trs = [true_range(*bars[p]) for p in past(20)]
         if len(trs) < 10:
             checks.append(Absent("stock:atr_14d:points", infy, t))
             checks.append(Absent("stock:range_expansion:ratio", infy, t))
@@ -515,8 +547,10 @@ def family_atr():
         atr = mean(trs)
         checks.append(Check("stock:atr_14d:points", infy, t, atr))
         checks.append(Check("stock:range_expansion:ratio", infy, t, (bars[d][1] - bars[d][2]) / atr))
+        checks.append(Check("stock:atr_14d:percent", infy, t, atr / closes[d] * 100))
     return ["nse_eod_snapshot.rules.yml", "nse_volatility.rules.yml"], [
-        test_case("ATR(14) and range expansion over 26 days with weekends", SLOT, cal.series() + [pc, hi, lo], checks)
+        test_case("ATR(14), ATR %, range expansion, HV, Parkinson and ATR ratio over 26 days with weekends",
+                  SLOT, cal.series() + [pc, hi, lo, last], checks)
     ], SLOT
 
 
@@ -696,6 +730,58 @@ def family_bars():
     ], 60
 
 
+def family_osc():
+    """Momentum, %D and the bar oscillators (CCI, MFI, Awesome); bars from t=0, 1m evaluations."""
+    step, minutes = 15, 50
+    n = 4 * minutes + 1
+    series = [
+        Series("stock_market_open", CORE, step, constant(1, n), "%d"),
+        Series("stock_market_seconds_to_close", CORE, step, [22500 - i * step for i in range(n)], "%d"),
+    ]
+    checks = []
+    rnd = random.Random(20)
+    vols = running([rnd.randint(0, 900) for _ in range(n)], lambda a, b: a + b)
+    minutes_t = list(range(0, minutes * 60 + 1, 60))
+    for seed, sym in ((21, "INFY"), (22, "TCS")):
+        lbl = instrument(sym)
+        price = Series("stock_last_price", lbl, step, random_walk(seed, n, sigma=0.002))
+        vol = Series("stock_day_volume_shares", lbl, step, vols, "%d")
+        series += [price, vol]
+        hi, lo, tp, bv = {}, {}, {}, {}
+        for k in minutes_t:
+            w = [v for _, v in price.samples(k - 60, k)]
+            hi[k], lo[k] = max(w), min(w)
+            tp[k] = (hi[k] + lo[k] + price.at(k)) / 3
+            bv[k] = vol.at(k) - vol.at(k - 60) if k >= 60 else vol.at(k)
+        within = lambda d, t, rng: [d[k] for k in minutes_t if t - rng < k <= t]
+        for t in (5 * 60, 15 * 60, 20 * 60, 25 * 60, 34 * 60, 40 * 60, 50 * 60):
+            if t >= 600:
+                checks.append(Check("stock:momentum_10m:points", lbl, t, price.at(t) - price.at(t - 600), abs_tol=1e-9))
+            checks.append(Check("stock:stochastic_d_3m:percent", lbl, t,
+                                mean([stochastic_k(price, k) for k in (t - 120, t - 60, t)]), rel_tol=1e-8))
+            if t >= 19 * 60:
+                sma_tp = lambda k: mean(within(tp, k, 1200))
+                md = mean([abs(tp[k] - sma_tp(k)) for k in minutes_t if t - 1200 < k <= t])
+                checks.append(Check("stock:cci_20m:index", lbl, t, (tp[t] - sma_tp(t)) / (0.015 * md), rel_tol=1e-7))
+            else:
+                checks.append(Absent("stock:cci_20m:index", lbl, t))
+            if t >= 14 * 60:
+                pts = [k for k in minutes_t if t - 840 < k <= t and k >= 60]
+                pos = sum(tp[k] * bv[k] for k in pts if tp[k] > tp[k - 60])
+                neg = sum(tp[k] * bv[k] for k in pts if tp[k] < tp[k - 60])
+                checks.append(Check("stock:mfi_14m:index", lbl, t, 100 - 100 / (1 + pos / neg), rel_tol=1e-8))
+            else:
+                checks.append(Absent("stock:mfi_14m:index", lbl, t))
+            if t >= 33 * 60:
+                ao = (mean(within(hi, t, 300)) + mean(within(lo, t, 300))) / 2 - (mean(within(hi, t, 2040)) + mean(within(lo, t, 2040))) / 2
+                checks.append(Check("stock:awesome_oscillator:price", lbl, t, ao, abs_tol=1e-9))
+            else:
+                checks.append(Absent("stock:awesome_oscillator:price", lbl, t))
+    return ["nse_bars.rules.yml", "nse_momentum.rules.yml"], [
+        test_case("momentum, %D, CCI, MFI and Awesome oscillator match the reference", step, series, checks)
+    ], 60
+
+
 FAMILIES = {
     "base": family_base,
     "price_levels": family_price_levels,
@@ -709,6 +795,7 @@ FAMILIES = {
     "order_flow": family_order_flow,
     "breadth": family_breadth,
     "bars": family_bars,
+    "osc": family_osc,
 }
 
 

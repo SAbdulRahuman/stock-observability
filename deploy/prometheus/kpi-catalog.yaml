@@ -1246,3 +1246,242 @@ kpis:
     quality: exact
     method: t-statistic of the 30-bar slope
     limitation: "absent for a perfect fit; overstates significance (autocorrelated residuals)"
+
+  # --- Momentum oscillators (Release 2) --------------------------------------------------------
+  - name: stock:momentum_10m:points
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R2
+    formula: "C - C[10m ago]"
+    inputs: [stock_last_price]
+    rule_file: nse_momentum.rules.yml
+    frequency: 15s
+    scope: core
+    unit: points
+    warmup: 10m
+    quality: exact
+    method: 10-minute price momentum
+
+  - name: stock:stochastic_d_3m:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R2
+    formula: "%D = SMA3(%K) at the last three 1m closes"
+    inputs: [stock:stochastic_k_14m:percent]
+    rule_file: nse_momentum.rules.yml
+    frequency: 15s
+    scope: core
+    unit: percent
+    range: {min: 0, max: 100}
+    warmup: 16m
+    quality: exact
+    method: slow stochastic signal line
+    dashboard_default: true
+
+  - name: stock:cci_20m:index
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R2
+    formula: "CCI = (TP - SMA20(TP)) / (0.015 * MD), MD = rolling mean |TP - SMA20(TP)|"
+    inputs: [stock:bar_1m_typical:price]
+    rule_file: nse_momentum.rules.yml
+    frequency: 1m
+    scope: core
+    unit: index
+    warmup: 20m
+    quality: approximation
+    method: Lambert CCI on 1m typical prices
+    limitation: "mean deviation uses each bar's own SMA (rolling), not the current SMA"
+
+  - name: stock:mfi_14m:index
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volume
+    release: R2
+    formula: "MFI = 100 - 100 / (1 + sum(TP*V | TP up) / sum(TP*V | TP down)), 14 1m bars"
+    inputs: [stock:bar_1m_typical:price, stock:bar_1m_volume:shares]
+    rule_file: nse_momentum.rules.yml
+    frequency: 1m
+    scope: core
+    unit: index
+    range: {min: 0, max: 100}
+    warmup: 15m
+    quality: exact
+    method: money-flow index, EQ only
+    alertable: true
+
+  - name: stock:awesome_oscillator:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R2
+    formula: "AO = SMA5((H + L) / 2) - SMA34((H + L) / 2), 1m bars"
+    inputs: [stock:bar_1m_high:price, stock:bar_1m_low:price]
+    rule_file: nse_momentum.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 34m
+    quality: exact
+    method: Bill Williams awesome oscillator on 1m bars
+
+  # --- Volatility (Release 2) ------------------------------------------------------------------
+  - name: stock:true_range:points
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R2
+    formula: "max(H, PC) - min(L, PC), live"
+    inputs: [stock_high_price, stock_low_price, stock_previous_close_price]
+    rule_file: nse_volatility.rules.yml
+    frequency: 30s
+    scope: core
+    unit: points
+    warmup: 0s
+    quality: exact
+    method: today's true range so far
+
+  - name: stock:bollinger_20m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R2
+    formula: "SMA20 +/- 2 * stddev20, 1m bars"
+    inputs: [stock_last_price]
+    rule_file: nse_volatility.rules.yml
+    frequency: 30s
+    scope: core
+    unit: price
+    warmup: 20m
+    quality: exact
+    method: Bollinger(20, 2) bands, label band=upper|lower
+    dashboard_default: true
+
+  - name: stock:price_zscore_20m:sigma
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R2
+    formula: "(C - SMA20) / stddev20, 1m bars"
+    inputs: [stock_last_price]
+    rule_file: nse_volatility.rules.yml
+    frequency: 30s
+    scope: core
+    unit: sigma
+    warmup: 20m
+    quality: exact
+    method: mean-reversion z-score (= 4 * %B - 2)
+    alertable: true
+
+  - name: stock:atr_14d:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R2
+    formula: "ATR14 / C * 100"
+    inputs: [stock:atr_14d:points, stock_last_price]
+    rule_file: nse_volatility.rules.yml
+    frequency: 30s
+    scope: core
+    unit: percent
+    warmup: 0s
+    warmup_sessions: 10
+    quality: approximation
+    method: daily ATR relative to the price
+
+  - name: stock:volatility_change_15m:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R2
+    formula: "(sigma15 / sigma15[15m ago] - 1) * 100"
+    inputs: [stock:volatility_15m:percent]
+    rule_file: nse_volatility.rules.yml
+    frequency: 30s
+    scope: core
+    unit: percent
+    warmup: 30m
+    quality: exact
+    method: change of the 15-minute realized volatility
+
+  - name: market:nifty_vol_risk_premium:points
+    kind: kpi
+    family: market
+    level: market_health
+    capability: volatility
+    release: R2
+    formula: "INDIA VIX - realized vol (annualised) of NIFTY 50"
+    inputs: [stock_last_price, stock:realized_vol_annualised:percent]
+    rule_file: nse_volatility.rules.yml
+    frequency: 30s
+    scope: market
+    unit: points
+    warmup: 16m
+    quality: proxy
+    method: implied minus 15-minute realized volatility; negative = realized exceeds implied
+    limitation: "VIX is 30-day implied; realized is a 15-minute window"
+    dashboard_default: true
+
+  - name: stock:historical_vol_20d:percent
+    kind: kpi
+    family: risk
+    level: stock_intelligence
+    capability: volatility
+    release: R2
+    formula: "stddev(ln C/PC over 28 days) * sqrt(252) * 100, >= 10 sessions"
+    inputs: [stock:session_log_return:ratio]
+    rule_file: nse_volatility.rules.yml
+    frequency: 30s
+    scope: core
+    unit: percent
+    warmup: 0s
+    warmup_sessions: 10
+    quality: exact
+    method: close-to-close historical volatility (population stddev)
+
+  - name: stock:parkinson_vol_20d:percent
+    kind: kpi
+    family: risk
+    level: stock_intelligence
+    capability: volatility
+    release: R2
+    formula: "sqrt(mean(ln(H/L)^2) / (4 ln 2)) * sqrt(252) * 100 over 28 days, >= 10 sessions"
+    inputs: [stock:session_log_range_sq:ratio]
+    rule_file: nse_volatility.rules.yml
+    frequency: 30s
+    scope: core
+    unit: percent
+    warmup: 0s
+    warmup_sessions: 10
+    quality: exact
+    method: Parkinson high-low volatility
+
+  - name: stock:atr_ratio_5_20d:ratio
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R2
+    formula: "mean TR over 7 days / mean TR over 28 days (>= 3 and >= 15 sessions)"
+    inputs: [stock:session_true_range:points]
+    rule_file: nse_volatility.rules.yml
+    frequency: 30s
+    scope: core
+    unit: ratio
+    warmup: 0s
+    warmup_sessions: 15
+    quality: approximation
+    method: short over long average true range (~5 / ~20 sessions)
