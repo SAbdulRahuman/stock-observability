@@ -114,6 +114,18 @@ groups:
   - name: nse_order_flow_alerts
     interval: 5s
     rules:
+      # A single level holding 5x the other levels on its side and at least INR 50 lakh (Release 2).
+      - alert: StockOrderBookWall
+        expr: |
+          stock:depth_wall:ratio{instrument_type="EQ"} > 5
+          and stock_depth_price{tier="core"} * stock_depth_quantity{tier="core"} >= 5e6
+          and on() stock_market_open == 1
+        for: 1m
+        labels: {severity: info, category: flow, layer: condition, condition: order_book_wall}
+        annotations:
+          summary: "{{ $labels.symbol }} {{ $labels.side }} wall at level {{ $labels.level }}: {{ $value | printf \"%.1f\" }}x the other levels"
+          description: "Level {{ $labels.level }} on the {{ $labels.side }} side of {{ $labels.exchange }}:{{ $labels.symbol }} has held at least 5 times the average quantity of the other levels and INR 50 lakh for 1 minute."
+          link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"
       - alert: StockOrderFlowPressure
         expr: |
           (

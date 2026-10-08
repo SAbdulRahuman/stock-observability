@@ -98,6 +98,29 @@ groups:
   - name: nse_momentum_alerts
     interval: 15s
     rules:
+      # Price at a 30m extreme while Wilder RSI sits 10 points below its own 30m extreme (Release 2).
+      - alert: StockRSIDivergence
+        expr: |
+          (
+            label_replace(
+                stock:rsi_wilder_14m:index{instrument_type="EQ"} > 60
+              and stock:rsi_wilder_14m:index < max_over_time(stock:rsi_wilder_14m:index[30m]) - 10
+              and stock_last_price{tier="core"} >= max_over_time(stock_last_price{tier="core"}[30m]),
+              "direction", "bearish", "", "")
+            or
+            label_replace(
+                stock:rsi_wilder_14m:index{instrument_type="EQ"} < 40
+              and stock:rsi_wilder_14m:index > min_over_time(stock:rsi_wilder_14m:index[30m]) + 10
+              and stock_last_price{tier="core"} <= min_over_time(stock_last_price{tier="core"}[30m]),
+              "direction", "bullish", "", "")
+          )
+          and on() stock_market_open == 1
+        for: 1m
+        labels: {severity: info, category: price, layer: condition, condition: rsi_divergence}
+        annotations:
+          summary: "{{ $labels.symbol }} {{ $labels.direction }} RSI divergence (RSI {{ $value | printf \"%.1f\" }})"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} made a new 30-minute {{ if eq $labels.direction \"bearish\" }}high{{ else }}low{{ end }} while Wilder RSI(14) stayed more than 10 points from its own 30-minute extreme."
+          link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"
       # Overbought/oversold on two oscillators, MACD histogram turning against the move, and
       # tick-rule volume flowing the other way.
       - alert: StockMomentumExhaustion

@@ -1,0 +1,95 @@
+# promtool test rules prometheus/tests/nse_events_test.yml
+rule_files:
+  - ../rules/nse_events.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: events fire only in the minute of the transition
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x6'
+      - series: 'stock:macd_histogram:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '-1 -1 1 1 1 1 1'
+      - series: 'stock:bollinger_percent_b_20m:ratio{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '0.5 0.5 0.5 1.2 1.2 1.2 1.2'
+      - series: 'stock:rsi_wilder_14m:index{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '65 65 65 65 72 72 72'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100 100 100 100 100 106 106'
+      - series: 'stock:pivot:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",level="R1"}'
+        values: '105x6'
+      - series: 'stock:pivot:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",level="R2"}'
+        values: '110x6'
+      - series: 'stock:pivot:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",level="S1"}'
+        values: '95x6'
+      - series: 'stock:pivot:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",level="S2"}'
+        values: '90x6'
+      - series: 'stock:sma_50m:price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100 100 101 101 101 101 101'
+      - series: 'stock:sma_200m:price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100.5x6'
+      - series: 'stock:macd_histogram:price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1 1 1 -1 -1 -1 -1'
+      - series: 'stock:rsi_wilder_14m:index{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '35 35 35 35 35 25 25'
+      - series: 'stock:bollinger_percent_b_20m:ratio{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '0.5 0.5 -0.1 -0.1 -0.1 -0.1 -0.1'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100x6'
+      # S1 moves above the price: a downward pivot break without a price move.
+      - series: 'stock:pivot:price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",level="S1"}'
+        values: '95 95 95 95 101 101 101'
+      # Indices never produce events.
+      - series: 'stock:macd_histogram:price{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '-1 -1 1 1 1 1 1'
+    promql_expr_test:
+      - expr: stock:event:bool
+        eval_time: 1m
+        exp_samples: []
+      - expr: stock:event:bool
+        eval_time: 2m
+        exp_samples:
+          - labels: 'stock:event:bool{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",event="macd_cross",direction="bullish"}'
+            value: 1
+          - labels: 'stock:event:bool{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",event="ma_cross_50_200",direction="bullish"}'
+            value: 1
+          - labels: 'stock:event:bool{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",event="bollinger_breakout",direction="bearish"}'
+            value: 1
+      - expr: stock:event:bool
+        eval_time: 3m
+        exp_samples:
+          - labels: 'stock:event:bool{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",event="bollinger_breakout",direction="bullish"}'
+            value: 1
+          - labels: 'stock:event:bool{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",event="macd_cross",direction="bearish"}'
+            value: 1
+      - expr: stock:event:bool
+        eval_time: 4m
+        exp_samples:
+          - labels: 'stock:event:bool{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",event="rsi_cross_70",direction="bearish"}'
+            value: 1
+          - labels: 'stock:event:bool{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",level="S1",event="pivot_break",direction="bearish"}'
+            value: 1
+      - expr: stock:event:bool
+        eval_time: 5m
+        exp_samples:
+          - labels: 'stock:event:bool{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",level="R1",event="pivot_break",direction="bullish"}'
+            value: 1
+          - labels: 'stock:event:bool{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core",event="rsi_cross_30",direction="bullish"}'
+            value: 1
+      - expr: stock:event:bool
+        eval_time: 6m
+        exp_samples: []
+
+  - name: no events while the market is closed
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '0x6'
+      - series: 'stock:macd_histogram:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '-1 -1 1 1 1 1 1'
+    promql_expr_test:
+      - expr: stock:event:bool
+        eval_time: 2m
+        exp_samples: []

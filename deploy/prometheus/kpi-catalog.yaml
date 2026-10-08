@@ -103,6 +103,16 @@ kpis:
     scope: core
     unit: bool
 
+  - name: stock:event:bool
+    kind: signal
+    release: R2
+    formula: "1 in the minute a condition starts to hold; labels event, direction (+ level for pivot_break)"
+    inputs: [stock:macd_histogram:price, stock:pivot:price, stock:bollinger_percent_b_20m:ratio, stock:rsi_wilder_14m:index, stock:sma_50m:price, stock:sma_200m:price]
+    rule_file: nse_events.rules.yml
+    frequency: 1m
+    scope: core
+    unit: bool
+
   - name: kpi:fresh_core_instruments:ratio
     kind: quality
     release: R1
