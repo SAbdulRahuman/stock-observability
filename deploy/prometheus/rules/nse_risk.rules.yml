@@ -73,3 +73,91 @@ groups:
         annotations:
           summary: "Portfolio is down {{ $value | printf \"%.2f\" }}% today, beyond its 1-day VaR(95)"
           description: "Today's portfolio loss exceeds the historical 95% one-day value at risk of the last 90 days."
+
+  # Intraday risk on 1m log returns over 60 minutes (>= 30 bars), core EQ vs NIFTY 50 (proposal §7.8, §8.11-8.12):
+  #   Cov = E[r r_N] - E[r] E[r_N]     beta = Cov / Var(r_N)     corr = Cov / (sigma sigma_N)
+  #   EWMA h = 0.94 h[1m ago] + 0.06 r^2, seeded with Var(r) over 60m   (RiskMetrics lambda)
+  #   implied 1-day move = NIFTY * VIX / 100 / sqrt(365)
+  #   market model 15m = 15 (mean r - beta mean r_N) * 100 + beta * NIFTY 15m return;  abnormal = 15m return - model
+  - name: nse_risk_intraday
+    interval: 1m
+    rules:
+      - record: stock:covariance_nifty_60m:ratio
+        expr: |
+          (
+              avg_over_time(stock:log_return_x_nifty_1m:ratio[60m])
+            - avg_over_time(stock:log_return_1m:ratio{instrument_type="EQ"}[60m])
+              * on() group_left() avg_over_time(stock:log_return_1m:ratio{symbol="NIFTY 50"}[60m])
+          )
+          and count_over_time(stock:log_return_x_nifty_1m:ratio[60m]) >= 30
+      - record: stock:beta_nifty_60m:ratio
+        expr: |
+          stock:covariance_nifty_60m:ratio
+          / on() group_left() (stdvar_over_time(stock:log_return_1m:ratio{symbol="NIFTY 50"}[60m]) > 0)
+      - record: stock:correlation_nifty_60m:ratio
+        expr: |
+          stock:covariance_nifty_60m:ratio
+          / (
+              stddev_over_time(stock:log_return_1m:ratio{instrument_type="EQ"}[60m])
+              * on() group_left() stddev_over_time(stock:log_return_1m:ratio{symbol="NIFTY 50"}[60m])
+              > 0
+            )
+      - record: stock:ewma_variance_1m:ratio
+        expr: |
+          (
+              0.94 * last_over_time(stock:ewma_variance_1m:ratio[3m])
+            + 0.06 * ln(stock_last_price{tier="core", instrument_type="EQ"} / (stock_last_price{tier="core", instrument_type="EQ"} offset 1m > 0)) ^ 2
+            or stdvar_over_time(stock:log_return_1m:ratio{instrument_type="EQ"}[60m])
+              and count_over_time(stock:log_return_1m:ratio{instrument_type="EQ"}[60m]) >= 30
+          )
+          and on() stock_market_open == 1
+      - record: stock:ewma_vol_annualised:percent
+        expr: sqrt(stock:ewma_variance_1m:ratio * 94500) * 100
+      - record: market:implied_move:points
+        labels: {horizon: 1d}
+        expr: |
+          max(stock_last_price{symbol="NIFTY 50"}) * on() max(stock_last_price{symbol="INDIA VIX"}) / 100 / 19.1049731745428
+          and on() stock_market_open == 1
+      - record: stock:market_model_expected_return_15m:percent
+        expr: |
+          (
+              1500 * (
+                  avg_over_time(stock:log_return_1m:ratio{instrument_type="EQ"}[60m])
+                - stock:beta_nifty_60m:ratio * on() group_left() avg_over_time(stock:log_return_1m:ratio{symbol="NIFTY 50"}[60m])
+              )
+            + stock:beta_nifty_60m:ratio
+              * on() group_left() ((max(stock_last_price{symbol="NIFTY 50"}) / max(stock_last_price{symbol="NIFTY 50"} offset 15m > 0) - 1) * 100)
+          )
+      - record: stock:abnormal_return_15m:percent
+        expr: |
+          (stock_last_price{tier="core", instrument_type="EQ"} / (stock_last_price{tier="core", instrument_type="EQ"} offset 15m > 0) - 1) * 100
+          - stock:market_model_expected_return_15m:percent
+
+  - name: nse_risk_alerts
+    interval: 1m
+    rules:
+      # Idiosyncratic move (e.g. news): residual beyond 3 sigma of its own last day, >= 60 residuals.
+      - alert: StockAbnormalReturn
+        expr: |
+          (
+              label_replace(stock:abnormal_return_15m:percent > 3 * stddev_over_time(stock:abnormal_return_15m:percent[1d]), "direction", "bullish", "", "")
+            or label_replace(stock:abnormal_return_15m:percent < -3 * stddev_over_time(stock:abnormal_return_15m:percent[1d]), "direction", "bearish", "", "")
+          )
+          and ignoring(direction) count_over_time(stock:abnormal_return_15m:percent[1d]) >= 60
+          and on() stock_market_open == 1
+        for: 1m
+        labels: {severity: info, category: price, layer: condition, condition: abnormal_return}
+        annotations:
+          summary: "{{ $labels.symbol }} {{ $labels.direction }} abnormal return vs NIFTY 50"
+          description: "The 15-minute return of {{ $labels.exchange }}:{{ $labels.symbol }} deviates from its 60-minute market model by more than 3 standard deviations of the residual."
+          effectiveness: '{{ with printf `alert:hit_rate_5d:ratio{alertname="StockAbnormalReturn",direction=%q,horizon="15m"}` $labels.direction | query }}15m hit rate over the last 5 days: {{ . | first | value | humanizePercentage }}{{ else }}No history yet{{ end }}'
+      - alert: MarketImpliedMoveExceeded
+        expr: |
+          abs(max(stock_last_price{symbol="NIFTY 50"}) - max(stock_previous_close_price{symbol="NIFTY 50"}))
+          > on() (2 * market:implied_move:points{horizon="1d"})
+          and on() stock_market_open == 1
+        for: 1m
+        labels: {severity: warning, category: market, layer: incident, incident: implied_move_exceeded}
+        annotations:
+          summary: "NIFTY 50 moved {{ $value | printf \"%.0f\" }} points, more than twice the VIX-implied 1-day move"
+          description: "The NIFTY 50 change from the previous close exceeds two INDIA VIX implied one-day standard deviations."

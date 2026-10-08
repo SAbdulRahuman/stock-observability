@@ -11,6 +11,7 @@ needs no fuzzy compare and failures show up as value 0.
 """
 
 import argparse
+import json
 import math
 import os
 import random
@@ -33,6 +34,7 @@ GROUP_ORDER = {
     "regime": ["nse_regimes", "nse_regimes_stock", "nse_regimes_alerts"],
     "effectiveness": ["nse_effectiveness", "nse_effectiveness_5d"],
     "risk": ["nse_eod_snapshot", "nse_risk_daily", "nse_risk_portfolio"],
+    "intraday_risk": ["nse_returns", "nse_returns_1m", "nse_risk_daily", "nse_risk_portfolio", "nse_risk_intraday", "nse_risk_alerts"],
     "osc": ["nse_bars", "nse_momentum", "nse_momentum_wilder", "nse_momentum_bars", "nse_momentum_alerts"],
     "ma": ["stock_fast", "stock_slow", "portfolio", "nse_trend", "nse_trend_regression", "nse_trend_alerts", "nse_moving_averages"],
 }
@@ -110,6 +112,13 @@ class Absent:
         self.metric, self.labels, self.t = metric, labels, t
 
 
+class AlertCheck:
+    """Asserts the firing alerts of `alertname` at t: a list of (labels, annotations)."""
+
+    def __init__(self, alertname, t, alerts):
+        self.alertname, self.t, self.alerts = alertname, t, alerts
+
+
 def test_case(name, step, series, checks):
     return {"name": name, "step": step, "series": series, "checks": checks}
 
@@ -133,6 +142,8 @@ def render(family, rule_files, cases, eval_interval):
             out.append("        values: '%s'" % " ".join(s.text))
         out.append("    promql_expr_test:")
         for ck in c["checks"]:
+            if isinstance(ck, AlertCheck):
+                continue
             sel = selector(ck.metric, ck.labels)
             out.append("      - eval_time: %s" % duration(ck.t))
             if isinstance(ck, Absent):
@@ -143,6 +154,16 @@ def render(family, rule_files, cases, eval_interval):
             out.append("        exp_samples:")
             out.append("          - labels: '%s'" % selector("", ck.labels))
             out.append("            value: 1")
+        alerts = [ck for ck in c["checks"] if isinstance(ck, AlertCheck)]
+        if alerts:
+            out.append("    alert_rule_test:")
+        for ck in alerts:
+            out.append("      - eval_time: %s" % duration(ck.t))
+            out.append("        alertname: %s" % ck.alertname)
+            out.append("        exp_alerts:%s" % ("" if ck.alerts else " []"))
+            for labels, annotations in ck.alerts:
+                out.append("          - exp_labels: %s" % json.dumps(labels))
+                out.append("            exp_annotations: %s" % json.dumps(annotations))
     return "\n".join(out) + "\n"
 
 
@@ -1297,6 +1318,98 @@ def family_risk():
     ], SLOT
 
 
+def family_intraday_risk():
+    """150 minutes: INFY (beta 1.2) jumps 4% at 120m, TCS (beta 0.8) drops 4% at 130m; NIFTY PC moves at 140m."""
+    n, step = 150, 60
+    rnd = random.Random(41)
+    nifty_p = random_walk(42, n, start=20000.0, sigma=0.001)
+    stocks = {}
+    for sym, beta, start, shock_at, shock in (("INFY", 1.2, 1500.0, 120, 1.04), ("TCS", 0.8, 3500.0, 130, 0.96)):
+        p, out = start, []
+        for m in range(n):
+            if m:
+                p *= math.exp(beta * math.log(nifty_p[m] / nifty_p[m - 1]) + rnd.gauss(0, 0.0008))
+            if m == shock_at:
+                p *= shock
+            out.append(round(round(p / 0.05) * 0.05, 2))
+        stocks[sym] = out
+    vix = random_walk(43, n, start=14.0, sigma=0.002, tick=0.01)
+    pc = [20000.0 if m < 140 else 19000.0 for m in range(n)]
+    nifty, ivix = instrument("NIFTY 50", sector="Index", itype="INDEX"), instrument("INDIA VIX", sector="Index", itype="INDEX")
+    series = [Series("stock_market_open", CORE, step, constant(1, n), "%d"),
+              Series("stock_last_price", nifty, step, nifty_p),
+              Series("stock_previous_close_price", nifty, step, pc),
+              Series("stock_last_price", ivix, step, vix)]
+    price = {}
+    for sym, vals in stocks.items():
+        series.append(Series("stock_last_price", instrument(sym), step, vals))
+        price[sym] = series[-1].values
+    N, V = series[1].values, series[3].values
+    rn = [None] + [math.log(N[m] / N[m - 1]) for m in range(1, n)]
+
+    checks = []
+    implied = [N[m] * V[m] / 100 / 19.1049731745428 for m in range(n)]
+    imx = [abs(N[m] - pc[m]) > 2 * implied[m] for m in range(n)]
+    for t in range(n):
+        if t % 5 == 0:
+            checks.append(Check("market:implied_move:points", {"horizon": "1d"}, t * 60, implied[t]))
+        if t >= 1 and imx[t] and imx[t - 1]:
+            move = abs(N[t] - pc[t])
+            checks.append(AlertCheck("MarketImpliedMoveExceeded", t * 60, [(
+                dict(severity="warning", category="market", layer="incident", incident="implied_move_exceeded"),
+                dict(summary="NIFTY 50 moved %.0f points, more than twice the VIX-implied 1-day move" % move,
+                     description="The NIFTY 50 change from the previous close exceeds two INDIA VIX implied one-day standard deviations."))]))
+        elif t % 5 == 0:
+            checks.append(AlertCheck("MarketImpliedMoveExceeded", t * 60, []))
+
+    firing = {}
+    for sym, P in price.items():
+        lbl = instrument(sym)
+        rs = [None] + [math.log(P[m] / P[m - 1]) for m in range(1, n)]
+        h, eps, cond = None, {}, {}
+        for t in range(1, n):
+            win = [m for m in range(max(1, t - 59), t + 1)]
+            xs, ys = [rs[m] for m in win], [rn[m] for m in win]
+            if len(win) < 30:
+                if t % 5 == 0:
+                    checks.append(Absent("stock:beta_nifty_60m:ratio", lbl, t * 60))
+                continue
+            cov = mean([a * b for a, b in zip(xs, ys)]) - mean(xs) * mean(ys)
+            beta = cov / pstdev(ys) ** 2
+            corr = cov / (pstdev(xs) * pstdev(ys))
+            h = pstdev(xs) ** 2 if h is None else 0.94 * h + 0.06 * rs[t] ** 2
+            expected = 1500 * (mean(xs) - beta * mean(ys)) + beta * (N[t] / N[t - 15] - 1) * 100 if t >= 15 else None
+            if expected is not None:
+                eps[t] = (P[t] / P[t - 15] - 1) * 100 - expected
+                hist = list(eps.values())
+                sd = pstdev(hist)
+                cond[t] = len(hist) >= 60 and ("bullish" if eps[t] > 3 * sd else "bearish" if eps[t] < -3 * sd else None)
+            if t % 5 == 0:
+                checks += [Check("stock:covariance_nifty_60m:ratio", lbl, t * 60, cov, rel_tol=1e-6, abs_tol=1e-15),
+                           Check("stock:beta_nifty_60m:ratio", lbl, t * 60, beta, rel_tol=1e-6),
+                           Check("stock:correlation_nifty_60m:ratio", lbl, t * 60, corr, rel_tol=1e-6),
+                           Check("stock:ewma_variance_1m:ratio", lbl, t * 60, h, rel_tol=1e-8, abs_tol=1e-15),
+                           Check("stock:ewma_vol_annualised:percent", lbl, t * 60, math.sqrt(h * 94500) * 100, rel_tol=1e-8)]
+                if expected is not None:
+                    checks += [Check("stock:market_model_expected_return_15m:percent", lbl, t * 60, expected, rel_tol=1e-6, abs_tol=1e-9),
+                               Check("stock:abnormal_return_15m:percent", lbl, t * 60, eps[t], rel_tol=1e-6, abs_tol=1e-9)]
+            d = cond.get(t)
+            if d and cond.get(t - 1) == d:
+                firing.setdefault(t, []).append((
+                    dict(lbl, direction=d, severity="info", category="price", layer="condition", condition="abnormal_return"),
+                    dict(summary="%s %s abnormal return vs NIFTY 50" % (sym, d),
+                         description="The 15-minute return of NSE:%s deviates from its 60-minute market model by more than "
+                                     "3 standard deviations of the residual." % sym,
+                         effectiveness="No history yet")))
+    assert firing
+    for t in sorted(set(range(0, n, 5)) | set(firing) | {t + 1 for t in firing}):
+        checks.append(AlertCheck("StockAbnormalReturn", t * 60, firing.get(t, [])))
+    return ["nse_returns.rules.yml", "nse_risk.rules.yml"], [
+        test_case("60m covariance, beta, correlation, EWMA volatility, implied move, market model and the abnormal-return and implied-move alerts",
+                  step, series, checks)
+    ], 60
+
+
 FAMILIES = {
     "base": family_base,
     "price_levels": family_price_levels,
@@ -1317,6 +1430,7 @@ FAMILIES = {
     "regime": family_regime,
     "effectiveness": family_effectiveness,
     "risk": family_risk,
+    "intraday_risk": family_intraday_risk,
 }
 
 

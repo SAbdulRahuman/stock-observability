@@ -2585,3 +2585,146 @@ kpis:
     method: historical simulation on today's holdings' daily returns
     alertable: true
     dashboard_default: true
+
+  # --- Risk intelligence: intraday (nse_returns_1m, nse_risk_intraday, Release 3) ----------------
+  - name: stock:log_return_x_nifty_1m:ratio
+    kind: helper
+    release: R3
+    formula: "ln(C/C[1m]) * ln(NIFTY/NIFTY[1m]) per 1m bar, EQ"
+    inputs: [stock:log_return_1m:ratio]
+    rule_file: nse_returns.rules.yml
+    frequency: 1m
+    scope: core
+    unit: ratio
+
+  - name: stock:covariance_nifty_60m:ratio
+    kind: kpi
+    family: risk
+    level: risk_intelligence
+    capability: risk
+    release: R3
+    formula: "E[r r_N] - E[r] E[r_N] of 1m log returns over 60 minutes, >= 30 bars"
+    inputs: [stock:log_return_x_nifty_1m:ratio, stock:log_return_1m:ratio]
+    rule_file: nse_risk.rules.yml
+    frequency: 1m
+    scope: core
+    unit: ratio
+    warmup: 30m
+    quality: exact
+    method: population covariance vs NIFTY 50 on 1m bars
+
+  - name: stock:beta_nifty_60m:ratio
+    kind: kpi
+    family: risk
+    level: risk_intelligence
+    capability: risk
+    release: R3
+    formula: "Cov(r, r_N) / Var(r_N) over 60 one-minute bars"
+    inputs: [stock:covariance_nifty_60m:ratio, stock:log_return_1m:ratio]
+    rule_file: nse_risk.rules.yml
+    frequency: 1m
+    scope: core
+    unit: ratio
+    warmup: 30m
+    quality: exact
+    method: intraday OLS beta vs NIFTY 50
+    limitation: "60 noisy bars; asynchronous trading biases beta towards 0 for illiquid names"
+    dashboard_default: true
+
+  - name: stock:correlation_nifty_60m:ratio
+    kind: kpi
+    family: risk
+    level: risk_intelligence
+    capability: risk
+    release: R3
+    formula: "Cov(r, r_N) / (sigma sigma_N) over 60 one-minute bars"
+    inputs: [stock:covariance_nifty_60m:ratio, stock:log_return_1m:ratio]
+    rule_file: nse_risk.rules.yml
+    frequency: 1m
+    scope: core
+    unit: ratio
+    range: {min: -1, max: 1}
+    warmup: 30m
+    quality: exact
+    method: Pearson correlation vs NIFTY 50 on 1m bars
+    dashboard_default: true
+
+  - name: stock:ewma_variance_1m:ratio
+    kind: helper
+    release: R3
+    formula: "h = 0.94 h[1m ago] + 0.06 r^2, seeded with Var(r) over 60m (>= 30 bars)"
+    inputs: [stock_last_price, stock:log_return_1m:ratio]
+    rule_file: nse_risk.rules.yml
+    frequency: 1m
+    scope: core
+    unit: ratio
+
+  - name: stock:ewma_vol_annualised:percent
+    kind: kpi
+    family: risk
+    level: risk_intelligence
+    capability: volatility
+    release: R3
+    formula: "sqrt(EWMA variance * 375 * 252) * 100"
+    inputs: [stock:ewma_variance_1m:ratio]
+    rule_file: nse_risk.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent
+    warmup: 30m
+    quality: exact
+    method: RiskMetrics EWMA (lambda 0.94) on 1m log returns, stateful
+    limitation: "re-seeds after a gap longer than 3 minutes"
+    dashboard_default: true
+
+  - name: market:implied_move:points
+    kind: kpi
+    family: risk
+    level: market_health
+    capability: volatility
+    release: R3
+    formula: "NIFTY 50 * INDIA VIX / 100 / sqrt(365); label horizon=1d"
+    inputs: [stock_last_price]
+    rule_file: nse_risk.rules.yml
+    frequency: 1m
+    scope: market
+    unit: points
+    warmup: 0s
+    quality: approximation
+    method: one-sigma one-day move implied by INDIA VIX (calendar-day convention)
+    alertable: true
+    dashboard_default: true
+
+  - name: stock:market_model_expected_return_15m:percent
+    kind: kpi
+    family: risk
+    level: risk_intelligence
+    capability: risk
+    release: R3
+    formula: "15 (mean r - beta mean r_N) * 100 + beta * NIFTY 15m return, 60m estimates"
+    inputs: [stock:log_return_1m:ratio, stock:beta_nifty_60m:ratio, stock_last_price]
+    rule_file: nse_risk.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent
+    warmup: 30m
+    quality: approximation
+    method: single-index market model, log-return estimates applied to a simple 15m return
+
+  - name: stock:abnormal_return_15m:percent
+    kind: kpi
+    family: risk
+    level: risk_intelligence
+    capability: risk
+    release: R3
+    formula: "15m return - market model expected 15m return"
+    inputs: [stock:market_model_expected_return_15m:percent, stock_last_price]
+    rule_file: nse_risk.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent
+    warmup: 30m
+    quality: approximation
+    method: market-model residual (idiosyncratic move)
+    alertable: true
+    dashboard_default: true

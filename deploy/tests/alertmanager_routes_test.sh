@@ -29,6 +29,8 @@ cases=(
   'market-digest|alertname=StockOrderBookWall category=flow severity=info layer=condition condition=order_book_wall side=bid level=3 exchange=NSE symbol=INFY'
   'market-digest|alertname=MarketRegimeChange category=market severity=info layer=condition condition=regime_change regime=HIGH_VOLATILITY'
   'market-incident|alertname=MarketStressIncident category=market severity=warning layer=incident incident=market_stress'
+  'market-digest|alertname=StockAbnormalReturn category=price severity=info layer=condition condition=abnormal_return direction=bullish exchange=NSE symbol=INFY'
+  'market-incident|alertname=MarketImpliedMoveExceeded category=market severity=warning layer=incident incident=implied_move_exceeded'
   'market-incident|alertname=MarketBreadthStress category=market severity=warning layer=incident incident=breadth_stress direction=bearish'
   'market-incident|alertname=MarketCircuitCluster category=market severity=warning layer=incident incident=circuit_cluster band=lower'
   'market-incident|alertname=KPIDataQualityDegraded category=quality severity=warning layer=incident incident=kpi_data_quality kpi=stock:rsi_14m:index'

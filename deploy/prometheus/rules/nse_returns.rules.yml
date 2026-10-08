@@ -21,3 +21,6 @@ groups:
         expr: |
           ln(stock_last_price{tier="core"} / (stock_last_price{tier="core"} offset 1m > 0))
           and on() stock_market_open == 1
+      # Release 3: r * r_NIFTY per 1m bar, for the 60m covariance (nse_risk).
+      - record: stock:log_return_x_nifty_1m:ratio
+        expr: stock:log_return_1m:ratio{instrument_type="EQ"} * on() group_left() stock:log_return_1m:ratio{symbol="NIFTY 50"}

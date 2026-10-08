@@ -9,6 +9,8 @@ evaluation_interval: 1m
 group_eval_order:
   - nse_risk_daily
   - nse_risk_portfolio
+  - nse_risk_intraday
+  - nse_risk_alerts
 
 tests:
   - name: portfolio VaR breach fires after 5 minutes beyond the 1-day VaR
@@ -64,3 +66,32 @@ tests:
       - expr: portfolio:var_95_1d:percent
         eval_time: 9m
         exp_samples: []
+
+  # Positive and negative cases of the intraday alerts are in reference_intraday_risk_test.yml.
+  - name: no implied-move or abnormal-return alerts while the market is closed
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '0x150'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '20000 20020 20000 20030 20010x146'
+      - series: 'stock_previous_close_price{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '19000x150'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INDIA VIX",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '14x150'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1500 1501 1499 1502 1500x120 1600x26'
+    promql_expr_test:
+      - expr: market:implied_move:points
+        eval_time: 2h
+        exp_samples: []
+      - expr: stock:abnormal_return_15m:percent
+        eval_time: 2h
+        exp_samples: []
+    alert_rule_test:
+      - eval_time: 2h10m
+        alertname: MarketImpliedMoveExceeded
+        exp_alerts: []
+      - eval_time: 2h10m
+        alertname: StockAbnormalReturn
+        exp_alerts: []
