@@ -70,8 +70,15 @@ check "sector relative strength sectors"    "$(q 'count(sector:relative_strength
 check "KPI coverage series"                 "$(q 'count(kpi:coverage:ratio)')" "v is not None and v>=25"
 check "min intraday KPI coverage"           "$(q 'min(kpi:coverage:ratio{kpi=~"stock:(return_1m|rsi_14m|turnover|orderbook_depth|microprice_deviation).*"})')" "v is not None and v>=0.9"
 nse_records=$(sed -n 's/^ *- record: \(.*\)$/\1/p' prometheus/rules/nse_*.rules.yml | sort -u | paste -sd'|')
-check "R1 recorded series (cap 12000)"      "$(q "count({__name__=~\"$nse_records\"})")" "v is not None and v<12000"
-check "R1 rule group max duration (s)"      "$(q 'max(prometheus_rule_group_last_duration_seconds{rule_group=~".*nse_.*"})')" "v is not None and v<1"
+check "R1+R2 recorded series (cap 27000)"   "$(q "count({__name__=~\"$nse_records\"})")" "v is not None and v<27000"
+check "NSE rule group duration / interval"  "$(q 'max(prometheus_rule_group_last_duration_seconds{rule_group=~".*nse_.*"} / prometheus_rule_group_interval_seconds)')" "v is not None and v<=0.25"
+
+# NSE Release 2 (1m and stateful KPIs need a few minutes; DURATION >= 120).
+check "market regime"                       "$(q 'count(market:regime:info)')" "v==1"
+check "market regime code"                  "$(q 'market:regime:code')" "v is not None and 1<=v<=10"
+check "WOBI core equities"                  "$(q 'count(stock:orderbook_weighted_imbalance:ratio)')" "v is not None and v>150"
+check "1m bars core instruments"            "$(q 'count(stock:bar_1m_close:price)')" "v is not None and v>150"
+check "stock liquidity regimes"             "$(q 'count(stock:liquidity_regime:info)')" "v is not None and v>150"
 
 # Every dashboard query must execute (empty results are fine).
 dash_errors=$(python3 - "$PROM_PORT" <<'EOF'

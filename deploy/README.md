@@ -344,6 +344,8 @@ make e2e               # sim stack: KPI series, coverage, budget, dashboard quer
 
 KPIs with `coverage: true` also need a `kpi:coverage:ratio` rule in `nse_kpi_quality.rules.yml`. Multi-session KPIs (pivots, ATR, RVOL) need EOD snapshots and stay empty in sim mode, which never reaches `post_close`.
 
+Release 2 adds 1m bars, stateful EMA/Wilder/OBV rules (they read their own previous value, so promtool tests use `evaluation_interval: 1m` and `group_eval_order`), market/sector/stock regimes (`nse_regimes`), events (`stock:event:bool`) and the effectiveness ledger (`nse_effectiveness`), which condition alerts quote in their `effectiveness` annotation. Catalogue kinds: `kpi`, `snapshot`, `signal`, `regime`, `effectiveness`, `quality`, `helper`. Dashboards: `grafana/dashboards/nse-r1.json` (R1) and `nse-r2.json` (R2); `make check` parses every dashboard query (`tests/check_dashboards.sh`).
+
 ### Release a new stock_exporter version
 
 ```bash
