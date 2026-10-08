@@ -29,6 +29,7 @@ bin/alertmanager:
 check: bin/promtool bin/amtool check-kpis check-reference
 	bin/promtool check rules prometheus/rules/*.yml
 	bin/amtool check-config alertmanager/alertmanager.yml
+	tests/check_dashboards.sh
 
 bin/kpicatalog: $(wildcard tools/kpicatalog/*.go) tools/kpicatalog/go.mod
 	cd tools/kpicatalog && go build -o $(CURDIR)/bin/kpicatalog .

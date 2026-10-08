@@ -75,10 +75,12 @@ check "R1 rule group max duration (s)"      "$(q 'max(prometheus_rule_group_last
 
 # Every dashboard query must execute (empty results are fine).
 dash_errors=$(python3 - "$PROM_PORT" <<'EOF'
-import json, sys, urllib.parse, urllib.request
+import glob, json, sys, urllib.parse, urllib.request
 port = sys.argv[1]
-d = json.load(open("grafana/dashboards/nse-r1.json"))
-exprs = [t["expr"] for p in d["panels"] for t in p.get("targets", [])] + [a["expr"] for a in d["annotations"]["list"]]
+exprs = []
+for path in sorted(glob.glob("grafana/dashboards/*.json")):
+    d = json.load(open(path))
+    exprs += [t["expr"] for p in d["panels"] for t in p.get("targets", [])] + [a["expr"] for a in d["annotations"]["list"]]
 bad = 0
 for e in exprs:
     e = e.replace("$symbol", "RELIANCE").replace("$sector", ".*")
