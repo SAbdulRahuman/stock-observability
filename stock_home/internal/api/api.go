@@ -82,6 +82,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/links", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, envelope{Data: quickLinks, UpdatedAt: s.now()})
 	})
+	mux.HandleFunc("GET /api/v1/analyst", s.analystHandler)
 }
 
 type envelope struct {

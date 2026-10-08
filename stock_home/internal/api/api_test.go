@@ -193,3 +193,63 @@ func TestExploreURLEscapesQuery(t *testing.T) {
 		t.Errorf("unexpected URL %s", u)
 	}
 }
+
+func TestAnalyst(t *testing.T) {
+	infy := `"exchange":"NSE","symbol":"INFY"`
+	prom := fakeProm(t, map[string]string{
+		`__name__=~"stock_change_percent`: `[` +
+			`{"metric":{"__name__":"stock_change_percent",` + infy + `},"value":[1,"2.4"]},` +
+			`{"metric":{"__name__":"stock:relative_strength_nifty:percent",` + infy + `},"value":[1,"1.1"]},` +
+			`{"metric":{"__name__":"stock:rsi_wilder_14m:index",` + infy + `},"value":[1,"74"]},` +
+			`{"metric":{"__name__":"stock:volume_delta_1h:ratio",` + infy + `},"value":[1,"-0.45"]},` +
+			`{"metric":{"__name__":"stock:abnormal_return_15m:percent",` + infy + `},"value":[1,"NaN"]}]`,
+		"stock_kpi_info": `[{"metric":{"kpi":"stock:volume_delta_1h:ratio","quality":"approximation","method":"tick-rule"},"value":[1,"1"]}]`,
+		"orderflow)_regime": `[{"metric":{"__name__":"stock:momentum_regime:info","regime":"UPTREND"},"value":[1,"1"]},` +
+			`{"metric":{"__name__":"stock:volatility_regime:info","regime":"HIGH"},"value":[1,"1"]},` +
+			`{"metric":{"__name__":"stock:orderflow_regime:info","regime":"DISTRIBUTION"},"value":[1,"1"]}]`,
+		"market:regime:info": vec("1", map[string]string{"regime": "TRENDING_BULL"}),
+		"ALERTS{": `[{"metric":{"alertname":"StockMomentumExhaustion","direction":"bearish"},"value":[1,"1"]},` +
+			`{"metric":{"alertname":"StockOrderBookWall","side":"bid","level":"3"},"value":[1,"1"]}]`,
+		"alert:hit_rate_5d": vec("0.6", map[string]string{"alertname": "StockMomentumExhaustion", "direction": "bearish"}),
+	})
+	defer prom.Close()
+	s := newTestServer(t, prom.URL, prom.URL)
+
+	var env struct {
+		Data  Analysis `json:"data"`
+		Error string   `json:"error"`
+	}
+	if code := get(t, s, "/api/v1/analyst?symbol=infy", &env); code != http.StatusOK {
+		t.Fatalf("status %d: %s", code, env.Error)
+	}
+	a := env.Data
+	if len(a.Evidence) != 4 || a.Evidence[3].KPI != "stock:volume_delta_1h:ratio" || a.Evidence[3].Quality != "approximation" {
+		t.Fatalf("evidence %+v (NaN must be dropped, catalogue quality attached)", a.Evidence)
+	}
+	want := []string{
+		"INFY is up 2.40% today, 1.10 pp stronger than NIFTY 50.",
+		"Momentum is stretched: Wilder RSI 74.",
+		"Tick-rule volume delta over the last hour is -0.45 (approximation): seller-initiated flow dominates.",
+		"Stock regimes: momentum uptrend, volatility high, order flow distribution.",
+		"Market regime: trending bull.",
+		"Active condition: StockMomentumExhaustion (bearish), 60% 15m hit rate over the last 5 days.",
+		"Active condition: StockOrderBookWall, no effectiveness history yet.",
+	}
+	if strings.Join(a.Summary, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("summary:\n%s\nwant:\n%s", strings.Join(a.Summary, "\n"), strings.Join(want, "\n"))
+	}
+	if a.Disclaimer == "" {
+		t.Fatal("missing disclaimer")
+	}
+
+	for _, bad := range []string{"", `INFY"}`, "INFY%7Bjob%3D%22x%22%7D", strings.Repeat("A", 40)} {
+		if code := get(t, s, "/api/v1/analyst?symbol="+bad, nil); code != http.StatusBadRequest {
+			t.Errorf("symbol %q: status %d, want 400", bad, code)
+		}
+	}
+	empty := fakeProm(t, map[string]string{})
+	defer empty.Close()
+	if code := get(t, newTestServer(t, empty.URL, empty.URL), "/api/v1/analyst?symbol=TCS", nil); code != http.StatusNotFound {
+		t.Fatalf("unknown symbol: status %d, want 404", code)
+	}
+}
