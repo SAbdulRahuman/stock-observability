@@ -1824,3 +1824,161 @@ kpis:
     quality: exact
     method: session accumulation/distribution line (stateful)
     limitation: "restarts from 0 after a gap longer than 3 minutes"
+
+  # --- Order flow / microstructure (Release 2) -------------------------------------------------
+  - name: stock:buy_volume_1h:percent
+    kind: kpi
+    family: microstructure
+    level: stock_intelligence
+    capability: order_flow
+    release: R2
+    formula: "(1 + volume delta 1h) / 2 * 100"
+    inputs: [stock:volume_delta_1h:ratio]
+    rule_file: nse_order_flow.rules.yml
+    frequency: 5s
+    scope: core
+    unit: percent
+    range: {min: 0, max: 100}
+    warmup: 1h
+    quality: approximation
+    method: tick-rule share of buyer-initiated volume
+    limitation: "Kite provides no aggressor side"
+
+  - name: stock:orderbook_weighted_imbalance:ratio
+    kind: kpi
+    family: microstructure
+    level: stock_intelligence
+    capability: order_flow
+    release: R2
+    formula: "WOBI = sum w (bidQty - askQty) / sum w (bidQty + askQty), w = 1, 0.8, 0.6, 0.4, 0.2"
+    inputs: [stock_depth_quantity]
+    rule_file: nse_order_flow.rules.yml
+    frequency: 15s
+    scope: core
+    unit: ratio
+    range: {min: -1, max: 1}
+    warmup: 0s
+    quality: exact
+    method: level-weighted top-5 book imbalance
+    alertable: true
+    dashboard_default: true
+
+  - name: stock:depth_wall:ratio
+    kind: kpi
+    family: microstructure
+    level: stock_intelligence
+    capability: liquidity
+    release: R2
+    formula: "qty(level) / mean qty of the other levels on that side"
+    inputs: [stock_depth_quantity]
+    rule_file: nse_order_flow.rules.yml
+    frequency: 15s
+    scope: core
+    unit: ratio
+    warmup: 0s
+    quality: exact
+    method: order-book wall detector, labels side and level
+    alertable: true
+
+  - name: stock:depth_bid_ask:ratio
+    kind: kpi
+    family: microstructure
+    level: stock_intelligence
+    capability: order_flow
+    release: R2
+    formula: "sum bidQty / sum askQty over the top 5 levels"
+    inputs: [stock_orderbook_quantity]
+    rule_file: nse_order_flow.rules.yml
+    frequency: 15s
+    scope: core
+    unit: ratio
+    warmup: 0s
+    quality: exact
+    method: top-5 bid/ask quantity ratio
+
+  - name: stock:avg_trade_size_5m:shares
+    kind: kpi
+    family: microstructure
+    level: stock_intelligence
+    capability: liquidity
+    release: R2
+    formula: "mean of the last traded quantity over 5m of samples"
+    inputs: [stock_last_traded_quantity]
+    rule_file: nse_order_flow.rules.yml
+    frequency: 15s
+    scope: core
+    unit: shares
+    warmup: 5m
+    quality: proxy
+    method: sampled last-trade size
+    limitation: "Kite ticks carry no trade count; trades between scrapes are missed"
+
+  - name: stock:pending_flow_imbalance_1m:ratio
+    kind: kpi
+    family: microstructure
+    level: stock_intelligence
+    capability: order_flow
+    release: R2
+    formula: "((B - B[1m ago]) - (S - S[1m ago])) / (B + S), B/S = total pending buy/sell quantity"
+    inputs: [stock_total_buy_quantity, stock_total_sell_quantity]
+    rule_file: nse_order_flow.rules.yml
+    frequency: 1m
+    scope: core
+    unit: ratio
+    warmup: 1m
+    quality: proxy
+    method: whole-book order-flow imbalance proxy
+
+  - name: stock:ofi_cont_1m:shares
+    kind: kpi
+    family: microstructure
+    level: stock_intelligence
+    capability: order_flow
+    release: R2
+    formula: "sum over 1s steps of qb 1{pb >= pb'} - qb' 1{pb <= pb'} - qa 1{pa <= pa'} + qa' 1{pa >= pa'}, level 1"
+    inputs: [stock_depth_price, stock_depth_quantity]
+    rule_file: nse_order_flow.rules.yml
+    frequency: 1m
+    scope: core
+    unit: shares
+    warmup: 1m
+    quality: approximation
+    method: Cont-Kukanov-Stoikov order-flow imbalance on 1s scrapes
+    limitation: "book changes between 1s scrapes are netted"
+    alertable: true
+    dashboard_default: true
+
+  - name: stock:tick_imbalance_1m:ratio
+    kind: kpi
+    family: microstructure
+    level: stock_intelligence
+    capability: order_flow
+    release: R2
+    formula: "sum sgn(dC) / sum |sgn(dC)| over 1s steps in the last minute"
+    inputs: [stock_last_price]
+    rule_file: nse_order_flow.rules.yml
+    frequency: 1m
+    scope: core
+    unit: ratio
+    range: {min: -1, max: 1}
+    warmup: 1m
+    quality: approximation
+    method: up-ticks minus down-ticks on 1s scrapes
+    limitation: "absent when the price did not move in the minute"
+
+  - name: stock:ofi_price_impact_60m:bps_per_share
+    kind: kpi
+    family: microstructure
+    level: stock_intelligence
+    capability: liquidity
+    release: R2
+    formula: "Cov(dmid bps, OFI[1m ago]) / Var(OFI[1m ago]) over 60 1m bars (>= 30)"
+    inputs: [stock_orderbook_mid_price, stock:ofi_cont_1m:shares]
+    rule_file: nse_order_flow.rules.yml
+    frequency: 1m
+    scope: core
+    unit: bps_per_share
+    warmup: 31m
+    quality: approximation
+    method: lagged OFI regression slope (price impact per share of imbalance)
+    limitation: "60 noisy bars; for ranking, not significance"

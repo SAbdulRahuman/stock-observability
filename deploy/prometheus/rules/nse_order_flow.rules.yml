@@ -15,6 +15,101 @@ groups:
         expr: |
           sum_over_time((stock:volume_1m:shares{tier="core", instrument_type="EQ"} * sgn(stock:return_1m:percent))[1h:1m])
           / (sum_over_time(stock:volume_1m:shares{tier="core", instrument_type="EQ"}[1h:1m]) > 0)
+      - record: stock:buy_volume_1h:percent
+        expr: (1 + stock:volume_delta_1h:ratio) / 2 * 100
+
+  # Release 2 book KPIs (§7.7, §8.7):
+  #   WOBI = sum w (bidQty - askQty) / sum w (bidQty + askQty), w = 1, 0.8, 0.6, 0.4, 0.2 by level
+  #   wall = qty(level) / mean qty of the other levels on that side
+  - name: nse_order_flow_depth
+    interval: 15s
+    rules:
+      - record: stock:orderbook_weighted_imbalance:ratio
+        expr: |
+          sum without (level, side) (
+            stock_depth_quantity{tier="core"}
+            * on(level) group_left() (
+                  label_replace(vector(1), "level", "1", "", "") or label_replace(vector(0.8), "level", "2", "", "")
+                or label_replace(vector(0.6), "level", "3", "", "") or label_replace(vector(0.4), "level", "4", "", "")
+                or label_replace(vector(0.2), "level", "5", "", "")
+              )
+            * on(side) group_left() (label_replace(vector(1), "side", "bid", "", "") or label_replace(vector(-1), "side", "ask", "", ""))
+          )
+          / (
+            sum without (level, side) (
+              stock_depth_quantity{tier="core"}
+              * on(level) group_left() (
+                    label_replace(vector(1), "level", "1", "", "") or label_replace(vector(0.8), "level", "2", "", "")
+                  or label_replace(vector(0.6), "level", "3", "", "") or label_replace(vector(0.4), "level", "4", "", "")
+                  or label_replace(vector(0.2), "level", "5", "", "")
+                )
+            ) > 0
+          )
+      - record: stock:depth_wall:ratio
+        expr: |
+          stock_depth_quantity{tier="core"}
+          / (
+              (sum without (level) (stock_depth_quantity{tier="core"}) - ignoring(level) group_right() stock_depth_quantity{tier="core"})
+              / ignoring(level) group_left() (count without (level) (stock_depth_quantity{tier="core"}) - 1 > 0)
+              > 0
+            )
+      - record: stock:depth_bid_ask:ratio
+        expr: |
+          sum without (side) (stock_orderbook_quantity{tier="core", side="bid"})
+          / (sum without (side) (stock_orderbook_quantity{tier="core", side="ask"}) > 0)
+      # Proxy: Kite ticks carry no trade count, so this averages the last traded quantity.
+      - record: stock:avg_trade_size_5m:shares
+        expr: avg_over_time(stock_last_traded_quantity{tier="core"}[5m])
+
+  # 1s-resolution flow over the last minute (core is scraped every second), 1m evaluations:
+  #   pending flow = (dBuyQty - dSellQty) / (BuyQty + SellQty) over 1m (whole book)
+  #   Cont OFI e_s = qb 1{pb >= pb'} - qb' 1{pb <= pb'} - qa 1{pa <= pa'} + qa' 1{pa >= pa'} (level 1, ' = 1s ago), summed
+  #   tick imbalance = sum sgn(dC) / sum |sgn(dC)| over 1s steps
+  #   OFI impact = Cov(dmid bps, OFI[1m ago]) / Var(OFI[1m ago]) over 60 1m bars (>= 30)
+  - name: nse_order_flow_1m
+    interval: 1m
+    rules:
+      - record: stock:pending_flow_imbalance_1m:ratio
+        expr: |
+          (
+              (stock_total_buy_quantity{tier="core"} - stock_total_buy_quantity{tier="core"} offset 1m)
+            - (stock_total_sell_quantity{tier="core"} - stock_total_sell_quantity{tier="core"} offset 1m)
+          )
+          / ((stock_total_buy_quantity{tier="core"} + stock_total_sell_quantity{tier="core"}) > 0)
+      - record: stock:ofi_cont_1m:shares
+        expr: |
+          sum_over_time(
+            sum without (side, level) (
+                (
+                    ((stock_depth_quantity{tier="core", side="bid", level="1"} and stock_depth_price{tier="core", side="bid", level="1"} >= stock_depth_price{tier="core", side="bid", level="1"} offset 1s) or 0 * stock_depth_quantity{tier="core", side="bid", level="1"})
+                  - ((stock_depth_quantity{tier="core", side="bid", level="1"} offset 1s and stock_depth_price{tier="core", side="bid", level="1"} <= stock_depth_price{tier="core", side="bid", level="1"} offset 1s) or 0 * stock_depth_quantity{tier="core", side="bid", level="1"})
+                )
+              - ignoring(side) (
+                    ((stock_depth_quantity{tier="core", side="ask", level="1"} and stock_depth_price{tier="core", side="ask", level="1"} <= stock_depth_price{tier="core", side="ask", level="1"} offset 1s) or 0 * stock_depth_quantity{tier="core", side="ask", level="1"})
+                  - ((stock_depth_quantity{tier="core", side="ask", level="1"} offset 1s and stock_depth_price{tier="core", side="ask", level="1"} >= stock_depth_price{tier="core", side="ask", level="1"} offset 1s) or 0 * stock_depth_quantity{tier="core", side="ask", level="1"})
+                )
+            )[1m:1s]
+          )
+      - record: stock:tick_imbalance_1m:ratio
+        expr: |
+          sum_over_time(sgn(stock_last_price{tier="core"} - stock_last_price{tier="core"} offset 1s)[1m:1s])
+          / (sum_over_time(abs(sgn(stock_last_price{tier="core"} - stock_last_price{tier="core"} offset 1s))[1m:1s]) > 0)
+      - record: stock:ofi_price_impact_60m:bps_per_share
+        expr: |
+          (
+              avg_over_time((
+                  (stock_orderbook_mid_price{tier="core"} - stock_orderbook_mid_price{tier="core"} offset 1m)
+                  / (stock_orderbook_mid_price{tier="core"} offset 1m > 0) * 1e4
+                * stock:ofi_cont_1m:shares offset 1m
+              )[60m:1m])
+            - avg_over_time((
+                  (stock_orderbook_mid_price{tier="core"} - stock_orderbook_mid_price{tier="core"} offset 1m)
+                  / (stock_orderbook_mid_price{tier="core"} offset 1m > 0) * 1e4
+              )[60m:1m])
+              * avg_over_time(stock:ofi_cont_1m:shares[60m:1m] offset 1m)
+          )
+          / (stdvar_over_time(stock:ofi_cont_1m:shares[60m:1m] offset 1m) > 0)
+          and count_over_time(stock:ofi_cont_1m:shares[60m:1m] offset 1m) >= 30
 
   - name: nse_order_flow_alerts
     interval: 5s

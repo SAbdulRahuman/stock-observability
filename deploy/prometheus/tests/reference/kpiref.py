@@ -29,6 +29,7 @@ GROUP_ORDER = {
             "nse_volume_liquidity", "nse_volume_bars", "nse_volume_stateful", "nse_volume_liquidity_alerts"],
     "volume": ["stock_fast", "stock_slow", "portfolio", "nse_bars", "nse_volume_liquidity", "nse_volume_bars",
                "nse_volume_stateful", "nse_volume_liquidity_alerts"],
+    "flow": ["nse_order_flow", "nse_order_flow_depth", "nse_order_flow_1m", "nse_order_flow_alerts"],
     "osc": ["nse_bars", "nse_momentum", "nse_momentum_wilder", "nse_momentum_bars", "nse_momentum_alerts"],
     "ma": ["stock_fast", "stock_slow", "portfolio", "nse_trend", "nse_trend_regression", "nse_trend_alerts", "nse_moving_averages"],
 }
@@ -924,6 +925,90 @@ def family_volume():
     ], 60
 
 
+WOBI_WEIGHTS = {1: 1.0, 2: 0.8, 3: 0.6, 4: 0.4, 5: 0.2}
+
+
+def family_flow():
+    """WOBI, walls, bid/ask depth, trade size, pending flow, Cont OFI, tick imbalance, OFI impact, buy volume %."""
+    step, minutes = 5, 70
+    n = minutes * 60 // step + 1
+    series, checks = [], []
+    evals = list(range(0, minutes * 60 + 1, 60))
+    for seed, sym, levels in ((28, "INFY", 5), (29, "THIN", 3)):
+        lbl = instrument(sym)
+        rnd = random.Random(seed)
+        center = random_walk(seed, n, start=1500, sigma=0.0004)
+        bid1 = [round(c - 0.05, 2) for c in center]
+        ask1 = [round(c + (0.10 if rnd.random() < 0.2 else 0.05), 2) for c in center]
+        mid = Series("stock_orderbook_mid_price", lbl, step, [(b + a) / 2 for b, a in zip(bid1, ask1)], "%.3f")
+        ltp = Series("stock_last_price", lbl, step, center)
+        depth = {}
+        for side in ("bid", "ask"):
+            for lv in range(1, levels + 1):
+                d = dict(lbl, side=side, level=str(lv))
+                off = -0.05 * (lv - 1) if side == "bid" else 0.05 * (lv - 1)
+                px = [round((b if side == "bid" else a) + off, 2) for b, a in zip(bid1, ask1)]
+                wall = 10 if (sym == "INFY" and side == "bid" and lv == 3) else 1
+                qty = [rnd.randint(50, 2000) * wall for _ in range(n)]
+                depth[side, lv] = (Series("stock_depth_price", d, step, px), Series("stock_depth_quantity", d, step, qty, "%d"))
+        book_qty = {side: Series("stock_orderbook_quantity", dict(lbl, side=side), step,
+                                 [sum(depth[side, lv][1].values[i] for lv in range(1, levels + 1)) for i in range(n)], "%d")
+                    for side in ("bid", "ask")}
+        buy = Series("stock_total_buy_quantity", lbl, step, running([rnd.randint(-500, 600) for _ in range(n)], lambda a, b: max(a + b, 0)), "%d")
+        sell = Series("stock_total_sell_quantity", lbl, step, running([rnd.randint(-500, 600) for _ in range(n)], lambda a, b: max(a + b, 0)), "%d")
+        ltq = Series("stock_last_traded_quantity", lbl, step, [rnd.randint(1, 500) for _ in range(n)], "%d")
+        vd = Series("stock:volume_delta_1h:ratio", lbl, step, [rnd.uniform(-1, 1) for _ in range(n)], "%.4f")
+        series += [mid, ltp, buy, sell, ltq, vd] + list(book_qty.values()) + [s for pq in depth.values() for s in pq]
+
+        def e(s):
+            pb, qb = depth["bid", 1][0], depth["bid", 1][1]
+            pa, qa = depth["ask", 1][0], depth["ask", 1][1]
+            if pb.at(s - 1) is None:
+                return 0
+            t1 = qb.at(s) if pb.at(s) >= pb.at(s - 1) else 0
+            t2 = qb.at(s - 1) if pb.at(s) <= pb.at(s - 1) else 0
+            t3 = qa.at(s) if pa.at(s) <= pa.at(s - 1) else 0
+            t4 = qa.at(s - 1) if pa.at(s) >= pa.at(s - 1) else 0
+            return t1 - t2 - t3 + t4
+
+        ofi = {k: sum(e(s) for s in range(max(k - 59, 0), k + 1)) for k in evals}
+        for t in (5 * 60, 10 * 60, 31 * 60, 40 * 60, 61 * 60, 70 * 60):
+            q = {(side, lv): depth[side, lv][1].at(t) for side in ("bid", "ask") for lv in range(1, levels + 1)}
+            num = sum(WOBI_WEIGHTS[lv] * (q["bid", lv] - q["ask", lv]) for lv in range(1, levels + 1))
+            den = sum(WOBI_WEIGHTS[lv] * (q["bid", lv] + q["ask", lv]) for lv in range(1, levels + 1))
+            checks.append(Check("stock:orderbook_weighted_imbalance:ratio", lbl, t, num / den))
+            for side in ("bid", "ask"):
+                total = sum(q[side, lv] for lv in range(1, levels + 1))
+                for lv in range(1, levels + 1):
+                    others = (total - q[side, lv]) / (levels - 1)
+                    checks.append(Check("stock:depth_wall:ratio", dict(lbl, side=side, level=str(lv)), t, q[side, lv] / others))
+            checks.append(Check("stock:depth_bid_ask:ratio", lbl, t, book_qty["bid"].at(t) / book_qty["ask"].at(t)))
+            checks.append(Check("stock:avg_trade_size_5m:shares", lbl, t, mean([v for _, v in ltq.samples(t - 300, t)])))
+            b, s_ = buy.at(t), sell.at(t)
+            checks.append(Check("stock:pending_flow_imbalance_1m:ratio", lbl, t,
+                                ((b - buy.at(t - 60)) - (s_ - sell.at(t - 60))) / (b + s_), abs_tol=1e-12))
+            checks.append(Check("stock:ofi_cont_1m:shares", lbl, t, ofi[t]))
+            moves = [sgn(ltp.at(s) - ltp.at(s - 1)) for s in range(t - 59, t + 1)]
+            if any(moves):
+                checks.append(Check("stock:tick_imbalance_1m:ratio", lbl, t, sum(moves) / sum(abs(m) for m in moves)))
+            else:
+                checks.append(Absent("stock:tick_imbalance_1m:ratio", lbl, t))
+            checks.append(Check("stock:buy_volume_1h:percent", lbl, t, (1 + vd.at(t)) / 2 * 100))
+            ys = [ofi[k] for k in evals if t - 3660 < k <= t - 60]
+            if len(ys) >= 30:
+                ks = [k for k in evals if t - 3600 < k <= t and k >= 60]
+                x = {k: (mid.at(k) - mid.at(k - 60)) / mid.at(k - 60) * 1e4 for k in ks}
+                exy = mean([x[k] * ofi[k - 60] for k in ks])
+                lam = (exy - mean(list(x.values())) * mean(ys)) / pstdev(ys) ** 2
+                checks.append(Check("stock:ofi_price_impact_60m:bps_per_share", lbl, t, lam, rel_tol=1e-6, abs_tol=1e-12))
+            else:
+                checks.append(Absent("stock:ofi_price_impact_60m:bps_per_share", lbl, t))
+    return ["nse_order_flow.rules.yml"], [
+        test_case("WOBI, walls, depth ratio, trade size, pending flow, Cont OFI, tick imbalance, OFI impact and buy volume match the reference",
+                  step, series, checks)
+    ], 60
+
+
 FAMILIES = {
     "base": family_base,
     "price_levels": family_price_levels,
@@ -940,6 +1025,7 @@ FAMILIES = {
     "osc": family_osc,
     "strength": family_strength,
     "volume": family_volume,
+    "flow": family_flow,
 }
 
 
