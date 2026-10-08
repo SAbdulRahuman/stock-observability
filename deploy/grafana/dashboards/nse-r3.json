@@ -1,0 +1,218 @@
+{
+  "uid": "nse-r3",
+  "title": "NSE Risk Intelligence (R3)",
+  "description": "Release 3 KPIs from deploy/prometheus/kpi-catalog.yaml: market and stock risk (VaR, CVaR, drawdown, beta, correlation, EWMA volatility, abnormal return), 52-week and daily SMA levels, and portfolio risk. Observability signals, not trading advice.",
+  "tags": ["nse", "kpi", "release-3"],
+  "timezone": "Asia/Kolkata",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "1m",
+  "schemaVersion": 41,
+  "version": 1,
+  "time": {"from": "now-6h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "sector", "label": "Sector", "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": {"query": "label_values(stock_last_price{tier=\"core\", instrument_type=\"EQ\"}, sector)", "refId": "sector"},
+        "definition": "label_values(stock_last_price{tier=\"core\", instrument_type=\"EQ\"}, sector)",
+        "refresh": 2, "includeAll": true, "allValue": ".*", "multi": true,
+        "current": {"text": "All", "value": "$__all"}, "sort": 1
+      },
+      {
+        "name": "symbol", "label": "Symbol", "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": {"query": "label_values(stock_last_price{tier=\"core\", instrument_type=\"EQ\", sector=~\"$sector\"}, symbol)", "refId": "symbol"},
+        "definition": "label_values(stock_last_price{tier=\"core\", instrument_type=\"EQ\", sector=~\"$sector\"}, symbol)",
+        "refresh": 2, "includeAll": false, "multi": false, "sort": 1
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Risk conditions", "datasource": {"type": "prometheus", "uid": "prometheus"}, "enable": true, "iconColor": "red",
+        "expr": "ALERTS{alertstate=\"firing\", alertname=~\"StockAbnormalReturn|Stock52WeekBreakout|StockGoldenDeathCross\", symbol=\"$symbol\"}", "step": "1m",
+        "titleFormat": "{{alertname}}", "textFormat": "{{direction}}", "useValueForTime": false
+      }
+    ]
+  },
+  "panels": [
+    {"type": "row", "title": "Market risk", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}, "panels": []},
+    {
+      "type": "stat", "title": "NIFTY 1-day implied move (points)", "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "market:implied_move:points = NIFTY 50 * INDIA VIX / 100 / sqrt(365). MarketImpliedMoveExceeded fires beyond 2x.",
+      "targets": [{"refId": "A", "expr": "market:implied_move:points{horizon=\"1d\"}", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 0}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "stat", "title": "NIFTY move vs implied", "gridPos": {"h": 4, "w": 6, "x": 6, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "abs(max(stock_last_price{symbol=\"NIFTY 50\"}) - max(stock_previous_close_price{symbol=\"NIFTY 50\"})) / on() market:implied_move:points{horizon=\"1d\"}", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 2}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "stat", "title": "NIFTY volatility risk premium", "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "market:nifty_vol_risk_premium:points = INDIA VIX - realised volatility; negative = realised exceeds implied.",
+      "targets": [{"refId": "A", "expr": "market:nifty_vol_risk_premium:points", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 1, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "stat", "title": "Core EQ near 52-week high (within 2%)", "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "count(stock:distance_52w_high:percent{instrument_type=\"EQ\"} > -2) or vector(0)", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 0}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "table", "title": "Highest 1-day VaR(95) ($sector)", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "topk(15, stock:var_95_1d:percent{sector=~\"$sector\"})", "instant": true, "format": "table"},
+        {"refId": "B", "expr": "stock:cvar_95_1d:percent{sector=~\"$sector\"}", "instant": true, "format": "table"},
+        {"refId": "C", "expr": "stock:max_drawdown_60d:percent{sector=~\"$sector\"}", "instant": true, "format": "table"},
+        {"refId": "D", "expr": "stock:beta_nifty_20d:ratio{sector=~\"$sector\"}", "instant": true, "format": "table"}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {"id": "filterByValue", "options": {"filters": [{"fieldName": "Value #A", "config": {"id": "isNull"}}], "type": "exclude", "match": "any"}},
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "job": true, "instance": true, "exchange": true, "instrument_type": true, "tier": true}, "renameByName": {"Value #A": "VaR 95% (%)", "Value #B": "CVaR 95% (%)", "Value #C": "max drawdown (%)", "Value #D": "beta 20d"}}}
+      ],
+      "fieldConfig": {"defaults": {"decimals": 2}, "overrides": []},
+      "options": {"showHeader": true, "sortBy": [{"displayName": "VaR 95% (%)", "desc": true}]}
+    },
+    {
+      "type": "table", "title": "52-week position and daily SMA spread ($sector)", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "From the exporter reference collector (Kite day candles up to the previous session; needs the historical data add-on).",
+      "targets": [
+        {"refId": "A", "expr": "stock:range_52w_position:ratio{sector=~\"$sector\", instrument_type=\"EQ\"}", "instant": true, "format": "table"},
+        {"refId": "B", "expr": "stock:distance_52w_high:percent{sector=~\"$sector\", instrument_type=\"EQ\"}", "instant": true, "format": "table"},
+        {"refId": "C", "expr": "stock:sma_spread_50_200d:percent{sector=~\"$sector\", instrument_type=\"EQ\"}", "instant": true, "format": "table"}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "job": true, "instance": true, "exchange": true, "instrument_type": true, "tier": true}, "renameByName": {"Value #A": "52W position", "Value #B": "from 52W high (%)", "Value #C": "SMA50/200 spread (%)"}}}
+      ],
+      "fieldConfig": {"defaults": {"decimals": 2}, "overrides": [{"matcher": {"id": "byName", "options": "52W position"}, "properties": [{"id": "unit", "value": "percentunit"}, {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "basic"}}, {"id": "min", "value": 0}, {"id": "max", "value": 1}]}]},
+      "options": {"showHeader": true, "sortBy": [{"displayName": "from 52W high (%)", "desc": true}]}
+    },
+
+    {"type": "row", "title": "Stock risk: $symbol", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 13}, "panels": []},
+    {
+      "type": "stat", "title": "VaR 95% 1d", "gridPos": {"h": 4, "w": 4, "x": 0, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "stock:var_95_1d:percent{symbol=\"$symbol\"}", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "type": "stat", "title": "CVaR 95% 1d (normal)", "gridPos": {"h": 4, "w": 4, "x": 4, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "stock:cvar_95_1d:percent{symbol=\"$symbol\"}", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "type": "stat", "title": "Max drawdown (90d)", "gridPos": {"h": 4, "w": 4, "x": 8, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "stock:max_drawdown_60d:percent{symbol=\"$symbol\"}", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "type": "stat", "title": "Beta 20d / alpha 20d", "gridPos": {"h": 4, "w": 4, "x": 12, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "stock:beta_nifty_20d:ratio{symbol=\"$symbol\"}", "instant": true, "legendFormat": "beta"},
+        {"refId": "B", "expr": "stock:alpha_20d:percent{symbol=\"$symbol\"}", "instant": true, "legendFormat": "alpha %/yr"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 2}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name"}
+    },
+    {
+      "type": "stat", "title": "52-week position", "gridPos": {"h": 4, "w": 4, "x": 16, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "stock:range_52w_position:ratio{symbol=\"$symbol\"}", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 0, "min": 0, "max": 1}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "type": "stat", "title": "EWMA volatility (annualised)", "gridPos": {"h": 4, "w": 4, "x": 20, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "stock:ewma_vol_annualised:percent{symbol=\"$symbol\"}", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 1}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "timeseries", "title": "Beta and correlation vs NIFTY 50 (60m, 1m bars)", "gridPos": {"h": 8, "w": 8, "x": 0, "y": 18},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "stock:beta_nifty_60m:ratio{symbol=\"$symbol\"}", "legendFormat": "beta 60m"},
+        {"refId": "B", "expr": "stock:correlation_nifty_60m:ratio{symbol=\"$symbol\"}", "legendFormat": "correlation 60m"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none"}, "overrides": []}
+    },
+    {
+      "type": "timeseries", "title": "Abnormal 15m return vs market model", "gridPos": {"h": 8, "w": 8, "x": 8, "y": 18},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "StockAbnormalReturn fires beyond 3 standard deviations of the residual over the last day.",
+      "targets": [
+        {"refId": "A", "expr": "stock:abnormal_return_15m:percent{symbol=\"$symbol\"}", "legendFormat": "abnormal"},
+        {"refId": "B", "expr": "stock:market_model_expected_return_15m:percent{symbol=\"$symbol\"}", "legendFormat": "expected"},
+        {"refId": "C", "expr": "3 * stddev_over_time(stock:abnormal_return_15m:percent{symbol=\"$symbol\"}[1d])", "legendFormat": "+3 sigma"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []}
+    },
+    {
+      "type": "timeseries", "title": "Price vs 52-week range and daily SMA 50/200", "gridPos": {"h": 8, "w": 8, "x": 16, "y": 18},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "stock_last_price{symbol=\"$symbol\", instrument_type=\"EQ\"}", "legendFormat": "price"},
+        {"refId": "B", "expr": "{__name__=~\"stock_52w_(high|low)_price|stock_sma_(50|200)d_price\", symbol=\"$symbol\"}", "legendFormat": "{{__name__}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "currencyINR"}, "overrides": []}
+    },
+
+    {"type": "row", "title": "Portfolio risk", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 26}, "panels": []},
+    {
+      "type": "stat", "title": "Day return", "gridPos": {"h": 4, "w": 5, "x": 0, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "portfolio:day_return:percent (needs --collector.portfolio). PortfolioVaRBreach fires when the loss exceeds VaR(95).",
+      "targets": [{"refId": "A", "expr": "portfolio:day_return:percent", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"}
+    },
+    {
+      "type": "stat", "title": "VaR 95% 1d", "gridPos": {"h": 4, "w": 5, "x": 5, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "portfolio:var_95_1d:percent", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "type": "stat", "title": "Volatility 20d", "gridPos": {"h": 4, "w": 5, "x": 10, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "portfolio:volatility_20d:percent", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 1}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "type": "stat", "title": "Sharpe / Sortino (90d)", "gridPos": {"h": 4, "w": 9, "x": 15, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Annualised; R_f from stock_risk_free_rate_ratio (textfile).",
+      "targets": [
+        {"refId": "A", "expr": "portfolio:sharpe_60d:ratio", "instant": true, "legendFormat": "Sharpe"},
+        {"refId": "B", "expr": "portfolio:sortino_60d:ratio", "instant": true, "legendFormat": "Sortino"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 2}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name"}
+    }
+  ]
+}
