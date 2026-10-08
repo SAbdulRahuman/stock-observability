@@ -1,0 +1,60 @@
+{{- if .Values.quantlab.enabled }}
+{{- $v := .Values.quantlab -}}
+{{- $name := include "so.fullname" (list . "quantlab") -}}
+{{- $prom := include "so.fullname" (list . "prometheus") -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "so.labels" (list . "quantlab") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "so.selectorLabels" (list . "quantlab") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "so.labels" (list . "quantlab") | nindent 8 }}
+    spec:
+      {{- include "so.podSpecCommon" . | nindent 6 }}
+      containers:
+        - name: quantlab
+          image: {{ include "so.image" $v.image }}
+          imagePullPolicy: {{ $v.image.pullPolicy }}
+          args:
+            - --prometheus=http://{{ $prom }}:9090/prometheus
+            - --listen=:9108
+            - --interval={{ $v.interval }}
+          ports:
+            - name: http
+              containerPort: 9108
+          readinessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+          resources:
+            {{- toYaml $v.resources | nindent 12 }}
+          securityContext:
+            {{- include "so.containerSecurityContext" . | nindent 12 }}
+            readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "so.labels" (list . "quantlab") | nindent 4 }}
+spec:
+  selector:
+    {{- include "so.selectorLabels" (list . "quantlab") | nindent 4 }}
+  ports:
+    - name: http
+      port: 9108
+      targetPort: http
+{{- end }}

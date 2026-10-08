@@ -35,6 +35,8 @@ cases=(
   'market-digest|alertname=StockOIBuildup category=flow severity=info layer=condition condition=oi_buildup class=long_buildup exchange=NFO symbol=NIFTY26OCTFUT'
   'market-digest|alertname=PCRExtreme category=market severity=info layer=condition condition=pcr_extreme underlying=NIFTY extreme=high'
   'market-digest|alertname=FuturesBasisAnomaly category=market severity=info layer=condition condition=basis_anomaly underlying=NIFTY basis=discount'
+  'stock-prediction|alertname=StockPredictorStale category=prediction severity=warning layer=incident incident=predictor_stale model=ar1'
+  'stock-prediction|alertname=PredictionModelUnderperformsNaive category=prediction severity=warning layer=incident incident=model_underperforms model=ar1 horizon=15m'
   'market-incident|alertname=MarketImpliedMoveExceeded category=market severity=warning layer=incident incident=implied_move_exceeded'
   'market-incident|alertname=MarketBreadthStress category=market severity=warning layer=incident incident=breadth_stress direction=bearish'
   'market-incident|alertname=MarketCircuitCluster category=market severity=warning layer=incident incident=circuit_cluster band=lower'

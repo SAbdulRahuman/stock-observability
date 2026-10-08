@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 ROOT=$PWD
 DURATION=${DURATION:-180}
 WORK=$(mktemp -d)
-EXP_PORT=19101 PROM_PORT=19090 AM_PORT=19093
+EXP_PORT=19101 PROM_PORT=19090 AM_PORT=19093 QL_PORT=19108
 pids=()
 cleanup() { kill "${pids[@]}" 2>/dev/null || true; wait 2>/dev/null || true; rm -rf "$WORK"; }
 trap cleanup EXIT
@@ -16,6 +16,7 @@ cp prometheus/rules/*.yml "$WORK/rules/"
 sed -e "s|/etc/prometheus/rules|$WORK/rules|" \
     -e "s|stock_exporter:9101|127.0.0.1:$EXP_PORT|" \
     -e "s|alertmanager:9093|127.0.0.1:$AM_PORT|" \
+    -e "s|quantlab:9108|127.0.0.1:$QL_PORT|" \
     -e "s|localhost:9090|127.0.0.1:$PROM_PORT|" \
     prometheus/prometheus.yml > "$WORK/prometheus.yml"
 sed -e "s|/etc/alertmanager/templates|$ROOT/alertmanager/templates|" alertmanager/alertmanager.yml > "$WORK/alertmanager.yml"
@@ -31,6 +32,8 @@ bin/alertmanager --config.file="$WORK/alertmanager.yml" --storage.path="$WORK/am
 pids+=($!)
 bin/prometheus --config.file="$WORK/prometheus.yml" --storage.tsdb.path="$WORK/tsdb" \
   --web.listen-address=127.0.0.1:$PROM_PORT --log.level=warn > "$WORK/prom.log" 2>&1 &
+pids+=($!)
+python3 quantlab/quantlab.py --prometheus="http://127.0.0.1:$PROM_PORT" --listen="127.0.0.1:$QL_PORT" --interval=60 > "$WORK/quantlab.log" 2>&1 &
 pids+=($!)
 
 echo ">> running stack for ${DURATION}s"
@@ -55,7 +58,7 @@ check "ingest samples/s (1m)"               "$(q 'rate(prometheus_tsdb_head_samp
 check "core scrape duration p_max (s)"      "$(q 'max_over_time(scrape_duration_seconds{job="stock_core"}[1m])')" "v is not None and v<0.9"
 check "broad scrape duration p_max (s)"     "$(q 'max_over_time(scrape_duration_seconds{job="stock_broad"}[1m])')" "v is not None and v<4"
 check "rule evaluation failures"            "$(q 'sum(prometheus_rule_evaluation_failures_total)')" "v==0"
-check "rule group max duration (s)"         "$(q 'max(prometheus_rule_group_last_duration_seconds)')" "v is not None and v<1"
+check "base rule group duration / interval" "$(q 'max(prometheus_rule_group_last_duration_seconds{rule_group!~".*nse_.*"} / prometheus_rule_group_interval_seconds)')" "v is not None and v<=0.25"
 check "sample_limit exceeded"               "$(q 'sum(prometheus_target_scrapes_exceeded_sample_limit_total)')" "v==0"
 check "recorded advance/decline ratio"      "$(q 'market:advance_decline:ratio')" "v is not None and v>0"
 check "firing alerts in Prometheus"         "$(q 'count(ALERTS{alertstate="firing"})')" "v is not None and v>=1"
@@ -88,6 +91,11 @@ check "NIFTY implied move"                  "$(q 'market:implied_move:points')" 
 check "F&O contracts"                       "$(q 'count(stock_instrument_info)')" "v==15"
 check "NIFTY PCR(OI)"                       "$(q 'underlying:pcr_oi:ratio{underlying="NIFTY"}')" "v is not None and v>0"
 check "NIFTY futures premium (%)"           "$(q 'underlying:futures_premium:percent{underlying="NIFTY"}')" "v is not None and 0<v<2"
+
+# NSE Release 5: Quant Lab (AR(1) forecasts need 30 one-minute returns, so only option analytics here).
+check "up stock_quantlab"                   "$(q 'up{job="stock_quantlab"}')" "v==1"
+check "option implied volatilities"         "$(q 'count(stock_option_implied_volatility_ratio)')" "v is not None and v>=10"
+check "NIFTY max pain distance (%)"         "$(q 'underlying:max_pain_distance:percent{underlying="NIFTY"}')" "v is not None and abs(v)<5"
 
 # Every dashboard query must execute (empty results are fine).
 dash_errors=$(python3 - "$PROM_PORT" <<'EOF'

@@ -93,6 +93,18 @@ stockExporter:
     requests: {cpu: 250m, memory: 256Mi}
     limits: {memory: 1Gi}
 
+# Quant Lab (deploy/quantlab): option IV/Greeks/max pain and forecasts as metrics (Release 5).
+quantlab:
+  enabled: false
+  image:
+    repository: quantlab
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  interval: 60
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 512Mi}
+
 portal:
   image:
     repository: docker.io/nginxinc/nginx-unprivileged

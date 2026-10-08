@@ -11,6 +11,10 @@
 {{- if .Values.home.enabled }}
 {{- $_ := set $policies "stock-home" (list 8080 (list "portal")) }}
 {{- end }}
+{{- if .Values.quantlab.enabled }}
+{{- $_ := set $policies "quantlab" (list 9108 (list "prometheus")) }}
+{{- $_ := set $policies "prometheus" (list 9090 (list "portal" "grafana" "stock-home" "quantlab")) }}
+{{- end }}
 {{- if .Values.openbb.enabled }}
 {{- $_ := set $policies "openbb" (list 8080 (ternary (list "*") (list "stock-home") .Values.openbb.route.enabled)) }}
 {{- end }}

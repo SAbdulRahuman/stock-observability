@@ -55,6 +55,12 @@ services:
     ports:
       - "127.0.0.1:9093:9093"
 
+  quantlab:
+    build: ./quantlab
+    restart: unless-stopped
+    command: ["--prometheus=http://prometheus:9090", "--listen=:9108"]
+    depends_on: [prometheus]
+
 secrets:
   kite_api_secret:
     file: ./secrets/kite_api_secret

@@ -1,0 +1,120 @@
+# promtool test rules prometheus/tests/nse_predict_test.yml
+# INFY rises 1 per minute from 1000; the Quant Lab (ar1, 15m) forecasts +1% with P(up) 0.8.
+rule_files:
+  - ../rules/nse_predict.rules.yml
+
+evaluation_interval: 1m
+
+group_eval_order:
+  - nse_predict_features
+  - nse_predict_intake
+  - nse_predict_forecasts
+  - nse_predict_evaluation
+  - nse_predict_scores
+  - nse_predict_alerts
+
+tests:
+  - name: intake, naive and model forecasts, errors, hit, Brier and Theil U
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x40'
+      - series: 'stock_market_seconds_to_close{job="stock_core",instance="se"}'
+        values: '22500-60x40'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1000+1x40'
+      - series: 'up{job="stock_quantlab",instance="ql"}'
+        values: '1x40'
+      - series: 'stock_prediction_prob_up{job="stock_quantlab",instance="ql",exchange="NSE",symbol="INFY",model="ar1",horizon="15m"}'
+        values: '0.8x40'
+      - series: 'stock_prediction_expected_return_percent{job="stock_quantlab",instance="ql",exchange="NSE",symbol="INFY",model="ar1",horizon="15m"}'
+        values: '1x40'
+      - series: 'stock_prediction_last_run_timestamp_seconds{job="stock_quantlab",instance="ql",model="ar1"}'
+        values: '0+60x40'
+    promql_expr_test:
+      - expr: stock:prob_up:ratio
+        eval_time: 5m
+        exp_samples:
+          - labels: 'stock:prob_up:ratio{exchange="NSE",symbol="INFY",model="ar1",horizon="15m"}'
+            value: 0.8
+      - expr: stock:forecast:price{model="naive",horizon="1m"}
+        eval_time: 5m
+        exp_samples:
+          - labels: 'stock:forecast:price{exchange="NSE",symbol="INFY",model="naive",horizon="1m"}'
+            value: 1005
+      - expr: abs(stock:forecast:price{model="ar1"} - 1015.05) < bool 1e-9
+        eval_time: 5m
+        exp_samples:
+          - labels: '{exchange="NSE",symbol="INFY",model="ar1",horizon="15m"}'
+            value: 1
+      # (1010 - 1009) / 1010 * 100
+      - expr: abs(stock:forecast_error:percent{model="naive",horizon="1m"} - 100 / 1010) < bool 1e-9
+        eval_time: 10m
+        exp_samples:
+          - labels: '{exchange="NSE",symbol="INFY",model="naive",horizon="1m"}'
+            value: 1
+      # Before the first 15 minutes of the session no 15m forecast is scored.
+      - expr: stock:forecast_error:percent{horizon="15m"}
+        eval_time: 14m
+        exp_samples: []
+      # (1030 - 1015 * 1.01) / 1030 * 100
+      - expr: abs(stock:forecast_error:percent{model="ar1",horizon="15m"} - (1030 - 1025.15) / 1030 * 100) < bool 1e-9
+        eval_time: 30m
+        exp_samples:
+          - labels: '{exchange="NSE",symbol="INFY",model="ar1",horizon="15m"}'
+            value: 1
+      - expr: stock:forecast_direction_hit:bool
+        eval_time: 30m
+        exp_samples:
+          - labels: 'stock:forecast_direction_hit:bool{exchange="NSE",symbol="INFY",model="ar1",horizon="15m"}'
+            value: 1
+      - expr: abs(stock:prob_brier:ratio - 0.04) < bool 1e-12
+        eval_time: 30m
+        exp_samples:
+          - labels: '{exchange="NSE",symbol="INFY",model="ar1",horizon="15m"}'
+            value: 1
+      # ar1 errors ~0.5% vs naive ~1.5%: Theil U about 1/3.
+      - expr: (stock:forecast_theil_u_1d:ratio > bool 0.2) * (stock:forecast_theil_u_1d:ratio < bool 0.5)
+        eval_time: 30m
+        exp_samples:
+          - labels: '{exchange="NSE",symbol="INFY",model="ar1",horizon="15m"}'
+            value: 1
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: StockPredictorStale
+        exp_alerts: []
+
+  - name: stale predictor and a model worse than the naive forecast
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x80'
+      - series: 'up{job="stock_quantlab",instance="ql"}'
+        values: '1x80'
+      - series: 'stock_prediction_last_run_timestamp_seconds{job="stock_quantlab",instance="ql",model="ar1"}'
+        values: '0x80'
+      - series: 'stock:forecast_rmse_1d:percent{exchange="NSE",symbol="INFY",model="naive",horizon="15m"}'
+        values: '1x80'
+      - series: 'stock:forecast_rmse_1d:percent{exchange="NSE",symbol="INFY",model="ar1",horizon="15m"}'
+        values: '1.5x80'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: StockPredictorStale
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: StockPredictorStale
+        exp_alerts:
+          - exp_labels: {model: ar1, severity: warning, category: prediction, layer: incident, incident: predictor_stale}
+            exp_annotations:
+              summary: Quant Lab model ar1 is stale
+              description: The Quant Lab is down or model ar1 has not completed a run for more than 5 minutes; forecasts and option analytics are frozen.
+      - eval_time: 59m
+        alertname: PredictionModelUnderperformsNaive
+        exp_alerts: []
+      - eval_time: 61m
+        alertname: PredictionModelUnderperformsNaive
+        exp_alerts:
+          - exp_labels: {model: ar1, horizon: 15m, severity: warning, category: prediction, layer: incident, incident: model_underperforms}
+            exp_annotations:
+              summary: ar1 (15m) is worse than the naive forecast (median Theil U 1.50)
+              description: Over the last day the median RMSE ratio to the random walk is above 1; treat this model's forecasts as noise.

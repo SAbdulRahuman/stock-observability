@@ -2925,3 +2925,185 @@ kpis:
     method: open-interest change vs the previous post-close snapshot
     alertable: true
     dashboard_default: true
+
+  # --- Predictive intelligence, Prometheus side (nse_predict, Release 5) -----------------------
+  - name: stock:feature:value
+    kind: prediction
+    release: R5
+    formula: "model input per feature label (returns, Wilder RSI, MACD histogram, %B, z-score, R2, RVOL, OBI, WOBI, volume delta, VWAP deviation, abnormal return)"
+    inputs: [stock:return_1m:percent, stock:rsi_wilder_14m:index, stock:macd_histogram:price, stock:price_zscore_20m:sigma, stock:relative_volume:ratio, stock:volume_delta_1h:ratio]
+    rule_file: nse_predict.rules.yml
+    frequency: 1m
+    scope: core
+    unit: value
+
+  - name: stock:feature:zscore
+    kind: prediction
+    release: R5
+    formula: "(feature - mean over 1 day) / stddev over 1 day"
+    inputs: [stock:feature:value]
+    rule_file: nse_predict.rules.yml
+    frequency: 1m
+    scope: core
+    unit: sigma
+
+  - name: stock:prob_up:ratio
+    kind: prediction
+    release: R5
+    formula: "P(up over horizon) from the Quant Lab; labels model, horizon"
+    inputs: [stock_prediction_prob_up]
+    rule_file: nse_predict.rules.yml
+    frequency: 15s
+    scope: core
+    unit: ratio
+
+  - name: stock:model_return:percent
+    kind: prediction
+    release: R5
+    formula: "Quant Lab expected return over the horizon; labels model, horizon"
+    inputs: [stock_prediction_expected_return_percent]
+    rule_file: nse_predict.rules.yml
+    frequency: 15s
+    scope: core
+    unit: percent
+
+  - name: stock:vol_forecast:percent
+    kind: prediction
+    release: R5
+    formula: "Quant Lab expected return stddev over the horizon; labels model, horizon"
+    inputs: [stock_prediction_volatility_percent]
+    rule_file: nse_predict.rules.yml
+    frequency: 15s
+    scope: core
+    unit: percent
+
+  - name: underlying:max_pain_distance:percent
+    kind: prediction
+    release: R5
+    formula: "(spot / Quant Lab max pain strike - 1) * 100 per underlying and expiry"
+    inputs: [underlying:spot:price, underlying_max_pain_strike_price]
+    rule_file: nse_predict.rules.yml
+    frequency: 15s
+    scope: market
+    unit: percent
+
+  - name: stock:forecast:price
+    kind: prediction
+    release: R5
+    formula: "naive forecast C (horizons 1m, 15m) and C * (1 + model return / 100) per model"
+    inputs: [stock_last_price, stock:model_return:percent]
+    rule_file: nse_predict.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+
+  - name: stock:forecast_error:percent
+    kind: prediction
+    release: R5
+    formula: "(C - F[h ago]) / C * 100, scored inside the session; label horizon"
+    inputs: [stock:forecast:price, stock_last_price]
+    rule_file: nse_predict.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent
+
+  - name: stock:forecast_squared_error:percent2
+    kind: helper
+    release: R5
+    formula: "forecast error squared"
+    inputs: [stock:forecast_error:percent]
+    rule_file: nse_predict.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent2
+
+  - name: stock:forecast_direction_hit:bool
+    kind: prediction
+    release: R5
+    formula: "sign(C - C[15m ago]) == sign(F[15m ago] - C[15m ago]), models except naive"
+    inputs: [stock:forecast:price, stock_last_price]
+    rule_file: nse_predict.rules.yml
+    frequency: 1m
+    scope: core
+    unit: bool
+
+  - name: stock:price_up_15m:bool
+    kind: helper
+    release: R5
+    formula: "1 if C > C[15m ago] inside the session"
+    inputs: [stock_last_price]
+    rule_file: nse_predict.rules.yml
+    frequency: 1m
+    scope: core
+    unit: bool
+
+  - name: stock:prob_brier:ratio
+    kind: prediction
+    release: R5
+    formula: "(P(up)[15m ago] - 1{C > C[15m ago]})^2"
+    inputs: [stock:prob_up:ratio, stock:price_up_15m:bool]
+    rule_file: nse_predict.rules.yml
+    frequency: 1m
+    scope: core
+    unit: ratio
+
+  - name: stock:forecast_rmse_1d:percent
+    kind: prediction
+    release: R5
+    formula: "sqrt(mean squared forecast error over 1 day)"
+    inputs: [stock:forecast_squared_error:percent2]
+    rule_file: nse_predict.rules.yml
+    frequency: 15m
+    scope: core
+    unit: percent
+
+  - name: stock:forecast_theil_u_1d:ratio
+    kind: prediction
+    release: R5
+    formula: "RMSE(model) / RMSE(naive) over 1 day (< 1 beats the random walk)"
+    inputs: [stock:forecast_rmse_1d:percent]
+    rule_file: nse_predict.rules.yml
+    frequency: 15m
+    scope: core
+    unit: ratio
+
+  - name: stock:forecast_hit_rate_1d:ratio
+    kind: prediction
+    release: R5
+    formula: "share of direction hits over 1 day"
+    inputs: [stock:forecast_direction_hit:bool]
+    rule_file: nse_predict.rules.yml
+    frequency: 15m
+    scope: core
+    unit: ratio
+
+  - name: stock:prob_skill_1d:ratio
+    kind: prediction
+    release: R5
+    formula: "1 - Brier / (base (1 - base)) over 1 day, base = share of up windows"
+    inputs: [stock:prob_brier:ratio, stock:price_up_15m:bool]
+    rule_file: nse_predict.rules.yml
+    frequency: 15m
+    scope: core
+    unit: ratio
+
+  - name: model:theil_u_1d:median
+    kind: prediction
+    release: R5
+    formula: "median Theil U across instruments by model and horizon"
+    inputs: [stock:forecast_theil_u_1d:ratio]
+    rule_file: nse_predict.rules.yml
+    frequency: 15m
+    scope: market
+    unit: ratio
+
+  - name: model:prob_skill_1d:median
+    kind: prediction
+    release: R5
+    formula: "median Brier skill across instruments by model and horizon"
+    inputs: [stock:prob_skill_1d:ratio]
+    rule_file: nse_predict.rules.yml
+    frequency: 15m
+    scope: market
+    unit: ratio
+

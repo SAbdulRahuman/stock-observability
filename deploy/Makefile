@@ -59,7 +59,11 @@ check-reference:
 		|| { echo "$$f has no generator in kpiref.py"; exit 1; }; done
 
 .PHONY: test
-test: test-rules test-routes test-inhibit
+test: test-rules test-routes test-inhibit test-quantlab
+
+.PHONY: test-quantlab
+test-quantlab:
+	cd quantlab && python3 -m unittest -q
 
 .PHONY: test-rules
 test-rules: bin/promtool

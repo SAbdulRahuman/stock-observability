@@ -60,6 +60,13 @@ data:
         metrics_path: /alertmanager/metrics
         static_configs:
           - targets: ["{{ $am }}:9093"]
+      {{- if .Values.quantlab.enabled }}
+
+      - job_name: stock_quantlab
+        scrape_interval: 30s
+        static_configs:
+          - targets: ["{{ include "so.fullname" (list . "quantlab") }}:9108"]
+      {{- end }}
 ---
 apiVersion: v1
 kind: ConfigMap

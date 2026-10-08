@@ -1,0 +1,161 @@
+# Predictive intelligence, Prometheus side (proposal §8, revised by §A9, Release 5): feature store,
+# naive benchmark, intake of Quant Lab outputs (§8.3/§8.4 schema), out-of-sample evaluation and
+# staleness. Models run in the Quant Lab (deploy/quantlab), scraped as job stock_quantlab.
+#   error_h   = (C - F[h ago]) / C * 100           RMSE_1d = sqrt(mean error^2 over 1 day)
+#   Theil U   = RMSE_model / RMSE_naive (< 1 beats the random walk)
+#   hit       = sign(C - C[h ago]) == sign(F[h ago] - C[h ago])
+#   Brier     = (P(up)[h ago] - 1{C > C[h ago]})^2  skill = 1 - Brier / (base (1 - base)), base = up share over 1 day
+# Forecasts are scored only inside the session (origin at or after the open).
+groups:
+  - name: nse_predict_features
+    interval: 1m
+    rules:
+      - record: stock:feature:value
+        expr: |
+          (
+              label_replace(stock:return_1m:percent{tier="core", instrument_type="EQ"}, "feature", "return_1m", "", "")
+            or label_replace(stock:return_15m:percent{tier="core", instrument_type="EQ"}, "feature", "return_15m", "", "")
+            or label_replace(stock:rsi_wilder_14m:index{instrument_type="EQ"}, "feature", "rsi_14m", "", "")
+            or label_replace(stock:macd_histogram:price{instrument_type="EQ"}, "feature", "macd_histogram", "", "")
+            or label_replace(stock:bollinger_percent_b_20m:ratio{instrument_type="EQ"}, "feature", "bollinger_percent_b_20m", "", "")
+            or label_replace(stock:price_zscore_20m:sigma{instrument_type="EQ"}, "feature", "price_zscore_20m", "", "")
+            or label_replace(stock:trend_r2_30m:ratio{instrument_type="EQ"}, "feature", "trend_r2_30m", "", "")
+            or label_replace(stock:relative_volume:ratio, "feature", "relative_volume", "", "")
+            or label_replace(stock_orderbook_imbalance_ratio{tier="core", instrument_type="EQ"}, "feature", "orderbook_imbalance", "", "")
+            or label_replace(stock:orderbook_weighted_imbalance:ratio{instrument_type="EQ"}, "feature", "weighted_imbalance", "", "")
+            or label_replace(stock:volume_delta_1h:ratio{instrument_type="EQ"}, "feature", "volume_delta_1h", "", "")
+            or label_replace(stock:vwap_deviation:percent{tier="core", instrument_type="EQ"}, "feature", "vwap_deviation", "", "")
+            or label_replace(stock:abnormal_return_15m:percent, "feature", "abnormal_return_15m", "", "")
+          )
+          and on() stock_market_open == 1
+      - record: stock:feature:zscore
+        expr: |
+          (stock:feature:value - avg_over_time(stock:feature:value[1d]))
+          / (stddev_over_time(stock:feature:value[1d]) > 0)
+
+  - name: nse_predict_intake
+    interval: 15s
+    rules:
+      - record: stock:prob_up:ratio
+        expr: max by (exchange, symbol, model, horizon) (stock_prediction_prob_up)
+      - record: stock:model_return:percent
+        expr: max by (exchange, symbol, model, horizon) (stock_prediction_expected_return_percent)
+      - record: stock:vol_forecast:percent
+        expr: max by (exchange, symbol, model, horizon) (stock_prediction_volatility_percent)
+      - record: underlying:max_pain_distance:percent
+        expr: (underlying:spot:price / on(underlying) group_right() (underlying_max_pain_strike_price > 0) - 1) * 100
+
+  - name: nse_predict_forecasts
+    interval: 1m
+    rules:
+      - record: stock:forecast:price
+        labels: {model: naive, horizon: 1m}
+        expr: max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"}) and on() stock_market_open == 1
+      - record: stock:forecast:price
+        labels: {model: naive, horizon: 15m}
+        expr: max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"}) and on() stock_market_open == 1
+      - record: stock:forecast:price
+        expr: |
+          max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"})
+          * on(exchange, symbol) group_right() (1 + stock:model_return:percent / 100)
+          and on() stock_market_open == 1
+
+  - name: nse_predict_evaluation
+    interval: 1m
+    rules:
+      - record: stock:forecast_error:percent
+        labels: {horizon: 1m}
+        expr: |
+          (
+              max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"})
+            - on(exchange, symbol) group_right() (stock:forecast:price{horizon="1m"} offset 1m)
+          )
+          / on(exchange, symbol) group_left() max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"}) * 100
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close < 22440
+      - record: stock:forecast_error:percent
+        labels: {horizon: 15m}
+        expr: |
+          (
+              max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"})
+            - on(exchange, symbol) group_right() (stock:forecast:price{horizon="15m"} offset 15m)
+          )
+          / on(exchange, symbol) group_left() max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"}) * 100
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close < 21600
+      - record: stock:forecast_squared_error:percent2
+        expr: stock:forecast_error:percent ^ 2
+      - record: stock:forecast_direction_hit:bool
+        labels: {horizon: 15m}
+        expr: |
+          sgn(max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"}) - max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"} offset 15m))
+          == bool on(exchange, symbol) group_right()
+          sgn(
+              stock:forecast:price{horizon="15m", model!="naive"} offset 15m
+            - on(exchange, symbol) group_left() max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"} offset 15m)
+          )
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close < 21600
+      - record: stock:price_up_15m:bool
+        expr: |
+          max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"}) > bool max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"} offset 15m)
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close < 21600
+      - record: stock:prob_brier:ratio
+        labels: {horizon: 15m}
+        expr: |
+          (stock:prob_up:ratio{horizon="15m"} offset 15m - on(exchange, symbol) group_left() stock:price_up_15m:bool) ^ 2
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close < 21600
+
+  - name: nse_predict_scores
+    interval: 15m
+    rules:
+      - record: stock:forecast_rmse_1d:percent
+        expr: sqrt(avg_over_time(stock:forecast_squared_error:percent2[1d]))
+      - record: stock:forecast_theil_u_1d:ratio
+        expr: |
+          stock:forecast_rmse_1d:percent{model!="naive"}
+          / ignoring(model) group_left() (stock:forecast_rmse_1d:percent{model="naive"} > 0)
+      - record: stock:forecast_hit_rate_1d:ratio
+        expr: avg_over_time(stock:forecast_direction_hit:bool[1d])
+      - record: stock:prob_skill_1d:ratio
+        expr: |
+          1 - avg_over_time(stock:prob_brier:ratio[1d])
+            / on(exchange, symbol) group_left() (
+                (avg_over_time(stock:price_up_15m:bool[1d]) * (1 - avg_over_time(stock:price_up_15m:bool[1d]))) > 0
+              )
+      - record: model:theil_u_1d:median
+        expr: quantile by (model, horizon) (0.5, stock:forecast_theil_u_1d:ratio)
+      - record: model:prob_skill_1d:median
+        expr: quantile by (model, horizon) (0.5, stock:prob_skill_1d:ratio)
+
+  - name: nse_predict_alerts
+    interval: 1m
+    rules:
+      - alert: StockPredictorStale
+        expr: |
+          (
+              label_replace(up{job="stock_quantlab"} == 0, "model", "all", "", "")
+            or time() - max by (model) (stock_prediction_last_run_timestamp_seconds) > 300
+          )
+          and on() stock_market_open == 1
+        for: 2m
+        labels: {severity: warning, category: prediction, layer: incident, incident: predictor_stale}
+        annotations:
+          summary: "Quant Lab model {{ $labels.model }} is stale"
+          description: "The Quant Lab is down or model {{ $labels.model }} has not completed a run for more than 5 minutes; forecasts and option analytics are frozen."
+      - alert: StockPredictorSlow
+        expr: max by (model) (stock_prediction_inference_duration_seconds) > 30
+        for: 10m
+        labels: {severity: info, category: prediction, layer: incident, incident: predictor_slow}
+        annotations:
+          summary: "Quant Lab model {{ $labels.model }} takes {{ $value | printf \"%.0f\" }}s per run"
+          description: "A Quant Lab run takes more than 30 seconds; the 60-second refresh falls behind."
+      - alert: PredictionModelUnderperformsNaive
+        expr: model:theil_u_1d:median > 1
+        for: 1h
+        labels: {severity: warning, category: prediction, layer: incident, incident: model_underperforms}
+        annotations:
+          summary: "{{ $labels.model }} ({{ $labels.horizon }}) is worse than the naive forecast (median Theil U {{ $value | printf \"%.2f\" }})"
+          description: "Over the last day the median RMSE ratio to the random walk is above 1; treat this model's forecasts as noise."
