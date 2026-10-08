@@ -10,6 +10,7 @@ cases=(
   'stock-infra|alertname=KiteSessionInvalid category=infra severity=critical'
   'stock-portfolio|alertname=PortfolioDailyLoss category=portfolio severity=critical'
   'stock-portfolio|alertname=MarginUtilisationHigh category=portfolio severity=warning segment=equity'
+  'stock-portfolio|alertname=PortfolioVaRBreach category=portfolio severity=warning layer=incident incident=portfolio_var_breach'
   'stock-critical|alertname=StockPriceSharpDrop category=price severity=critical exchange=NSE symbol=INFY'
   'stock-critical|alertname=StockCircuitHit category=circuit severity=critical exchange=NSE symbol=INFY'
   'stock-critical|alertname=IndexSharpFall category=market severity=critical exchange=NSE symbol="NIFTY 50"'

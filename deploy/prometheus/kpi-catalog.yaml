@@ -2352,3 +2352,236 @@ kpis:
     scope: market
     unit: ratio
     range: {min: 0, max: 1}
+
+  # --- Risk intelligence: snapshots and daily risk (nse_eod_snapshot, nse_risk, Release 3) ------
+  - name: stock:session_close:price
+    kind: snapshot
+    release: R3
+    formula: "C at post_close"
+    inputs: [stock_last_price, stock_market_phase]
+    rule_file: nse_eod_snapshot.rules.yml
+    frequency: 30m
+    scope: core
+    unit: price
+
+  - name: stock:session_return_x_nifty:ratio
+    kind: snapshot
+    release: R3
+    formula: "ln(C / PC) * ln(NIFTY C / NIFTY PC) at post_close, EQ"
+    inputs: [stock_last_price, stock_previous_close_price, stock_market_phase]
+    rule_file: nse_eod_snapshot.rules.yml
+    frequency: 30m
+    scope: core
+    unit: ratio
+
+  - name: stock:session_drawdown:percent
+    kind: snapshot
+    release: R3
+    formula: "(close / max close over 90 days - 1) * 100 at post_close"
+    inputs: [stock:session_close:price]
+    rule_file: nse_eod_snapshot.rules.yml
+    frequency: 30m
+    scope: core
+    unit: percent
+
+  - name: portfolio:session_return:ratio
+    kind: snapshot
+    release: R3
+    formula: "day_change / (value - day_change) at post_close"
+    inputs: [portfolio:day_change:sum, portfolio:holding_value:sum, stock_market_phase]
+    rule_file: nse_eod_snapshot.rules.yml
+    frequency: 30m
+    scope: portfolio
+    unit: ratio
+
+  - name: portfolio:session_downside_sq:ratio
+    kind: snapshot
+    release: R3
+    formula: "min(session return, 0)^2"
+    inputs: [portfolio:session_return:ratio]
+    rule_file: nse_eod_snapshot.rules.yml
+    frequency: 30m
+    scope: portfolio
+    unit: ratio
+
+  - name: stock:var_95_1d:percent
+    kind: kpi
+    family: risk
+    level: risk_intelligence
+    capability: risk
+    release: R3
+    formula: "-quantile_0.05(ln C/PC over 90 days) * 100, >= 20 sessions (loss, positive)"
+    inputs: [stock:session_log_return:ratio]
+    rule_file: nse_risk.rules.yml
+    frequency: 30m
+    scope: core
+    unit: percent
+    warmup: 0s
+    warmup_sessions: 20
+    quality: exact
+    method: historical simulation, linear interpolation between order statistics
+    limitation: "~60 sessions of retention: the 5% tail rests on about 3 observations"
+    dashboard_default: true
+
+  - name: stock:cvar_95_1d:percent
+    kind: kpi
+    family: risk
+    level: risk_intelligence
+    capability: risk
+    release: R3
+    formula: "(2.063 sigma - mu) * 100 of ln C/PC over 90 days, >= 20 sessions (loss, positive)"
+    inputs: [stock:session_log_return:ratio]
+    rule_file: nse_risk.rules.yml
+    frequency: 30m
+    scope: core
+    unit: percent
+    warmup: 0s
+    warmup_sessions: 20
+    quality: approximation
+    method: parametric normal expected shortfall
+    limitation: "historical CVaR needs a moving-threshold filter PromQL lacks; fat tails are understated"
+
+  - name: stock:max_drawdown_60d:percent
+    kind: kpi
+    family: risk
+    level: risk_intelligence
+    capability: risk
+    release: R3
+    formula: "min(session drawdown from the 90-day peak close) over 90 days"
+    inputs: [stock:session_drawdown:percent]
+    rule_file: nse_risk.rules.yml
+    frequency: 30m
+    scope: core
+    unit: percent
+    warmup: 0s
+    warmup_sessions: 1
+    quality: exact
+    method: close-to-close drawdown within retention (~60 sessions)
+    dashboard_default: true
+
+  - name: stock:beta_nifty_20d:ratio
+    kind: kpi
+    family: risk
+    level: risk_intelligence
+    capability: risk
+    release: R3
+    formula: "Cov(r, r_NIFTY) / Var(r_NIFTY) of daily log returns over 28 days, >= 15 sessions"
+    inputs: [stock:session_return_x_nifty:ratio, stock:session_log_return:ratio]
+    rule_file: nse_risk.rules.yml
+    frequency: 30m
+    scope: core
+    unit: ratio
+    warmup: 0s
+    warmup_sessions: 15
+    quality: exact
+    method: E[XY] - E[X]E[Y] over population variance
+    dashboard_default: true
+
+  - name: stock:alpha_20d:percent
+    kind: kpi
+    family: risk
+    level: risk_intelligence
+    capability: risk
+    release: R3
+    formula: "252 * (mean r - R_f/252 - beta (mean r_NIFTY - R_f/252)) * 100"
+    inputs: [stock:session_log_return:ratio, stock:beta_nifty_20d:ratio, stock_risk_free_rate_ratio]
+    rule_file: nse_risk.rules.yml
+    frequency: 30m
+    scope: core
+    unit: percent
+    warmup: 0s
+    warmup_sessions: 15
+    quality: approximation
+    method: annualised Jensen alpha on daily log returns
+    limitation: "R_f is a manually updated textfile value (stock_risk_free_rate_ratio)"
+
+  - name: portfolio:day_return:percent
+    kind: kpi
+    family: risk
+    level: risk_intelligence
+    capability: portfolio
+    release: R3
+    formula: "day_change / (value - day_change) * 100"
+    inputs: [portfolio:day_change:sum, portfolio:holding_value:sum]
+    rule_file: nse_risk.rules.yml
+    frequency: 15s
+    scope: portfolio
+    unit: percent
+    warmup: 0s
+    quality: exact
+    method: value-weighted holdings return vs the previous close
+    alertable: true
+    dashboard_default: true
+
+  - name: portfolio:volatility_20d:percent
+    kind: kpi
+    family: risk
+    level: risk_intelligence
+    capability: portfolio
+    release: R3
+    formula: "stddev(portfolio session return over 28 days) * sqrt(252) * 100, >= 10 sessions"
+    inputs: [portfolio:session_return:ratio]
+    rule_file: nse_risk.rules.yml
+    frequency: 30m
+    scope: portfolio
+    unit: percent
+    warmup: 0s
+    warmup_sessions: 10
+    quality: exact
+    method: stddev of the portfolio return series (no covariance matrix needed)
+    dashboard_default: true
+
+  - name: portfolio:sharpe_60d:ratio
+    kind: kpi
+    family: risk
+    level: risk_intelligence
+    capability: portfolio
+    release: R3
+    formula: "(mean r - R_f/252) / stddev r * sqrt(252) over 90 days, >= 20 sessions"
+    inputs: [portfolio:session_return:ratio, stock_risk_free_rate_ratio]
+    rule_file: nse_risk.rules.yml
+    frequency: 30m
+    scope: portfolio
+    unit: ratio
+    warmup: 0s
+    warmup_sessions: 20
+    quality: exact
+    method: annualised Sharpe ratio of daily portfolio returns
+    dashboard_default: true
+
+  - name: portfolio:sortino_60d:ratio
+    kind: kpi
+    family: risk
+    level: risk_intelligence
+    capability: portfolio
+    release: R3
+    formula: "(mean r - R_f/252) / sqrt(mean min(r, 0)^2) * sqrt(252) over 90 days, >= 20 sessions"
+    inputs: [portfolio:session_return:ratio, portfolio:session_downside_sq:ratio, stock_risk_free_rate_ratio]
+    rule_file: nse_risk.rules.yml
+    frequency: 30m
+    scope: portfolio
+    unit: ratio
+    warmup: 0s
+    warmup_sessions: 20
+    quality: exact
+    method: annualised Sortino ratio, downside deviation vs 0
+    dashboard_default: true
+
+  - name: portfolio:var_95_1d:percent
+    kind: kpi
+    family: risk
+    level: risk_intelligence
+    capability: portfolio
+    release: R3
+    formula: "-quantile_0.05(portfolio session return over 90 days) * 100, >= 20 sessions"
+    inputs: [portfolio:session_return:ratio]
+    rule_file: nse_risk.rules.yml
+    frequency: 30m
+    scope: portfolio
+    unit: percent
+    warmup: 0s
+    warmup_sessions: 20
+    quality: exact
+    method: historical simulation on today's holdings' daily returns
+    alertable: true
+    dashboard_default: true

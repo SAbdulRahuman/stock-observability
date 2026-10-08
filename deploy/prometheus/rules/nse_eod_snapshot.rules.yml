@@ -35,3 +35,21 @@ groups:
           and on() stock_market_phase{phase="post_close"} == 1
       - record: market:session_dispersion:percent
         expr: market:dispersion:percent and on() stock_market_phase{phase="post_close"} == 1
+      # Release 3 additions (§7.0): close, ln(C/PC) x ln(NIFTY C/PC), drawdown from the 90-day peak close
+      # (reads the close recorded just above), portfolio return and its downside square.
+      - record: stock:session_close:price
+        expr: stock_last_price{tier="core"} and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:session_return_x_nifty:ratio
+        expr: |
+          ln(stock_last_price{tier="core", instrument_type="EQ"} / (stock_previous_close_price{tier="core", instrument_type="EQ"} > 0))
+          * on() group_left()
+            ln(max(stock_last_price{symbol="NIFTY 50"}) / max(stock_previous_close_price{symbol="NIFTY 50"} > 0))
+          and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:session_drawdown:percent
+        expr: (stock:session_close:price / max_over_time(stock:session_close:price[90d]) - 1) * 100
+      - record: portfolio:session_return:ratio
+        expr: |
+          portfolio:day_change:sum / ((portfolio:holding_value:sum - portfolio:day_change:sum) > 0)
+          and on() stock_market_phase{phase="post_close"} == 1
+      - record: portfolio:session_downside_sq:ratio
+        expr: clamp_max(portfolio:session_return:ratio, 0) ^ 2

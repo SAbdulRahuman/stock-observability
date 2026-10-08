@@ -1,0 +1,75 @@
+# Risk intelligence (proposal §7.8, Release 3). Daily statistics read the EOD snapshots (one sample
+# per session; 90-day retention caps them at ~60 sessions). Losses are positive numbers.
+#   VaR 95% 1d   = -quantile_0.05(ln(C/PC)) * 100                (historical, >= 20 sessions)
+#   CVaR 95% 1d  = (2.063 sigma - mu) * 100                       (parametric normal, >= 20 sessions)
+#   beta 20d     = Cov(r, r_NIFTY) / Var(r_NIFTY) over 28 days    (>= 15 sessions)
+#   alpha 20d    = 252 * (mean r - R_f/252 - beta (mean r_NIFTY - R_f/252)) * 100, R_f = stock_risk_free_rate_ratio
+#   portfolio    = day_change / (value - day_change); Sharpe/Sortino annualised with sqrt(252)
+groups:
+  - name: nse_risk_daily
+    interval: 30m
+    rules:
+      - record: stock:var_95_1d:percent
+        expr: |
+          -100 * quantile_over_time(0.05, stock:session_log_return:ratio{instrument_type="EQ"}[90d])
+          and count_over_time(stock:session_log_return:ratio{instrument_type="EQ"}[90d]) >= 20
+      - record: stock:cvar_95_1d:percent
+        expr: |
+          100 * (
+              2.063 * stddev_over_time(stock:session_log_return:ratio{instrument_type="EQ"}[90d])
+            - avg_over_time(stock:session_log_return:ratio{instrument_type="EQ"}[90d])
+          )
+          and count_over_time(stock:session_log_return:ratio{instrument_type="EQ"}[90d]) >= 20
+      - record: stock:max_drawdown_60d:percent
+        expr: min_over_time(stock:session_drawdown:percent{instrument_type="EQ"}[90d])
+      - record: stock:beta_nifty_20d:ratio
+        expr: |
+          (
+              avg_over_time(stock:session_return_x_nifty:ratio[28d])
+            - avg_over_time(stock:session_log_return:ratio{instrument_type="EQ"}[28d])
+              * on() group_left() avg_over_time(stock:session_log_return:ratio{symbol="NIFTY 50"}[28d])
+          )
+          / on() group_left() (stdvar_over_time(stock:session_log_return:ratio{symbol="NIFTY 50"}[28d]) > 0)
+          and count_over_time(stock:session_return_x_nifty:ratio[28d]) >= 15
+      - record: stock:alpha_20d:percent
+        expr: |
+          252 * 100 * (
+              avg_over_time(stock:session_log_return:ratio{instrument_type="EQ"}[28d])
+            - on() group_left() (max(stock_risk_free_rate_ratio) / 252)
+            - stock:beta_nifty_20d:ratio
+              * on() group_left() (avg_over_time(stock:session_log_return:ratio{symbol="NIFTY 50"}[28d]) - on() max(stock_risk_free_rate_ratio) / 252)
+          )
+
+      - record: portfolio:volatility_20d:percent
+        expr: |
+          stddev_over_time(portfolio:session_return:ratio[28d]) * 15.874507866387544 * 100
+          and count_over_time(portfolio:session_return:ratio[28d]) >= 10
+      - record: portfolio:sharpe_60d:ratio
+        expr: |
+          (avg_over_time(portfolio:session_return:ratio[90d]) - on() max(stock_risk_free_rate_ratio) / 252)
+          / (stddev_over_time(portfolio:session_return:ratio[90d]) > 0) * 15.874507866387544
+          and count_over_time(portfolio:session_return:ratio[90d]) >= 20
+      - record: portfolio:sortino_60d:ratio
+        expr: |
+          (avg_over_time(portfolio:session_return:ratio[90d]) - on() max(stock_risk_free_rate_ratio) / 252)
+          / (sqrt(avg_over_time(portfolio:session_downside_sq:ratio[90d])) > 0) * 15.874507866387544
+          and count_over_time(portfolio:session_return:ratio[90d]) >= 20
+      - record: portfolio:var_95_1d:percent
+        expr: |
+          -100 * quantile_over_time(0.05, portfolio:session_return:ratio[90d])
+          and count_over_time(portfolio:session_return:ratio[90d]) >= 20
+
+  - name: nse_risk_portfolio
+    interval: 15s
+    rules:
+      - record: portfolio:day_return:percent
+        expr: portfolio:day_change:sum / ((portfolio:holding_value:sum - portfolio:day_change:sum) > 0) * 100
+      - alert: PortfolioVaRBreach
+        expr: |
+          -portfolio:day_return:percent > portfolio:var_95_1d:percent
+          and on() stock_market_open == 1
+        for: 5m
+        labels: {severity: warning, category: portfolio, layer: incident, incident: portfolio_var_breach}
+        annotations:
+          summary: "Portfolio is down {{ $value | printf \"%.2f\" }}% today, beyond its 1-day VaR(95)"
+          description: "Today's portfolio loss exceeds the historical 95% one-day value at risk of the last 90 days."

@@ -32,6 +32,7 @@ GROUP_ORDER = {
     "flow": ["nse_order_flow", "nse_order_flow_depth", "nse_order_flow_1m", "nse_order_flow_alerts"],
     "regime": ["nse_regimes", "nse_regimes_stock", "nse_regimes_alerts"],
     "effectiveness": ["nse_effectiveness", "nse_effectiveness_5d"],
+    "risk": ["nse_eod_snapshot", "nse_risk_daily", "nse_risk_portfolio"],
     "osc": ["nse_bars", "nse_momentum", "nse_momentum_wilder", "nse_momentum_bars", "nse_momentum_alerts"],
     "ma": ["stock_fast", "stock_slow", "portfolio", "nse_trend", "nse_trend_regression", "nse_trend_alerts", "nse_moving_averages"],
 }
@@ -1232,6 +1233,70 @@ def family_effectiveness():
     ], 60
 
 
+# --- nse_risk.rules.yml (daily) -----------------------------------------------------------------
+
+SQRT252 = 15.874507866387544
+
+
+def family_risk():
+    """45 days with weekends: VaR/CVaR need 20 sessions, beta/alpha 15 within 28 days."""
+    weekends = [d for d in range(45) if d % 7 in (5, 6)]
+    cal = Calendar(45, holidays=weekends)
+    infy, nifty = instrument("INFY"), instrument("NIFTY 50", sector="Index", itype="INDEX")
+    series, closes, rets = cal.series(), {}, {}
+    for seed, lbl in ((31, infy), (32, nifty)):
+        ext = daily_bars(seed, cal.days + 1)
+        bars, close = ext[:-1], [b[0] for b in ext[1:]]
+        series += [Series("stock_previous_close_price", lbl, SLOT, cal.daily([b[0] for b in bars])),
+                   Series("stock_last_price", lbl, SLOT, cal.daily(close))]
+        closes[lbl["symbol"]] = series[-1].values[::SLOTS_PER_DAY]
+        pcs = series[-2].values[::SLOTS_PER_DAY]
+        rets[lbl["symbol"]] = [math.log(c / p) for c, p in zip(closes[lbl["symbol"]], pcs)]
+    rf = 0.065
+    series.append(Series("stock_risk_free_rate_ratio", CORE, SLOT, constant(rf, cal.n), "%.3f"))
+    rnd = random.Random(33)
+    value = [round(1_000_000 * rnd.uniform(0.9, 1.1), 2) for _ in range(cal.days)]
+    change = [round(v * rnd.gauss(0, 0.012), 2) for v in value]
+    series += [Series("portfolio:holding_value:sum", {}, SLOT, cal.daily(value)),
+               Series("portfolio:day_change:sum", {}, SLOT, cal.daily(change))]
+    rp = [c / (v - c) for c, v in zip(change, value)]
+
+    rs, rn, cs = rets["INFY"], rets["NIFTY 50"], closes["INFY"]
+    checks = []
+    for d in range(1, cal.days):
+        t = cal.t(d, FIRST_OPEN_SLOT + 1)
+        past = lambda days: [p for p in range(d) if cal.trading(p) and t - days * 86400 < cal.t(p, POST_CLOSE_SLOT) <= t]
+        p90, p28 = past(90), past(28)
+        if p90:
+            dd = [(cs[p] / max(cs[q] for q in p90 if q <= p) - 1) * 100 for p in p90]
+            checks.append(Check("stock:max_drawdown_60d:percent", infy, t, min(dd)))
+        for name, lbl, val in (
+                ("stock:var_95_1d:percent", infy, lambda: -100 * quantile(0.05, [rs[p] for p in p90])),
+                ("stock:cvar_95_1d:percent", infy, lambda: 100 * (2.063 * pstdev([rs[p] for p in p90]) - mean([rs[p] for p in p90]))),
+                ("portfolio:var_95_1d:percent", {}, lambda: -100 * quantile(0.05, [rp[p] for p in p90])),
+                ("portfolio:sharpe_60d:ratio", {}, lambda: (mean([rp[p] for p in p90]) - rf / 252) / pstdev([rp[p] for p in p90]) * SQRT252),
+                ("portfolio:sortino_60d:ratio", {}, lambda: (mean([rp[p] for p in p90]) - rf / 252)
+                 / math.sqrt(mean([min(rp[p], 0) ** 2 for p in p90])) * SQRT252)):
+            checks.append(Check(name, lbl, t, val(), rel_tol=1e-8) if len(p90) >= 20 else Absent(name, lbl, t))
+        if len(p28) >= 10:
+            checks.append(Check("portfolio:volatility_20d:percent", {}, t, pstdev([rp[p] for p in p28]) * SQRT252 * 100, rel_tol=1e-8))
+        else:
+            checks.append(Absent("portfolio:volatility_20d:percent", {}, t))
+        if len(p28) < 15:
+            checks.append(Absent("stock:beta_nifty_20d:ratio", infy, t))
+            checks.append(Absent("stock:alpha_20d:percent", infy, t))
+            continue
+        x, y = [rs[p] for p in p28], [rn[p] for p in p28]
+        beta = (mean([a * b for a, b in zip(x, y)]) - mean(x) * mean(y)) / pstdev(y) ** 2
+        checks.append(Check("stock:beta_nifty_20d:ratio", infy, t, beta, rel_tol=1e-6))
+        alpha = 252 * 100 * (mean(x) - rf / 252 - beta * (mean(y) - rf / 252))
+        checks.append(Check("stock:alpha_20d:percent", infy, t, alpha, rel_tol=1e-6))
+    return ["nse_eod_snapshot.rules.yml", "nse_risk.rules.yml"], [
+        test_case("VaR, CVaR, max drawdown, beta, alpha and portfolio volatility/Sharpe/Sortino/VaR over 45 days with weekends",
+                  SLOT, series, checks)
+    ], SLOT
+
+
 FAMILIES = {
     "base": family_base,
     "price_levels": family_price_levels,
@@ -1251,6 +1316,7 @@ FAMILIES = {
     "flow": family_flow,
     "regime": family_regime,
     "effectiveness": family_effectiveness,
+    "risk": family_risk,
 }
 
 

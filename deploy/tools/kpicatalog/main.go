@@ -68,7 +68,7 @@ var enums = map[string][]string{
 	"level":   {"market_health", "sector_intelligence", "stock_intelligence", "risk_intelligence", "derivatives_intelligence", "predictive_intelligence"},
 	"release": {"R1", "R2", "R3", "R4", "R5", "R6"},
 	"quality": {"exact", "approximation", "proxy", "heuristic", "model"},
-	"scope":   {"core", "broad", "all_eq", "market", "sector"},
+	"scope":   {"core", "broad", "all_eq", "market", "sector", "portfolio"},
 }
 
 func main() {

@@ -1,0 +1,3 @@
+# HELP stock_risk_free_rate_ratio Annual risk-free rate (91-day T-bill yield) for alpha, Sharpe and Sortino. Update when the yield moves.
+# TYPE stock_risk_free_rate_ratio gauge
+stock_risk_free_rate_ratio 0.055
