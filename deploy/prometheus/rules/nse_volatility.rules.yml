@@ -89,4 +89,5 @@ groups:
         annotations:
           summary: "{{ $labels.symbol }} day range is {{ $value | printf \"%.1f\" }}x its ATR(14)"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} has a wide-range day (more than 2x its 14-session average true range) on more than 2x relative volume."
+          effectiveness: '{{ with query `alert:forward_return_5d:percent{alertname="StockRangeExpansion",horizon="15m"}` }}Mean 15m return after this alert over the last 5 days: {{ . | first | value | printf "%.2f" }}%{{ else }}No history yet{{ end }}'
           link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"

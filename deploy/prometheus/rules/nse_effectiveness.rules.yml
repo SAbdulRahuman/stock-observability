@@ -1,0 +1,230 @@
+# Effectiveness ledger (proposal §A8, Release 2): what followed signals and stock-level condition
+# alerts over the last 5 days.
+#   activation = first minute a signal is active or an alert fires (stock-level only, symbol set)
+#   outcome    = EQ price change h after the activation (h = 5m, 15m, 1h), counted in the minute
+#                it matures while the market is open (activations within h of the close drop out)
+#   forward return = mean outcome; hit rate = share of outcomes in the direction label
+#                (bullish up, bearish down; absent for neutral signals and undirected alerts)
+# Both need at least 5 outcomes. Alerts are keyed by alertname, direction, band and side.
+groups:
+  - name: nse_effectiveness
+    interval: 1m
+    rules:
+      - record: stock:signal_activation:bool
+        expr: stock:signal_active:bool unless stock:signal_active:bool offset 1m
+      - record: stock:alert_activation:bool
+        expr: |
+          max by (alertname, exchange, symbol, direction, band, side) (
+              ALERTS{layer="condition", alertstate="firing", symbol!=""}
+            unless ALERTS{layer="condition", alertstate="firing"} offset 1m
+          )
+
+      # Signals, per horizon: sum of outcomes, directional hits, number of outcomes.
+      - record: signal:outcome_return_sum:percent
+        labels: {horizon: 5m}
+        expr: |
+          sum by (signal, direction) (
+              (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 5m > 0) - 1) * 100
+            + on(exchange, symbol) group_right() (0 * stock:signal_activation:bool offset 5m)
+          )
+          and on() stock_market_open == 1
+      - record: signal:outcome_hits:count
+        labels: {horizon: 5m}
+        expr: |
+          sum by (signal, direction) (
+              (
+                  (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 5m > 0) - 1) * 100
+                + on(exchange, symbol) group_right() (0 * stock:signal_activation:bool{direction="bullish"} offset 5m)
+              ) > bool 0
+            or
+              (
+                  (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 5m > 0) - 1) * 100
+                + on(exchange, symbol) group_right() (0 * stock:signal_activation:bool{direction="bearish"} offset 5m)
+              ) < bool 0
+          )
+          and on() stock_market_open == 1
+      - record: signal:outcomes:count
+        labels: {horizon: 5m}
+        expr: |
+          count by (signal, direction) (
+              (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 5m > 0) - 1) * 100
+            + on(exchange, symbol) group_right() (0 * stock:signal_activation:bool offset 5m)
+          )
+          and on() stock_market_open == 1
+
+      - record: signal:outcome_return_sum:percent
+        labels: {horizon: 15m}
+        expr: |
+          sum by (signal, direction) (
+              (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 15m > 0) - 1) * 100
+            + on(exchange, symbol) group_right() (0 * stock:signal_activation:bool offset 15m)
+          )
+          and on() stock_market_open == 1
+      - record: signal:outcome_hits:count
+        labels: {horizon: 15m}
+        expr: |
+          sum by (signal, direction) (
+              (
+                  (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 15m > 0) - 1) * 100
+                + on(exchange, symbol) group_right() (0 * stock:signal_activation:bool{direction="bullish"} offset 15m)
+              ) > bool 0
+            or
+              (
+                  (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 15m > 0) - 1) * 100
+                + on(exchange, symbol) group_right() (0 * stock:signal_activation:bool{direction="bearish"} offset 15m)
+              ) < bool 0
+          )
+          and on() stock_market_open == 1
+      - record: signal:outcomes:count
+        labels: {horizon: 15m}
+        expr: |
+          count by (signal, direction) (
+              (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 15m > 0) - 1) * 100
+            + on(exchange, symbol) group_right() (0 * stock:signal_activation:bool offset 15m)
+          )
+          and on() stock_market_open == 1
+
+      - record: signal:outcome_return_sum:percent
+        labels: {horizon: 1h}
+        expr: |
+          sum by (signal, direction) (
+              (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 1h > 0) - 1) * 100
+            + on(exchange, symbol) group_right() (0 * stock:signal_activation:bool offset 1h)
+          )
+          and on() stock_market_open == 1
+      - record: signal:outcome_hits:count
+        labels: {horizon: 1h}
+        expr: |
+          sum by (signal, direction) (
+              (
+                  (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 1h > 0) - 1) * 100
+                + on(exchange, symbol) group_right() (0 * stock:signal_activation:bool{direction="bullish"} offset 1h)
+              ) > bool 0
+            or
+              (
+                  (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 1h > 0) - 1) * 100
+                + on(exchange, symbol) group_right() (0 * stock:signal_activation:bool{direction="bearish"} offset 1h)
+              ) < bool 0
+          )
+          and on() stock_market_open == 1
+      - record: signal:outcomes:count
+        labels: {horizon: 1h}
+        expr: |
+          count by (signal, direction) (
+              (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 1h > 0) - 1) * 100
+            + on(exchange, symbol) group_right() (0 * stock:signal_activation:bool offset 1h)
+          )
+          and on() stock_market_open == 1
+
+      # Condition alerts, same per horizon.
+      - record: alert:outcome_return_sum:percent
+        labels: {horizon: 5m}
+        expr: |
+          sum by (alertname, direction, band, side) (
+              (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 5m > 0) - 1) * 100
+            + on(exchange, symbol) group_right() (0 * stock:alert_activation:bool offset 5m)
+          )
+          and on() stock_market_open == 1
+      - record: alert:outcome_hits:count
+        labels: {horizon: 5m}
+        expr: |
+          sum by (alertname, direction, band, side) (
+              (
+                  (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 5m > 0) - 1) * 100
+                + on(exchange, symbol) group_right() (0 * stock:alert_activation:bool{direction="bullish"} offset 5m)
+              ) > bool 0
+            or
+              (
+                  (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 5m > 0) - 1) * 100
+                + on(exchange, symbol) group_right() (0 * stock:alert_activation:bool{direction="bearish"} offset 5m)
+              ) < bool 0
+          )
+          and on() stock_market_open == 1
+      - record: alert:outcomes:count
+        labels: {horizon: 5m}
+        expr: |
+          count by (alertname, direction, band, side) (
+              (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 5m > 0) - 1) * 100
+            + on(exchange, symbol) group_right() (0 * stock:alert_activation:bool offset 5m)
+          )
+          and on() stock_market_open == 1
+
+      - record: alert:outcome_return_sum:percent
+        labels: {horizon: 15m}
+        expr: |
+          sum by (alertname, direction, band, side) (
+              (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 15m > 0) - 1) * 100
+            + on(exchange, symbol) group_right() (0 * stock:alert_activation:bool offset 15m)
+          )
+          and on() stock_market_open == 1
+      - record: alert:outcome_hits:count
+        labels: {horizon: 15m}
+        expr: |
+          sum by (alertname, direction, band, side) (
+              (
+                  (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 15m > 0) - 1) * 100
+                + on(exchange, symbol) group_right() (0 * stock:alert_activation:bool{direction="bullish"} offset 15m)
+              ) > bool 0
+            or
+              (
+                  (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 15m > 0) - 1) * 100
+                + on(exchange, symbol) group_right() (0 * stock:alert_activation:bool{direction="bearish"} offset 15m)
+              ) < bool 0
+          )
+          and on() stock_market_open == 1
+      - record: alert:outcomes:count
+        labels: {horizon: 15m}
+        expr: |
+          count by (alertname, direction, band, side) (
+              (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 15m > 0) - 1) * 100
+            + on(exchange, symbol) group_right() (0 * stock:alert_activation:bool offset 15m)
+          )
+          and on() stock_market_open == 1
+
+      - record: alert:outcome_return_sum:percent
+        labels: {horizon: 1h}
+        expr: |
+          sum by (alertname, direction, band, side) (
+              (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 1h > 0) - 1) * 100
+            + on(exchange, symbol) group_right() (0 * stock:alert_activation:bool offset 1h)
+          )
+          and on() stock_market_open == 1
+      - record: alert:outcome_hits:count
+        labels: {horizon: 1h}
+        expr: |
+          sum by (alertname, direction, band, side) (
+              (
+                  (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 1h > 0) - 1) * 100
+                + on(exchange, symbol) group_right() (0 * stock:alert_activation:bool{direction="bullish"} offset 1h)
+              ) > bool 0
+            or
+              (
+                  (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 1h > 0) - 1) * 100
+                + on(exchange, symbol) group_right() (0 * stock:alert_activation:bool{direction="bearish"} offset 1h)
+              ) < bool 0
+          )
+          and on() stock_market_open == 1
+      - record: alert:outcomes:count
+        labels: {horizon: 1h}
+        expr: |
+          count by (alertname, direction, band, side) (
+              (stock_last_price{instrument_type="EQ"} / (stock_last_price{instrument_type="EQ"} offset 1h > 0) - 1) * 100
+            + on(exchange, symbol) group_right() (0 * stock:alert_activation:bool offset 1h)
+          )
+          and on() stock_market_open == 1
+
+  - name: nse_effectiveness_5d
+    interval: 15m
+    rules:
+      - record: signal:occurrences_5d:count
+        expr: sum by (signal, direction) (count_over_time(stock:signal_activation:bool[5d]))
+      - record: signal:forward_return_5d:percent
+        expr: sum_over_time(signal:outcome_return_sum:percent[5d]) / (sum_over_time(signal:outcomes:count[5d]) >= 5)
+      - record: signal:hit_rate_5d:ratio
+        expr: sum_over_time(signal:outcome_hits:count[5d]) / (sum_over_time(signal:outcomes:count[5d]) >= 5)
+      - record: alert:occurrences_5d:count
+        expr: sum by (alertname, direction, band, side) (count_over_time(stock:alert_activation:bool[5d]))
+      - record: alert:forward_return_5d:percent
+        expr: sum_over_time(alert:outcome_return_sum:percent[5d]) / (sum_over_time(alert:outcomes:count[5d]) >= 5)
+      - record: alert:hit_rate_5d:ratio
+        expr: sum_over_time(alert:outcome_hits:count[5d]) / (sum_over_time(alert:outcomes:count[5d]) >= 5)

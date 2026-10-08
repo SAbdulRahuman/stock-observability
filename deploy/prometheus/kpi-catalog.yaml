@@ -2209,3 +2209,146 @@ kpis:
     frequency: 1m
     scope: core
     unit: bool
+
+  # --- Effectiveness ledger (nse_effectiveness, Release 2) ---------------------------------------
+  - name: stock:signal_activation:bool
+    kind: helper
+    release: R2
+    formula: "1 in the first minute stock:signal_active:bool holds; labels signal, direction"
+    inputs: [stock:signal_active:bool]
+    rule_file: nse_effectiveness.rules.yml
+    frequency: 1m
+    scope: core
+    unit: bool
+
+  - name: stock:alert_activation:bool
+    kind: helper
+    release: R2
+    formula: "1 in the first minute a stock-level condition alert fires; labels alertname, direction, band, side"
+    inputs: [ALERTS]
+    rule_file: nse_effectiveness.rules.yml
+    frequency: 1m
+    scope: all_eq
+    unit: bool
+
+  - name: signal:outcome_return_sum:percent
+    kind: helper
+    release: R2
+    formula: "sum of EQ returns over h for signal activations h ago (h = 5m, 15m, 1h), market open"
+    inputs: [stock:signal_activation:bool, stock_last_price]
+    rule_file: nse_effectiveness.rules.yml
+    frequency: 1m
+    scope: market
+    unit: percent
+
+  - name: signal:outcome_hits:count
+    kind: helper
+    release: R2
+    formula: "outcomes moving in the signal direction (bullish up, bearish down)"
+    inputs: [stock:signal_activation:bool, stock_last_price]
+    rule_file: nse_effectiveness.rules.yml
+    frequency: 1m
+    scope: market
+    unit: count
+
+  - name: signal:outcomes:count
+    kind: helper
+    release: R2
+    formula: "number of signal activations maturing this minute, per horizon"
+    inputs: [stock:signal_activation:bool, stock_last_price]
+    rule_file: nse_effectiveness.rules.yml
+    frequency: 1m
+    scope: market
+    unit: count
+
+  - name: alert:outcome_return_sum:percent
+    kind: helper
+    release: R2
+    formula: "sum of EQ returns over h for condition-alert activations h ago (h = 5m, 15m, 1h), market open"
+    inputs: [stock:alert_activation:bool, stock_last_price]
+    rule_file: nse_effectiveness.rules.yml
+    frequency: 1m
+    scope: market
+    unit: percent
+
+  - name: alert:outcome_hits:count
+    kind: helper
+    release: R2
+    formula: "outcomes moving in the alert direction (bullish up, bearish down)"
+    inputs: [stock:alert_activation:bool, stock_last_price]
+    rule_file: nse_effectiveness.rules.yml
+    frequency: 1m
+    scope: market
+    unit: count
+
+  - name: alert:outcomes:count
+    kind: helper
+    release: R2
+    formula: "number of condition-alert activations maturing this minute, per horizon"
+    inputs: [stock:alert_activation:bool, stock_last_price]
+    rule_file: nse_effectiveness.rules.yml
+    frequency: 1m
+    scope: market
+    unit: count
+
+  - name: signal:occurrences_5d:count
+    kind: effectiveness
+    release: R2
+    formula: "signal activations over the last 5 days"
+    inputs: [stock:signal_activation:bool]
+    rule_file: nse_effectiveness.rules.yml
+    frequency: 15m
+    scope: market
+    unit: count
+
+  - name: signal:forward_return_5d:percent
+    kind: effectiveness
+    release: R2
+    formula: "mean return h after a signal activation over the last 5 days (>= 5 outcomes); label horizon"
+    inputs: [signal:outcome_return_sum:percent, signal:outcomes:count]
+    rule_file: nse_effectiveness.rules.yml
+    frequency: 15m
+    scope: market
+    unit: percent
+
+  - name: signal:hit_rate_5d:ratio
+    kind: effectiveness
+    release: R2
+    formula: "share of directional signal outcomes in the signal direction over the last 5 days (>= 5 outcomes)"
+    inputs: [signal:outcome_hits:count, signal:outcomes:count]
+    rule_file: nse_effectiveness.rules.yml
+    frequency: 15m
+    scope: market
+    unit: ratio
+    range: {min: 0, max: 1}
+
+  - name: alert:occurrences_5d:count
+    kind: effectiveness
+    release: R2
+    formula: "stock-level condition alert activations over the last 5 days"
+    inputs: [stock:alert_activation:bool]
+    rule_file: nse_effectiveness.rules.yml
+    frequency: 15m
+    scope: market
+    unit: count
+
+  - name: alert:forward_return_5d:percent
+    kind: effectiveness
+    release: R2
+    formula: "mean return h after a condition alert fired over the last 5 days (>= 5 outcomes); label horizon"
+    inputs: [alert:outcome_return_sum:percent, alert:outcomes:count]
+    rule_file: nse_effectiveness.rules.yml
+    frequency: 15m
+    scope: market
+    unit: percent
+
+  - name: alert:hit_rate_5d:ratio
+    kind: effectiveness
+    release: R2
+    formula: "share of directional alert outcomes in the alert direction over the last 5 days (>= 5 outcomes)"
+    inputs: [alert:outcome_hits:count, alert:outcomes:count]
+    rule_file: nse_effectiveness.rules.yml
+    frequency: 15m
+    scope: market
+    unit: ratio
+    range: {min: 0, max: 1}

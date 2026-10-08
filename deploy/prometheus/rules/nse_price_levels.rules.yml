@@ -76,6 +76,7 @@ groups:
         annotations:
           summary: "{{ $labels.symbol }} {{ $labels.direction }} 20-session breakout at {{ $value }}"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} is trading beyond its 20-session {{ if eq $labels.direction \"bullish\" }}high{{ else }}low{{ end }} on more than 1.5x relative volume."
+          effectiveness: '{{ with printf `alert:hit_rate_5d:ratio{alertname="StockMultiSessionBreakout",direction=%q,horizon="15m"}` $labels.direction | query }}15m hit rate over the last 5 days: {{ . | first | value | humanizePercentage }}{{ else }}No history yet{{ end }}'
           link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"
 
       # Relative volume only exists from 09:45, so in practice this fires from 09:45.
@@ -101,4 +102,5 @@ groups:
         annotations:
           summary: "{{ $labels.symbol }} {{ $labels.direction }} opening range breakout at {{ $value }}"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} crossed its 09:15-09:30 opening range {{ if eq $labels.direction \"bullish\" }}high{{ else }}low{{ end }} on more than 1.5x relative volume."
+          effectiveness: '{{ with printf `alert:hit_rate_5d:ratio{alertname="StockOpeningRangeBreakout",direction=%q,horizon="15m"}` $labels.direction | query }}15m hit rate over the last 5 days: {{ . | first | value | humanizePercentage }}{{ else }}No history yet{{ end }}'
           link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"

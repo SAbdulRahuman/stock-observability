@@ -120,6 +120,7 @@ groups:
         annotations:
           summary: "{{ $labels.symbol }} {{ $labels.direction }} RSI divergence (RSI {{ $value | printf \"%.1f\" }})"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} made a new 30-minute {{ if eq $labels.direction \"bearish\" }}high{{ else }}low{{ end }} while Wilder RSI(14) stayed more than 10 points from its own 30-minute extreme."
+          effectiveness: '{{ with printf `alert:hit_rate_5d:ratio{alertname="StockRSIDivergence",direction=%q,horizon="15m"}` $labels.direction | query }}15m hit rate over the last 5 days: {{ . | first | value | humanizePercentage }}{{ else }}No history yet{{ end }}'
           link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"
       # Overbought/oversold on two oscillators, MACD histogram turning against the move, and
       # tick-rule volume flowing the other way.
@@ -146,4 +147,5 @@ groups:
         annotations:
           summary: "{{ $labels.symbol }} {{ $labels.direction }} momentum exhaustion (RSI {{ $value | printf \"%.1f\" }})"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} is {{ if eq $labels.direction \"bearish\" }}overbought{{ else }}oversold{{ end }} on RSI(14) and %K, its MACD histogram is turning and volume delta opposes the move."
+          effectiveness: '{{ with printf `alert:hit_rate_5d:ratio{alertname="StockMomentumExhaustion",direction=%q,horizon="15m"}` $labels.direction | query }}15m hit rate over the last 5 days: {{ . | first | value | humanizePercentage }}{{ else }}No history yet{{ end }}'
           link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"

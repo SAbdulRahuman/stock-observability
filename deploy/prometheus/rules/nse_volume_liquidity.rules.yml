@@ -114,4 +114,5 @@ groups:
         annotations:
           summary: "{{ $labels.symbol }} top-5 depth at {{ $value | humanizePercentage }} of its 1h average"
           description: "Order book depth of {{ $labels.exchange }}:{{ $labels.symbol }} fell below 25% of its 1h average while the spread widened to more than twice its 1h mean."
+          effectiveness: '{{ with query `alert:forward_return_5d:percent{alertname="StockLiquidityDrain",horizon="15m"}` }}Mean 15m return after this alert over the last 5 days: {{ . | first | value | printf "%.2f" }}%{{ else }}No history yet{{ end }}'
           link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"

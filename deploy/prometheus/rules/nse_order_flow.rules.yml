@@ -125,6 +125,7 @@ groups:
         annotations:
           summary: "{{ $labels.symbol }} {{ $labels.side }} wall at level {{ $labels.level }}: {{ $value | printf \"%.1f\" }}x the other levels"
           description: "Level {{ $labels.level }} on the {{ $labels.side }} side of {{ $labels.exchange }}:{{ $labels.symbol }} has held at least 5 times the average quantity of the other levels and INR 50 lakh for 1 minute."
+          effectiveness: '{{ with printf `alert:forward_return_5d:percent{alertname="StockOrderBookWall",side=%q,horizon="15m"}` $labels.side | query }}Mean 15m return after this alert over the last 5 days: {{ . | first | value | printf "%.2f" }}%{{ else }}No history yet{{ end }}'
           link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"
       - alert: StockOrderFlowPressure
         expr: |
@@ -147,4 +148,5 @@ groups:
         annotations:
           summary: "{{ $labels.symbol }} {{ $labels.direction }} order flow pressure (volume delta {{ $value | printf \"%.2f\" }})"
           description: "Tick-rule volume delta, microprice and top-5 depth imbalance of {{ $labels.exchange }}:{{ $labels.symbol }} all point {{ if eq $labels.direction \"bullish\" }}up{{ else }}down{{ end }}."
+          effectiveness: '{{ with printf `alert:hit_rate_5d:ratio{alertname="StockOrderFlowPressure",direction=%q,horizon="15m"}` $labels.direction | query }}15m hit rate over the last 5 days: {{ . | first | value | humanizePercentage }}{{ else }}No history yet{{ end }}'
           link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"

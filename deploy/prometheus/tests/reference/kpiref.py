@@ -31,6 +31,7 @@ GROUP_ORDER = {
                "nse_volume_stateful", "nse_volume_liquidity_alerts"],
     "flow": ["nse_order_flow", "nse_order_flow_depth", "nse_order_flow_1m", "nse_order_flow_alerts"],
     "regime": ["nse_regimes", "nse_regimes_stock", "nse_regimes_alerts"],
+    "effectiveness": ["nse_effectiveness", "nse_effectiveness_5d"],
     "osc": ["nse_bars", "nse_momentum", "nse_momentum_wilder", "nse_momentum_bars", "nse_momentum_alerts"],
     "ma": ["stock_fast", "stock_slow", "portfolio", "nse_trend", "nse_trend_regression", "nse_trend_alerts", "nse_moving_averages"],
 }
@@ -45,20 +46,22 @@ def instrument(symbol, sector="IT", itype="EQ", tier="core"):
 
 
 class Series:
-    """A promtool input series: samples at i * step seconds, None = no sample."""
+    """A promtool input series: samples at i * step seconds, None = no sample, "stale" = stale marker."""
 
     def __init__(self, metric, labels, step, values, fmt="%.2f"):
         self.metric = metric
         self.labels = labels
         self.step = step
         # Round-trip through the text form so the reference sees exactly what promtool loads.
-        self.text = [("_" if v is None else fmt % v) for v in values]
-        self.values = [None if s == "_" else float(s) for s in self.text]
+        self.text = [("_" if v is None else "stale" if v == "stale" else fmt % v) for v in values]
+        self.values = [None if s in ("_", "stale") else float(s) for s in self.text]
 
     def at(self, t):
         """Instant value at t: newest sample in (t - lookback, t]."""
         i = min(int(t // self.step), len(self.values) - 1)
         while i >= 0 and i * self.step > t - LOOKBACK:
+            if self.text[i] == "stale":
+                return None
             if self.values[i] is not None:
                 return self.values[i]
             i -= 1
@@ -1127,6 +1130,108 @@ def family_regime():
     ], 60
 
 
+# --- nse_effectiveness.rules.yml ----------------------------------------------------------------
+
+HORIZONS = (("5m", 5), ("15m", 15), ("1h", 60))
+
+
+def on_off(rnd, n, p_on=0.15, p_off=0.3):
+    """Random on/off state: 1 while on, a stale marker in the first minute off, else no sample."""
+    out, on = [], False
+    for _ in range(n):
+        was = on
+        on = rnd.random() < (1 - p_off if on else p_on)
+        out.append(1 if on else "stale" if was else None)
+    return out
+
+
+def family_effectiveness():
+    n, step = 100, 60
+    open_ = [1] * 95 + [0] * 5
+    syms = [instrument(s) for s in ("A", "B", "C", "D")] + [instrument("E", tier="broad")]
+    series = [Series("stock_market_open", CORE, step, open_, "%d")]
+    price = {}
+    for i, s in enumerate(syms):
+        price[s["symbol"]] = Series("stock_last_price", s, step, random_walk(70 + i, n, sigma=0.003))
+        series.append(price[s["symbol"]])
+
+    rnd = random.Random(7)
+    streams = []  # (source, ledger key labels, symbol, on/off values)
+    for s in syms:
+        for sig, d in (("rsi_oversold", "bullish"), ("rsi_overbought", "bearish"), ("rvol_high", "neutral")):
+            v = on_off(rnd, n)
+            series.append(Series("stock:signal_active:bool", dict(s, signal=sig, direction=d), step, v, "%d"))
+            streams.append(("signal", {"signal": sig, "direction": d}, s["symbol"], v))
+        for name, extra in (("StockMomentumExhaustion", {"direction": "bullish"}), ("StockMomentumExhaustion", {"direction": "bearish"}),
+                            ("StockProjectedCircuitHit", {"band": "upper"}), ("StockRangeExpansion", {})):
+            v = on_off(rnd, n)
+            labels = dict(s, alertname=name, alertstate="firing", severity="info", layer="condition", **extra)
+            series.append(Series("ALERTS", labels, step, v, "%d"))
+            streams.append(("alert", dict(alertname=name, **extra), s["symbol"], v))
+    # Not in the ledger: pending alerts, alerts without a symbol, incidents.
+    a = syms[0]
+    for labels in (dict(a, alertname="StockMomentumExhaustion", alertstate="pending", layer="condition", direction="bullish"),
+                   dict(alertname="SectorRotation", alertstate="firing", layer="condition", sector="IT"),
+                   dict(a, alertname="IndexSharpFall", alertstate="firing", layer="incident")):
+        series.append(Series("ALERTS", labels, step, on_off(rnd, n), "%d"))
+
+    # Per-minute outcome accumulators: (source, key, horizon, t) -> [sum, hits, count].
+    minute, occurrences = {}, {}
+    for src, key, sym, v in streams:
+        k = (src, tuple(sorted(key.items())))
+        p = price[sym].values
+        for m in range(n):
+            if v[m] != 1 or (m > 0 and v[m - 1] == 1):
+                continue
+            occurrences.setdefault(k, []).append(m)
+            for hname, h in HORIZONS:
+                t = m + h
+                if t >= n or not open_[t]:
+                    continue
+                r = (p[t] / p[m] - 1) * 100
+                acc = minute.setdefault(k + (hname, t), [0.0, 0, 0])
+                acc[0] += r
+                acc[1] += (key.get("direction") == "bullish" and r > 0) or (key.get("direction") == "bearish" and r < 0)
+                acc[2] += 1
+
+    directional = lambda key: dict(key).get("direction") in ("bullish", "bearish")
+    checks = []
+    for t in range(3, n, 4):
+        for k in occurrences:
+            src, key = k
+            for hname, _ in HORIZONS:
+                lbl = dict(key, horizon=hname)
+                acc = minute.get(k + (hname, t))
+                if acc is None:
+                    checks.append(Absent(src + ":outcomes:count", lbl, t * 60))
+                    continue
+                checks.append(Check(src + ":outcome_return_sum:percent", lbl, t * 60, acc[0]))
+                checks.append(Check(src + ":outcomes:count", lbl, t * 60, acc[2]))
+                if directional(key):
+                    checks.append(Check(src + ":outcome_hits:count", lbl, t * 60, acc[1]))
+                else:
+                    checks.append(Absent(src + ":outcome_hits:count", lbl, t * 60))
+    for T in (60, 94, 99):
+        for k, acts in occurrences.items():
+            src, key = k
+            checks.append(Check(src + ":occurrences_5d:count", dict(key), T * 60, sum(1 for m in acts if m <= T)))
+            for hname, _ in HORIZONS:
+                lbl = dict(key, horizon=hname)
+                accs = [acc for (s2, k2, h2, t), acc in minute.items() if (s2, k2, h2) == k + (hname,) and t <= T]
+                total = sum(acc[2] for acc in accs)
+                if total < 5:
+                    checks.append(Absent(src + ":forward_return_5d:percent", lbl, T * 60))
+                    continue
+                checks.append(Check(src + ":forward_return_5d:percent", lbl, T * 60, sum(acc[0] for acc in accs) / total))
+                if directional(key):
+                    checks.append(Check(src + ":hit_rate_5d:ratio", lbl, T * 60, sum(acc[1] for acc in accs) / total))
+                else:
+                    checks.append(Absent(src + ":hit_rate_5d:ratio", lbl, T * 60))
+    return ["nse_effectiveness.rules.yml"], [
+        test_case("signal and alert activations, outcomes, forward returns and hit rates match the reference", step, series, checks)
+    ], 60
+
+
 FAMILIES = {
     "base": family_base,
     "price_levels": family_price_levels,
@@ -1145,6 +1250,7 @@ FAMILIES = {
     "volume": family_volume,
     "flow": family_flow,
     "regime": family_regime,
+    "effectiveness": family_effectiveness,
 }
 
 

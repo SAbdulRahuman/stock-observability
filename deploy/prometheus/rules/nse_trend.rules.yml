@@ -84,4 +84,5 @@ groups:
         annotations:
           summary: "{{ $labels.symbol }} on pace to hit its {{ $labels.band }} circuit within 15 minutes"
           description: "At the trend of the last 10 minutes {{ $labels.exchange }}:{{ $labels.symbol }} ({{ $labels.tier }} tier) projects to {{ $value | printf \"%.2f\" }}, beyond its {{ $labels.band }} price band."
+          effectiveness: '{{ with printf `alert:forward_return_5d:percent{alertname="StockProjectedCircuitHit",band=%q,horizon="15m"}` $labels.band | query }}Mean 15m return after this alert over the last 5 days: {{ . | first | value | printf "%.2f" }}%{{ else }}No history yet{{ end }}'
           link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"

@@ -37,6 +37,7 @@ tests:
             exp_annotations:
               summary: INFY bullish 20-session breakout at 105
               description: NSE:INFY is trading beyond its 20-session high on more than 1.5x relative volume.
+              effectiveness: No history yet
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
 
   - name: no multi-session breakout with fewer than 15 sessions or low volume
@@ -101,6 +102,7 @@ tests:
             exp_annotations:
               summary: INFY bullish opening range breakout at 102
               description: NSE:INFY crossed its 09:15-09:30 opening range high on more than 1.5x relative volume.
+              effectiveness: No history yet
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
       # Held by keep_firing_for after the crossing minute.
       - eval_time: 45m
@@ -110,6 +112,7 @@ tests:
             exp_annotations:
               summary: INFY bullish opening range breakout at 102
               description: NSE:INFY crossed its 09:15-09:30 opening range high on more than 1.5x relative volume.
+              effectiveness: No history yet
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
       - eval_time: 55m
         alertname: StockOpeningRangeBreakout
@@ -168,6 +171,7 @@ tests:
             exp_annotations:
               summary: INFY day range is 2.5x its ATR(14)
               description: NSE:INFY has a wide-range day (more than 2x its 14-session average true range) on more than 2x relative volume.
+              effectiveness: No history yet
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
       - eval_time: 15m
         alertname: StockRangeExpansion
@@ -200,6 +204,7 @@ tests:
             exp_annotations:
               summary: INFY top-5 depth at 20% of its 1h average
               description: Order book depth of NSE:INFY fell below 25% of its 1h average while the spread widened to more than twice its 1h mean.
+              effectiveness: No history yet
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
       - eval_time: 45m
         alertname: StockLiquidityDrain
@@ -259,6 +264,13 @@ tests:
         values: '109x30'
       - series: 'stock_circuit_lower_limit_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '90x30'
+      # Ledger history: only the matching band and the 15m horizon are quoted.
+      - series: 'alert:forward_return_5d:percent{alertname="StockProjectedCircuitHit",band="upper",horizon="15m"}'
+        values: '0.4321x30'
+      - series: 'alert:forward_return_5d:percent{alertname="StockProjectedCircuitHit",band="upper",horizon="5m"}'
+        values: '0.2x30'
+      - series: 'alert:forward_return_5d:percent{alertname="StockProjectedCircuitHit",band="lower",horizon="15m"}'
+        values: '-1x30'
     alert_rule_test:
       # Within 5% of the band and projected through it, but there is no 9-minute history yet.
       - eval_time: 8m
@@ -270,6 +282,7 @@ tests:
             exp_annotations:
               summary: INFY on pace to hit its upper circuit within 15 minutes
               description: At the trend of the last 10 minutes NSE:INFY (core tier) projects to 112.50, beyond its upper price band.
+              effectiveness: 'Mean 15m return after this alert over the last 5 days: 0.43%'
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
       # 20m: LTP 110 is at the band, so the circuit-hit alert takes over.
       - eval_time: 20m
@@ -298,6 +311,13 @@ tests:
         values: '0+1x15 14-1x14'
       - series: 'stock:volume_delta_1h:ratio{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
         values: '0.2x30'
+      # Ledger history: only the matching direction and the 15m horizon are quoted.
+      - series: 'alert:hit_rate_5d:ratio{alertname="StockMomentumExhaustion",direction="bearish",horizon="15m"}'
+        values: '0.625x30'
+      - series: 'alert:hit_rate_5d:ratio{alertname="StockMomentumExhaustion",direction="bearish",horizon="1h"}'
+        values: '0.9x30'
+      - series: 'alert:hit_rate_5d:ratio{alertname="StockMomentumExhaustion",direction="bullish",horizon="15m"}'
+        values: '0.1x30'
     alert_rule_test:
       - eval_time: 12m
         alertname: StockMomentumExhaustion
@@ -308,6 +328,7 @@ tests:
             exp_annotations:
               summary: INFY bearish momentum exhaustion (RSI 75.0)
               description: NSE:INFY is overbought on RSI(14) and %K, its MACD histogram is turning and volume delta opposes the move.
+              effectiveness: '15m hit rate over the last 5 days: 62.5%'
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
 
   - name: momentum exhaustion is silent while the market is closed
@@ -355,6 +376,7 @@ tests:
             exp_annotations:
               summary: INFY bearish order flow pressure (volume delta -0.70)
               description: Tick-rule volume delta, microprice and top-5 depth imbalance of NSE:INFY all point down.
+              effectiveness: No history yet
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
       - eval_time: 15m
         alertname: StockOrderFlowPressure
@@ -556,6 +578,7 @@ tests:
             exp_annotations:
               summary: INFY bearish RSI divergence (RSI 65.0)
               description: NSE:INFY made a new 30-minute high while Wilder RSI(14) stayed more than 10 points from its own 30-minute extreme.
+              effectiveness: No history yet
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
 
   - name: RSI divergence is silent while the market is closed
@@ -608,6 +631,7 @@ tests:
             exp_annotations:
               summary: "INFY bid wall at level 3: 100.0x the other levels"
               description: Level 3 on the bid side of NSE:INFY has held at least 5 times the average quantity of the other levels and INR 50 lakh for 1 minute.
+              effectiveness: No history yet
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
       - eval_time: 15m
         alertname: StockOrderBookWall
