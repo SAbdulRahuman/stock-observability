@@ -875,6 +875,120 @@ kpis:
     method: distance of the last price from EMA20
     alertable: true
 
+  - name: stock:sma_20m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "SMA20 = mean of the last 20 1m closes"
+    inputs: [stock_last_price]
+    rule_file: nse_moving_averages.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 20m
+    quality: exact
+    method: 1m-close SMA, published once 20 bars of the session exist
+    dashboard_default: true
+
+  - name: stock:sma_50m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "SMA50 = mean of the last 50 1m closes"
+    inputs: [stock_last_price]
+    rule_file: nse_moving_averages.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 50m
+    quality: exact
+    method: 1m-close SMA, published once 50 bars of the session exist
+
+  - name: stock:sma_200m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "SMA200 = mean of the last 200 1m closes"
+    inputs: [stock_last_price]
+    rule_file: nse_moving_averages.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 200m
+    quality: exact
+    method: 1m-close SMA, published from 12:35 (200 bars after the open)
+
+  - name: stock:wma_20m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "WMA20 = sum(i * C_i) / 210 = (LSMA20 + 2 * SMA20) / 3"
+    inputs: [stock_last_price, stock:sma_20m:price]
+    rule_file: nse_moving_averages.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 20m
+    quality: approximation
+    method: linear-weight identity via predict_linear on 1m closes
+    limitation: "exact when the evaluation falls on the bar close; drifts by part of a bar's trend otherwise"
+
+  - name: stock:sma_distance_20m:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "(C - SMA20) / SMA20 * 100"
+    inputs: [stock_last_price, stock:sma_20m:price]
+    rule_file: nse_moving_averages.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent
+    warmup: 20m
+    quality: exact
+    method: distance of the last price from SMA20
+
+  - name: stock:sma_spread_5_30m:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "(SMA5 / SMA30 - 1) * 100 on raw samples"
+    inputs: [stock:sma_5m:price, stock:sma_30m:price]
+    rule_file: nse_moving_averages.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent
+    warmup: 30m
+    quality: exact
+    method: spread of the base 5m and 30m moving averages
+
+  - name: stock:sma_20m_slope:percent_per_hour
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "(SMA20 - SMA20[10m ago]) / SMA20 * 600"
+    inputs: [stock:sma_20m:price]
+    rule_file: nse_moving_averages.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent_per_hour
+    warmup: 30m
+    quality: exact
+    method: 10-minute change of SMA20, scaled to an hour
+
   - name: stock:macd_signal_9m:price
     kind: kpi
     family: technical
@@ -1078,3 +1192,57 @@ kpis:
     quality: exact
     method: close location within the day range; the post_close value is the daily close location
     limitation: "absent while H = L"
+
+  # --- Trend regression (nse_trend_regression) ------------------------------------------------
+  - name: stock:trend_slope_30m:percent_per_hour
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "deriv(C[30m:1m]) * 3600 / C * 100"
+    inputs: [stock_last_price]
+    rule_file: nse_trend.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent_per_hour
+    warmup: 30m
+    quality: exact
+    method: least-squares slope of the last 30 1m closes
+    dashboard_default: true
+
+  - name: stock:trend_r2_30m:ratio
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "R^2 = b^2 * 269700 / Var(C), 30 1m closes"
+    inputs: [stock_last_price]
+    rule_file: nse_trend.rules.yml
+    frequency: 1m
+    scope: core
+    unit: ratio
+    range: {min: 0, max: 1}
+    warmup: 30m
+    quality: exact
+    method: coefficient of determination of the 30-bar linear trend
+    limitation: "residuals are autocorrelated; use for ranking, not significance"
+    dashboard_default: true
+
+  - name: stock:trend_tstat_30m:ratio
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "t = sgn(b) * sqrt(R^2 * 28 / (1 - R^2))"
+    inputs: [stock:trend_r2_30m:ratio]
+    rule_file: nse_trend.rules.yml
+    frequency: 1m
+    scope: core
+    unit: ratio
+    warmup: 30m
+    quality: exact
+    method: t-statistic of the 30-bar slope
+    limitation: "absent for a perfect fit; overstates significance (autocorrelated residuals)"

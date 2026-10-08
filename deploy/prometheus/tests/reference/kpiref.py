@@ -23,7 +23,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TESTS_DIR = os.path.dirname(HERE)
 
 # promtool evaluates groups in random order unless told; reference values assume inputs first.
-GROUP_ORDER = {"volatility": ["stock_fast", "stock_slow", "nse_volatility"]}
+GROUP_ORDER = {
+    "volatility": ["stock_fast", "stock_slow", "nse_volatility"],
+    "ma": ["stock_fast", "stock_slow", "portfolio", "nse_trend", "nse_trend_regression", "nse_trend_alerts", "nse_moving_averages"],
+}
 
 CORE = {"job": "stock_core", "instance": "se"}
 BROAD = {"job": "stock_broad", "instance": "se"}
@@ -390,6 +393,63 @@ def family_ema():
     ], 60
 
 
+def ols(points):
+    """Least-squares slope and value at the last x of [(x, y)]."""
+    xs, ys = [p[0] for p in points], [p[1] for p in points]
+    mx, my = mean(xs), mean(ys)
+    b = sum((x - mx) * (y - my) for x, y in points) / sum((x - mx) ** 2 for x in xs)
+    return b, my + b * (xs[-1] - mx)
+
+
+def family_ma():
+    """SMAs on 1m closes, WMA, distances, spread, slope and the 30m regression; open at t=0."""
+    step, minutes = 15, 215
+    n = 4 * minutes + 1
+    series = [
+        Series("stock_market_open", CORE, step, constant(1, n), "%d"),
+        Series("stock_market_seconds_to_close", CORE, step, [22500 - i * step for i in range(n)], "%d"),
+    ]
+    checks = []
+    for seed, sym in ((17, "INFY"), (18, "TCS")):
+        lbl = instrument(sym)
+        price = Series("stock_last_price", lbl, step, random_walk(seed, n, sigma=0.002))
+        series.append(price)
+        sma = lambda t, k: mean(price.bars(t, k * 60)) if t >= k * 60 else None
+        raw_avg = lambda t, rng: mean([v for _, v in price.samples(t - rng, t)])
+        for t in (10 * 60, 20 * 60, 30 * 60, 45 * 60, 60 * 60, 120 * 60, 200 * 60, 210 * 60):
+            c = price.at(t)
+            for k in (20, 50, 200):
+                name = "stock:sma_%dm:price" % k
+                checks.append(Absent(name, lbl, t) if sma(t, k) is None else Check(name, lbl, t, sma(t, k)))
+            if sma(t, 20) is not None:
+                pts = [(t - 60 * (19 - i), v) for i, v in enumerate(price.bars(t, 1200))]
+                lsma = ols(pts)[1]
+                wma = (lsma + 2 * sma(t, 20)) / 3
+                direct = sum((i + 1) * v for i, (_, v) in enumerate(pts)) / 210
+                assert abs(wma - direct) < 1e-9 * abs(direct), (wma, direct)
+                checks.append(Check("stock:wma_20m:price", lbl, t, wma, rel_tol=1e-8))
+                checks.append(Check("stock:sma_distance_20m:percent", lbl, t, (c - sma(t, 20)) / sma(t, 20) * 100, abs_tol=1e-9))
+            if sma(t - 600, 20) is not None:
+                checks.append(Check("stock:sma_20m_slope:percent_per_hour", lbl, t,
+                                    (sma(t, 20) - sma(t - 600, 20)) / sma(t, 20) * 600, abs_tol=1e-9))
+            else:
+                checks.append(Absent("stock:sma_20m_slope:percent_per_hour", lbl, t))
+            checks.append(Check("stock:sma_spread_5_30m:percent", lbl, t,
+                                (raw_avg(t, 300) / raw_avg(t, 1800) - 1) * 100, abs_tol=1e-9))
+            if t >= 1800:
+                pts = [(t - 60 * (29 - i), v) for i, v in enumerate(price.bars(t, 1800))]
+                b = ols(pts)[0]
+                r2 = min(b * b * 269700 / pstdev([v for _, v in pts]) ** 2, 1.0)
+                checks.append(Check("stock:trend_slope_30m:percent_per_hour", lbl, t, b * 3600 / c * 100, rel_tol=1e-7, abs_tol=1e-9))
+                checks.append(Check("stock:trend_r2_30m:ratio", lbl, t, r2, rel_tol=1e-7, abs_tol=1e-9))
+                checks.append(Check("stock:trend_tstat_30m:ratio", lbl, t, sgn(b) * math.sqrt(r2 * 28 / (1 - r2)), rel_tol=1e-6, abs_tol=1e-9))
+            else:
+                checks.append(Absent("stock:trend_r2_30m:ratio", lbl, t))
+    return ["stock_recording.rules.yml", "nse_trend.rules.yml", "nse_moving_averages.rules.yml"], [
+        test_case("SMAs, WMA, MA distance/spread/slope and 30m trend regression match the reference", step, series, checks)
+    ], 60
+
+
 # --- nse_volatility.rules.yml -----------------------------------------------------------------
 
 
@@ -642,6 +702,7 @@ FAMILIES = {
     "pivots": family_pivots,
     "momentum": family_momentum,
     "ema": family_ema,
+    "ma": family_ma,
     "volatility": family_volatility,
     "atr": family_atr,
     "rvol": family_rvol,

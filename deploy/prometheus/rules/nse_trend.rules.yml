@@ -32,6 +32,31 @@ groups:
       - record: stock:macd_histogram:price
         expr: stock:macd_12_26m:price - stock:macd_signal_9m:price
 
+  # Least-squares trend over the last 30 1m bars (§7.5, §8.10, Release 2), from 30 minutes after the open:
+  #   b = deriv(C[30m:1m]) (per second);  slope %/h = b * 3600 / C * 100
+  #   R^2 = b^2 * Var(t) / Var(C), Var(t) = 60^2 * (30^2 - 1) / 12 = 269700 s^2;  t = sgn(b) * sqrt(R^2 * 28 / (1 - R^2))
+  - name: nse_trend_regression
+    interval: 1m
+    rules:
+      - record: stock:trend_slope_30m:percent_per_hour
+        expr: |
+          deriv(stock_last_price{tier="core"}[30m:1m]) * 3600 / (stock_last_price{tier="core"} > 0) * 100
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close <= 20700
+      - record: stock:trend_r2_30m:ratio
+        expr: |
+          clamp_max(
+            deriv(stock_last_price{tier="core"}[30m:1m]) ^ 2 * 269700
+            / (stdvar_over_time(stock_last_price{tier="core"}[30m:1m]) > 0),
+            1)
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close <= 20700
+      # A perfect fit (R^2 = 1) has no finite t-statistic and is left out.
+      - record: stock:trend_tstat_30m:ratio
+        expr: |
+          sgn(deriv(stock_last_price{tier="core"}[30m:1m]))
+          * sqrt(stock:trend_r2_30m:ratio * 28 / ((1 - stock:trend_r2_30m:ratio) > 0))
+
   - name: nse_trend_alerts
     interval: 15s
     rules:

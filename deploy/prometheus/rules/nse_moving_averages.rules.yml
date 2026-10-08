@@ -1,6 +1,8 @@
 # Moving averages (proposal §7.2, Release 2). Stateful EMAs as in nse_trend (EMA12/26 live there):
 #   EMA(n) = a * C + (1 - a) * EMA[1m ago], a = 2 / (n + 1), seeded with SMA(n) n minutes after the open
 #   Price vs EMA20 = (C - EMA20) / EMA20 * 100
+#   SMA(n) on 1m closes once n bars of the session exist; WMA20 = (LSMA20 + 2 * SMA20) / 3 (identity
+#   for linear weights, LSMA = least-squares value at the last bar); slope = 10m change of SMA20 in %/h
 groups:
   - name: nse_moving_averages
     interval: 1m
@@ -28,3 +30,28 @@ groups:
           and on() stock_market_open == 1
       - record: stock:ema_distance_20m:percent
         expr: (stock_last_price{tier="core"} - stock:ema_20m:price) / (stock:ema_20m:price > 0) * 100
+
+      - record: stock:sma_20m:price
+        expr: |
+          avg_over_time(stock_last_price{tier="core"}[20m:1m])
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close <= 21300
+      - record: stock:sma_50m:price
+        expr: |
+          avg_over_time(stock_last_price{tier="core"}[50m:1m])
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close <= 19500
+      - record: stock:sma_200m:price
+        expr: |
+          avg_over_time(stock_last_price{tier="core"}[200m:1m])
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close <= 10500
+      - record: stock:wma_20m:price
+        expr: |
+          (predict_linear(stock_last_price{tier="core"}[20m:1m], 0) + 2 * stock:sma_20m:price) / 3
+      - record: stock:sma_distance_20m:percent
+        expr: (stock_last_price{tier="core"} - stock:sma_20m:price) / (stock:sma_20m:price > 0) * 100
+      - record: stock:sma_spread_5_30m:percent
+        expr: (stock:sma_5m:price{tier="core"} / (stock:sma_30m:price{tier="core"} > 0) - 1) * 100
+      - record: stock:sma_20m_slope:percent_per_hour
+        expr: (stock:sma_20m:price - stock:sma_20m:price offset 10m) / stock:sma_20m:price * 600
