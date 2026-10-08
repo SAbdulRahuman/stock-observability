@@ -1485,3 +1485,205 @@ kpis:
     warmup_sessions: 15
     quality: approximation
     method: short over long average true range (~5 / ~20 sessions)
+
+  # --- Trend strength on 1m bars (nse_trend_strength, stateful) --------------------------------
+  - name: stock:bar_1m_true_range:points
+    kind: helper
+    release: R2
+    formula: "max(H, Cp) - min(L, Cp) per 1m bar"
+    inputs: [stock_last_price]
+    rule_file: nse_trend_strength.rules.yml
+    frequency: 1m
+    scope: core
+    unit: points
+
+  - name: stock:bar_1m_buying_pressure:points
+    kind: helper
+    release: R2
+    formula: "C - min(L, Cp) per 1m bar"
+    inputs: [stock_last_price]
+    rule_file: nse_trend_strength.rules.yml
+    frequency: 1m
+    scope: core
+    unit: points
+
+  - name: stock:bar_1m_dm_plus:points
+    kind: helper
+    release: R2
+    formula: "+DM = H - Hp if > Lp - L and > 0, else 0"
+    inputs: [stock_last_price]
+    rule_file: nse_trend_strength.rules.yml
+    frequency: 1m
+    scope: core
+    unit: points
+
+  - name: stock:bar_1m_dm_minus:points
+    kind: helper
+    release: R2
+    formula: "-DM = Lp - L if > H - Hp and > 0, else 0"
+    inputs: [stock_last_price]
+    rule_file: nse_trend_strength.rules.yml
+    frequency: 1m
+    scope: core
+    unit: points
+
+  - name: stock:dm_plus_14m:points
+    kind: helper
+    release: R2
+    formula: "Wilder(+DM, 14)"
+    inputs: [stock:bar_1m_dm_plus:points]
+    rule_file: nse_trend_strength.rules.yml
+    frequency: 1m
+    scope: core
+    unit: points
+
+  - name: stock:dm_minus_14m:points
+    kind: helper
+    release: R2
+    formula: "Wilder(-DM, 14)"
+    inputs: [stock:bar_1m_dm_minus:points]
+    rule_file: nse_trend_strength.rules.yml
+    frequency: 1m
+    scope: core
+    unit: points
+
+  - name: stock:dx_14m:index
+    kind: helper
+    release: R2
+    formula: "DX = 100 * |+DI - -DI| / (+DI + -DI)"
+    inputs: [stock:di_plus_14m:percent, stock:di_minus_14m:percent]
+    rule_file: nse_trend_strength.rules.yml
+    frequency: 1m
+    scope: core
+    unit: index
+
+  - name: stock:trix_ema1_15m:price
+    kind: helper
+    release: R2
+    formula: "EMA15(C)"
+    inputs: [stock_last_price]
+    rule_file: nse_trend_strength.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+
+  - name: stock:trix_ema2_15m:price
+    kind: helper
+    release: R2
+    formula: "EMA15(EMA15(C))"
+    inputs: [stock:trix_ema1_15m:price]
+    rule_file: nse_trend_strength.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+
+  - name: stock:trix_ema3_15m:price
+    kind: helper
+    release: R2
+    formula: "EMA15(EMA15(EMA15(C)))"
+    inputs: [stock:trix_ema2_15m:price]
+    rule_file: nse_trend_strength.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+
+  - name: stock:atr_14m:points
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R2
+    formula: "ATR14 = Wilder(TR, 14) on 1m bars"
+    inputs: [stock:bar_1m_true_range:points]
+    rule_file: nse_trend_strength.rules.yml
+    frequency: 1m
+    scope: core
+    unit: points
+    warmup: 15m
+    quality: exact
+    method: intraday Wilder ATR seeded with the mean of the first 14 bar true ranges
+    dashboard_default: true
+
+  - name: stock:di_plus_14m:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "+DI = 100 * Wilder(+DM, 14) / ATR14"
+    inputs: [stock:dm_plus_14m:points, stock:atr_14m:points]
+    rule_file: nse_trend_strength.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent
+    warmup: 15m
+    quality: exact
+    method: Wilder directional indicator on 1m bars
+
+  - name: stock:di_minus_14m:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "-DI = 100 * Wilder(-DM, 14) / ATR14"
+    inputs: [stock:dm_minus_14m:points, stock:atr_14m:points]
+    rule_file: nse_trend_strength.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent
+    warmup: 15m
+    quality: exact
+    method: Wilder directional indicator on 1m bars
+
+  - name: stock:adx_14m:index
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R2
+    formula: "ADX = Wilder(DX, 14)"
+    inputs: [stock:dx_14m:index]
+    rule_file: nse_trend_strength.rules.yml
+    frequency: 1m
+    scope: core
+    unit: index
+    range: {min: 0, max: 100}
+    warmup: 28m
+    quality: exact
+    method: average directional index on 1m bars, seeded with the mean of the first 14 DX values
+    alertable: true
+    dashboard_default: true
+
+  - name: stock:trix_15m:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R2
+    formula: "TRIX = 1-bar % change of EMA15(EMA15(EMA15(C)))"
+    inputs: [stock:trix_ema3_15m:price]
+    rule_file: nse_trend_strength.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent
+    warmup: 44m
+    quality: exact
+    method: triple-smoothed EMA rate of change on 1m closes
+
+  - name: stock:ultimate_oscillator:index
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R2
+    formula: "UO = 100 * (4 A7 + 2 A14 + A28) / 7, A_n = sum(BP) / sum(TR) over n bars"
+    inputs: [stock:bar_1m_buying_pressure:points, stock:bar_1m_true_range:points]
+    rule_file: nse_trend_strength.rules.yml
+    frequency: 1m
+    scope: core
+    unit: index
+    range: {min: 0, max: 100}
+    warmup: 29m
+    quality: exact
+    method: Williams ultimate oscillator on 1m bars

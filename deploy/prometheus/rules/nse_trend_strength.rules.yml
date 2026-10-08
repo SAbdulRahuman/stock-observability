@@ -1,0 +1,118 @@
+# Trend strength on 1m bars (proposal §7.3 #30, §7.4 #50-51, §7.5 #56-59; Release 2).
+# Per-bar inputs come straight from the 1s LTP so the stateful rules below see this minute's bar:
+#   H/L = max/min of LTP over the last minute, Cp/Hp/Lp = previous bar
+#   TR = max(H, Cp) - min(L, Cp)   BP = C - min(L, Cp)
+#   +DM = H - Hp if it exceeds Lp - L and 0, else 0;   -DM = Lp - L if it exceeds H - Hp and 0, else 0
+# Wilder smoothing: s = s[1m ago] + (x - s[1m ago]) / 14, seeded with the mean of the first 14 values
+# (re-seeded the same way after a gap > 3m). EMA15 (TRIX) seeds like nse_moving_averages.
+#   ATR14 = Wilder(TR);  +DI/-DI = 100 * Wilder(+DM/-DM) / ATR14;  DX = 100 * |+DI - -DI| / (+DI + -DI);  ADX = Wilder(DX)
+#   TRIX = 1-bar % change of EMA15(EMA15(EMA15(C)))
+#   UO = 100 * (4 A7 + 2 A14 + A28) / 7, A_n = sum(BP) / sum(TR) over n bars
+groups:
+  - name: nse_trend_strength
+    interval: 1m
+    rules:
+      - record: stock:bar_1m_true_range:points
+        expr: |
+          (
+              ((max_over_time(stock_last_price{tier="core"}[1m]) > stock_last_price{tier="core"} offset 1m) or stock_last_price{tier="core"} offset 1m)
+            - ((min_over_time(stock_last_price{tier="core"}[1m]) < stock_last_price{tier="core"} offset 1m) or stock_last_price{tier="core"} offset 1m)
+          )
+          and on() stock_market_open == 1
+      - record: stock:bar_1m_buying_pressure:points
+        expr: |
+          (
+              stock_last_price{tier="core"}
+            - ((min_over_time(stock_last_price{tier="core"}[1m]) < stock_last_price{tier="core"} offset 1m) or stock_last_price{tier="core"} offset 1m)
+          )
+          and on() stock_market_open == 1
+      - record: stock:bar_1m_dm_plus:points
+        expr: |
+          (
+              (
+                  (max_over_time(stock_last_price{tier="core"}[1m]) - max_over_time(stock_last_price{tier="core"}[1m] offset 1m) > 0)
+                > (min_over_time(stock_last_price{tier="core"}[1m] offset 1m) - min_over_time(stock_last_price{tier="core"}[1m]))
+              )
+            or 0 * (max_over_time(stock_last_price{tier="core"}[1m]) - max_over_time(stock_last_price{tier="core"}[1m] offset 1m))
+          )
+          and on() stock_market_open == 1
+      - record: stock:bar_1m_dm_minus:points
+        expr: |
+          (
+              (
+                  (min_over_time(stock_last_price{tier="core"}[1m] offset 1m) - min_over_time(stock_last_price{tier="core"}[1m]) > 0)
+                > (max_over_time(stock_last_price{tier="core"}[1m]) - max_over_time(stock_last_price{tier="core"}[1m] offset 1m))
+              )
+            or 0 * (max_over_time(stock_last_price{tier="core"}[1m]) - max_over_time(stock_last_price{tier="core"}[1m] offset 1m))
+          )
+          and on() stock_market_open == 1
+
+      - record: stock:atr_14m:points
+        expr: |
+          (
+              last_over_time(stock:atr_14m:points[3m]) + (stock:bar_1m_true_range:points - last_over_time(stock:atr_14m:points[3m])) / 14
+            or (avg_over_time(stock:bar_1m_true_range:points[14m]) and count_over_time(stock:bar_1m_true_range:points[14m]) >= 14)
+          )
+          and on() stock_market_open == 1
+      - record: stock:dm_plus_14m:points
+        expr: |
+          (
+              last_over_time(stock:dm_plus_14m:points[3m]) + (stock:bar_1m_dm_plus:points - last_over_time(stock:dm_plus_14m:points[3m])) / 14
+            or (avg_over_time(stock:bar_1m_dm_plus:points[14m]) and count_over_time(stock:bar_1m_dm_plus:points[14m]) >= 14)
+          )
+          and on() stock_market_open == 1
+      - record: stock:dm_minus_14m:points
+        expr: |
+          (
+              last_over_time(stock:dm_minus_14m:points[3m]) + (stock:bar_1m_dm_minus:points - last_over_time(stock:dm_minus_14m:points[3m])) / 14
+            or (avg_over_time(stock:bar_1m_dm_minus:points[14m]) and count_over_time(stock:bar_1m_dm_minus:points[14m]) >= 14)
+          )
+          and on() stock_market_open == 1
+      - record: stock:di_plus_14m:percent
+        expr: 100 * stock:dm_plus_14m:points / (stock:atr_14m:points > 0)
+      - record: stock:di_minus_14m:percent
+        expr: 100 * stock:dm_minus_14m:points / (stock:atr_14m:points > 0)
+      - record: stock:dx_14m:index
+        expr: |
+          100 * abs(stock:di_plus_14m:percent - stock:di_minus_14m:percent)
+          / ((stock:di_plus_14m:percent + stock:di_minus_14m:percent) > 0)
+      - record: stock:adx_14m:index
+        expr: |
+          (
+              last_over_time(stock:adx_14m:index[3m]) + (stock:dx_14m:index - last_over_time(stock:adx_14m:index[3m])) / 14
+            or (avg_over_time(stock:dx_14m:index[14m]) and count_over_time(stock:dx_14m:index[14m]) >= 14)
+          )
+          and on() stock_market_open == 1
+
+      - record: stock:trix_ema1_15m:price
+        expr: |
+          (
+              0.125 * stock_last_price{tier="core"} + 0.875 * last_over_time(stock:trix_ema1_15m:price[3m])
+            or (avg_over_time(stock_last_price{tier="core"}[15m:1m]) and on() stock_market_seconds_to_close <= 21600)
+          )
+          and on() stock_market_open == 1
+      - record: stock:trix_ema2_15m:price
+        expr: |
+          (
+              0.125 * stock:trix_ema1_15m:price + 0.875 * last_over_time(stock:trix_ema2_15m:price[3m])
+            or (avg_over_time(stock:trix_ema1_15m:price[15m]) and count_over_time(stock:trix_ema1_15m:price[15m]) >= 15)
+          )
+          and on() stock_market_open == 1
+      - record: stock:trix_ema3_15m:price
+        expr: |
+          (
+              0.125 * stock:trix_ema2_15m:price + 0.875 * last_over_time(stock:trix_ema3_15m:price[3m])
+            or (avg_over_time(stock:trix_ema2_15m:price[15m]) and count_over_time(stock:trix_ema2_15m:price[15m]) >= 15)
+          )
+          and on() stock_market_open == 1
+      - record: stock:trix_15m:percent
+        expr: (stock:trix_ema3_15m:price / (stock:trix_ema3_15m:price offset 1m > 0) - 1) * 100
+
+      - record: stock:ultimate_oscillator:index
+        expr: |
+          100 * (
+              4 * sum_over_time(stock:bar_1m_buying_pressure:points[7m]) / (sum_over_time(stock:bar_1m_true_range:points[7m]) > 0)
+            + 2 * sum_over_time(stock:bar_1m_buying_pressure:points[14m]) / (sum_over_time(stock:bar_1m_true_range:points[14m]) > 0)
+            + sum_over_time(stock:bar_1m_buying_pressure:points[28m]) / (sum_over_time(stock:bar_1m_true_range:points[28m]) > 0)
+          ) / 7
+          and count_over_time(stock:bar_1m_true_range:points[28m]) >= 28

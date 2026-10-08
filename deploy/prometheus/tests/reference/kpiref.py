@@ -782,6 +782,82 @@ def family_osc():
     ], 60
 
 
+def wilder(values, evals, n=14):
+    """Wilder smoothing of {t: x}: seeded with the mean of the first n values, then s + (x - s) / n."""
+    out, prev = {}, None
+    for t in evals:
+        if prev is None:
+            window = [values[k] for k in evals if t - n * 60 < k <= t and k in values]
+            prev = mean(window) if len(window) >= n else None
+        elif t in values:
+            prev = prev + (values[t] - prev) / n
+        out[t] = prev
+    return out
+
+
+def ema_of(values, evals, n=15):
+    """EMA of {t: x} seeded with the mean of the first n values."""
+    a, out, prev = 2 / (n + 1), {}, None
+    for t in evals:
+        if prev is None:
+            window = [values[k] for k in evals if t - n * 60 < k <= t and k in values]
+            prev = mean(window) if len(window) >= n else None
+        else:
+            prev = a * values[t] + (1 - a) * prev
+        out[t] = prev
+    return out
+
+
+def family_strength():
+    """Wilder ATR, +DI/-DI/ADX, TRIX and the Ultimate oscillator on 1m bars; open at t=0."""
+    step, minutes = 15, 60
+    n = 4 * minutes + 1
+    series = [
+        Series("stock_market_open", CORE, step, constant(1, n), "%d"),
+        Series("stock_market_seconds_to_close", CORE, step, [22500 - i * step for i in range(n)], "%d"),
+    ]
+    evals = list(range(0, minutes * 60 + 1, 60))
+    checks = []
+    for seed, sym in ((23, "INFY"), (24, "TCS")):
+        lbl = instrument(sym)
+        price = Series("stock_last_price", lbl, step, random_walk(seed, n, sigma=0.002))
+        series.append(price)
+        hl = lambda t: [v for _, v in price.samples(t - 60, t)]
+        tr, bp, dmp, dmm = {}, {}, {}, {}
+        for t in evals[1:]:
+            h, l, c, cp = max(hl(t)), min(hl(t)), price.at(t), price.at(t - 60)
+            hp, lp = max(hl(t - 60)), min(hl(t - 60))
+            tr[t], bp[t] = max(h, cp) - min(l, cp), c - min(l, cp)
+            up, down = h - hp, lp - l
+            dmp[t] = up if up > 0 and up > down else 0.0
+            dmm[t] = down if down > 0 and down > up else 0.0
+        atr, sp, sm = wilder(tr, evals), wilder(dmp, evals), wilder(dmm, evals)
+        dip = {t: 100 * sp[t] / atr[t] for t in evals if atr[t]}
+        dim = {t: 100 * sm[t] / atr[t] for t in evals if atr[t]}
+        dx = {t: 100 * abs(dip[t] - dim[t]) / (dip[t] + dim[t]) for t in dip if dip[t] + dim[t] > 0}
+        adx = wilder(dx, evals)
+        e1 = ema(price, 15, evals)
+        e2 = ema_of({t: v for t, v in e1.items() if v is not None}, evals)
+        e3 = ema_of({t: v for t, v in e2.items() if v is not None}, evals)
+        for t in (13 * 60, 14 * 60, 20 * 60, 27 * 60, 30 * 60, 28 * 60, 44 * 60, 45 * 60, 60 * 60):
+            for name, d in (("stock:atr_14m:points", atr), ("stock:di_plus_14m:percent", dip), ("stock:di_minus_14m:percent", dim),
+                            ("stock:adx_14m:index", adx)):
+                v = d.get(t)
+                checks.append(Absent(name, lbl, t) if v is None else Check(name, lbl, t, v, rel_tol=1e-8, abs_tol=1e-9))
+            if e3.get(t - 60) is not None:
+                checks.append(Check("stock:trix_15m:percent", lbl, t, (e3[t] / e3[t - 60] - 1) * 100, rel_tol=1e-6, abs_tol=1e-9))
+            else:
+                checks.append(Absent("stock:trix_15m:percent", lbl, t))
+            if len([k for k in tr if t - 1680 < k <= t]) >= 28:
+                a = lambda m: sum(bp[k] for k in tr if t - m * 60 < k <= t) / sum(tr[k] for k in tr if t - m * 60 < k <= t)
+                checks.append(Check("stock:ultimate_oscillator:index", lbl, t, 100 * (4 * a(7) + 2 * a(14) + a(28)) / 7, rel_tol=1e-8))
+            else:
+                checks.append(Absent("stock:ultimate_oscillator:index", lbl, t))
+    return ["nse_trend_strength.rules.yml"], [
+        test_case("Wilder ATR, DI/ADX, TRIX and Ultimate oscillator match the reference", step, series, checks)
+    ], 60
+
+
 FAMILIES = {
     "base": family_base,
     "price_levels": family_price_levels,
@@ -796,6 +872,7 @@ FAMILIES = {
     "breadth": family_breadth,
     "bars": family_bars,
     "osc": family_osc,
+    "strength": family_strength,
 }
 
 
