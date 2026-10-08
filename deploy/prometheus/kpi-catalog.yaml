@@ -1687,3 +1687,140 @@ kpis:
     warmup: 29m
     quality: exact
     method: Williams ultimate oscillator on 1m bars
+
+  # --- Volume (Release 2) ----------------------------------------------------------------------
+  - name: stock:volume_change_15m:percent
+    kind: kpi
+    family: market
+    level: stock_intelligence
+    capability: volume
+    release: R2
+    formula: "(sum V over 15 bars / sum V over the previous 15 bars - 1) * 100"
+    inputs: [stock:bar_1m_volume:shares]
+    rule_file: nse_volume_liquidity.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent
+    warmup: 30m
+    quality: exact
+    method: 15-minute volume rate of change on 1m bars
+
+  - name: stock:cmf_20m:ratio
+    kind: kpi
+    family: market
+    level: stock_intelligence
+    capability: volume
+    release: R2
+    formula: "CMF = sum(MFV) / sum(V) over 20 1m bars"
+    inputs: [stock:bar_1m_money_flow_volume:shares, stock:bar_1m_volume:shares]
+    rule_file: nse_volume_liquidity.rules.yml
+    frequency: 1m
+    scope: core
+    unit: ratio
+    range: {min: -1, max: 1}
+    warmup: 20m
+    quality: exact
+    method: Chaikin money flow on 1m bars (H/L from 1s LTP samples)
+    dashboard_default: true
+
+  - name: stock:volume_zscore_1h:sigma
+    kind: kpi
+    family: market
+    level: stock_intelligence
+    capability: volume
+    release: R2
+    formula: "(V_bar - mean) / stddev over the last hour of 1m bars (>= 30 bars)"
+    inputs: [stock:bar_1m_volume:shares]
+    rule_file: nse_volume_liquidity.rules.yml
+    frequency: 1m
+    scope: core
+    unit: sigma
+    warmup: 30m
+    quality: exact
+    method: volume anomaly z-score
+    alertable: true
+
+  - name: stock:price_impact_15m:bps_per_crore
+    kind: kpi
+    family: microstructure
+    level: stock_intelligence
+    capability: liquidity
+    release: R2
+    formula: "Amihud = |return 15m| (bps) / (sum V 15m * VWAP / 1e7)"
+    inputs: [stock:return_15m:percent, stock:bar_1m_volume:shares, stock_average_traded_price]
+    rule_file: nse_volume_liquidity.rules.yml
+    frequency: 1m
+    scope: core
+    unit: bps_per_crore
+    warmup: 15m
+    quality: proxy
+    method: bps moved per INR 1 crore traded; turnover valued at the day VWAP
+    dashboard_default: true
+
+  - name: stock:avg_turnover_20d:inr
+    kind: kpi
+    family: market
+    level: stock_intelligence
+    capability: volume
+    release: R2
+    formula: "mean session turnover over 28 days (>= 10 sessions)"
+    inputs: [stock:session_turnover:inr]
+    rule_file: nse_volume_liquidity.rules.yml
+    frequency: 1m
+    scope: core
+    unit: inr
+    warmup: 0s
+    warmup_sessions: 10
+    quality: exact
+    method: average daily traded value from the EOD snapshots
+
+  - name: stock:obv_session:shares
+    kind: kpi
+    family: market
+    level: stock_intelligence
+    capability: volume
+    release: R2
+    formula: "OBV += sgn(C - Cp) * V per 1m bar, from 0 at the session start"
+    inputs: [stock_last_price, stock_day_volume_shares]
+    rule_file: nse_volume_liquidity.rules.yml
+    frequency: 1m
+    scope: core
+    unit: shares
+    warmup: 0s
+    quality: exact
+    method: session on-balance volume (stateful)
+    limitation: "restarts from 0 after a gap longer than 3 minutes"
+
+  - name: stock:vpt_session:shares
+    kind: kpi
+    family: market
+    level: stock_intelligence
+    capability: volume
+    release: R2
+    formula: "VPT += V * (C - Cp) / Cp per 1m bar, from 0 at the session start"
+    inputs: [stock_last_price, stock_day_volume_shares]
+    rule_file: nse_volume_liquidity.rules.yml
+    frequency: 1m
+    scope: core
+    unit: shares
+    warmup: 0s
+    quality: exact
+    method: session volume-price trend (stateful)
+    limitation: "restarts from 0 after a gap longer than 3 minutes"
+
+  - name: stock:ad_line_session:shares
+    kind: kpi
+    family: market
+    level: stock_intelligence
+    capability: volume
+    release: R2
+    formula: "A/D += ((C - L) - (H - C)) / (H - L) * V per 1m bar, from 0 at the session start"
+    inputs: [stock_last_price, stock_day_volume_shares]
+    rule_file: nse_volume_liquidity.rules.yml
+    frequency: 1m
+    scope: core
+    unit: shares
+    warmup: 0s
+    quality: exact
+    method: session accumulation/distribution line (stateful)
+    limitation: "restarts from 0 after a gap longer than 3 minutes"

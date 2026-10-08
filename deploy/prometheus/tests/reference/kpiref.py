@@ -25,7 +25,10 @@ TESTS_DIR = os.path.dirname(HERE)
 # promtool evaluates groups in random order unless told; reference values assume inputs first.
 GROUP_ORDER = {
     "volatility": ["stock_fast", "stock_slow", "portfolio", "nse_volatility", "nse_volatility_r2", "nse_volatility_alerts"],
-    "atr": ["nse_eod_snapshot", "nse_volatility", "nse_volatility_r2", "nse_volatility_alerts"],
+    "atr": ["nse_eod_snapshot", "nse_volatility", "nse_volatility_r2", "nse_volatility_alerts",
+            "nse_volume_liquidity", "nse_volume_bars", "nse_volume_stateful", "nse_volume_liquidity_alerts"],
+    "volume": ["stock_fast", "stock_slow", "portfolio", "nse_bars", "nse_volume_liquidity", "nse_volume_bars",
+               "nse_volume_stateful", "nse_volume_liquidity_alerts"],
     "osc": ["nse_bars", "nse_momentum", "nse_momentum_wilder", "nse_momentum_bars", "nse_momentum_alerts"],
     "ma": ["stock_fast", "stock_slow", "portfolio", "nse_trend", "nse_trend_regression", "nse_trend_alerts", "nse_moving_averages"],
 }
@@ -519,11 +522,20 @@ def family_atr():
     hi = Series("stock_high_price", infy, SLOT, cal.daily([b[1] for b in bars]))
     lo = Series("stock_low_price", infy, SLOT, cal.daily([b[2] for b in bars]))
     last = Series("stock_last_price", infy, SLOT, cal.daily(closes))
+    rnd = random.Random(25)
+    day_vol = [rnd.randint(100_000, 900_000) for _ in range(cal.days)]
+    day_vwap = [round((b[1] + b[2]) / 2, 2) for b in bars]
+    vol = Series("stock_day_volume_shares", infy, SLOT, cal.daily(day_vol), "%d")
+    vwap = Series("stock_average_traded_price", infy, SLOT, cal.daily(day_vwap))
     checks = []
     for d in range(cal.days):
         t = cal.t(d, FIRST_OPEN_SLOT + 1)
         past = lambda days: [p for p in range(d) if cal.trading(p) and t - days * 86400 < cal.t(p, POST_CLOSE_SLOT) <= t]
         p28 = past(28)
+        if len(p28) >= 10:
+            checks.append(Check("stock:avg_turnover_20d:inr", infy, t, mean([day_vol[p] * vwap.values[p * SLOTS_PER_DAY] for p in p28])))
+        else:
+            checks.append(Absent("stock:avg_turnover_20d:inr", infy, t))
         if len(p28) >= 10:
             logret = [math.log(closes[p] / bars[p][0]) for p in p28]
             lrsq = [math.log(bars[p][1] / bars[p][2]) ** 2 for p in p28]
@@ -548,9 +560,9 @@ def family_atr():
         checks.append(Check("stock:atr_14d:points", infy, t, atr))
         checks.append(Check("stock:range_expansion:ratio", infy, t, (bars[d][1] - bars[d][2]) / atr))
         checks.append(Check("stock:atr_14d:percent", infy, t, atr / closes[d] * 100))
-    return ["nse_eod_snapshot.rules.yml", "nse_volatility.rules.yml"], [
-        test_case("ATR(14), ATR %, range expansion, HV, Parkinson and ATR ratio over 26 days with weekends",
-                  SLOT, cal.series() + [pc, hi, lo, last], checks)
+    return ["nse_eod_snapshot.rules.yml", "nse_volatility.rules.yml", "nse_volume_liquidity.rules.yml"], [
+        test_case("ATR(14), ATR %, range expansion, HV, Parkinson, ATR ratio and average turnover over 26 days with weekends",
+                  SLOT, cal.series() + [pc, hi, lo, last, vol, vwap], checks)
     ], SLOT
 
 
@@ -858,6 +870,60 @@ def family_strength():
     ], 60
 
 
+def family_volume():
+    """Volume change, CMF, volume z-score, Amihud and the session OBV/VPT/A-D lines; open at t=0."""
+    step, minutes = 15, 62
+    n = 4 * minutes + 1
+    series = [Series("stock_market_open", CORE, step, constant(1, n), "%d")]
+    evals = list(range(0, minutes * 60 + 1, 60))
+    checks = []
+    for seed, sym in ((26, "INFY"), (27, "TCS")):
+        lbl = instrument(sym)
+        rnd = random.Random(seed)
+        price = Series("stock_last_price", lbl, step, random_walk(seed, n, sigma=0.002))
+        vol = Series("stock_day_volume_shares", lbl, step, running([rnd.randint(0, 2000) for _ in range(n)], lambda a, b: a + b), "%d")
+        vwap = Series("stock_average_traded_price", lbl, step, [p * (1 + rnd.uniform(-0.002, 0.002)) for p in price.values])
+        series += [price, vol, vwap]
+        vb, mfv = {}, {}
+        obv, vpt, ad = {}, {}, {}
+        for t in evals:
+            vb[t] = vol.at(t) - vol.at(t - 60) if t >= 60 and vol.at(t) >= vol.at(t - 60) else vol.at(t)
+            w = [v for _, v in price.samples(t - 60, t)]
+            h, l, c = max(w), min(w), price.at(t)
+            mfv[t] = ((c - l) - (h - c)) / (h - l) * vb[t] if h > l else 0.0
+            if t == 0:
+                obv[t] = vpt[t] = ad[t] = 0.0
+                continue
+            cp = price.at(t - 60)
+            obv[t] = obv[t - 60] + sgn(c - cp) * vb[t]
+            vpt[t] = vpt[t - 60] + (c - cp) / cp * vb[t]
+            ad[t] = ad[t - 60] + mfv[t]
+        within = lambda d, t, a, b: [d[k] for k in evals if t - a < k <= t - b]
+        for t in (5 * 60, 15 * 60, 20 * 60, 29 * 60, 40 * 60, 62 * 60):
+            checks.append(Check("stock:obv_session:shares", lbl, t, obv[t]))
+            checks.append(Check("stock:vpt_session:shares", lbl, t, vpt[t], abs_tol=1e-6))
+            checks.append(Check("stock:ad_line_session:shares", lbl, t, ad[t], rel_tol=1e-8, abs_tol=1e-6))
+            if t >= 29 * 60:
+                checks.append(Check("stock:volume_change_15m:percent", lbl, t,
+                                    (sum(within(vb, t, 900, 0)) / sum(within(vb, t, 1800, 900)) - 1) * 100))
+                last_hour = within(vb, t, 3600, 0)
+                checks.append(Check("stock:volume_zscore_1h:sigma", lbl, t, (vb[t] - mean(last_hour)) / pstdev(last_hour), rel_tol=1e-8))
+            else:
+                checks.append(Absent("stock:volume_change_15m:percent", lbl, t))
+                checks.append(Absent("stock:volume_zscore_1h:sigma", lbl, t))
+            if t >= 19 * 60:
+                checks.append(Check("stock:cmf_20m:ratio", lbl, t, sum(within(mfv, t, 1200, 0)) / sum(within(vb, t, 1200, 0)), abs_tol=1e-9))
+            else:
+                checks.append(Absent("stock:cmf_20m:ratio", lbl, t))
+            if t >= 15 * 60:
+                ret15 = (price.at(t) / price.at(t - 900) - 1) * 100
+                checks.append(Check("stock:price_impact_15m:bps_per_crore", lbl, t,
+                                    abs(ret15) * 100 / (sum(within(vb, t, 900, 0)) * vwap.at(t) / 1e7), rel_tol=1e-8, abs_tol=1e-9))
+    return ["stock_recording.rules.yml", "nse_bars.rules.yml", "nse_volume_liquidity.rules.yml"], [
+        test_case("volume change, CMF, volume z-score, Amihud and OBV/VPT/A-D match the reference", step, series, checks)
+    ], 60
+
+
 FAMILIES = {
     "base": family_base,
     "price_levels": family_price_levels,
@@ -873,6 +939,7 @@ FAMILIES = {
     "bars": family_bars,
     "osc": family_osc,
     "strength": family_strength,
+    "volume": family_volume,
 }
 
 
