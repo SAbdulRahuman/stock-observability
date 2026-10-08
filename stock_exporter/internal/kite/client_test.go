@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	kiteconnect "github.com/zerodha/gokiteconnect/v4"
 
@@ -78,6 +79,20 @@ func fakeKite(t *testing.T, quoteCalls *atomic.Int32, tokenOK *atomic.Bool) *htt
 	mux.HandleFunc("/user/margins", func(w http.ResponseWriter, _ *http.Request) {
 		ok(w, `{"equity":{"enabled":true,"net":80000,"utilised":{"debits":20000}},"commodity":{"enabled":false}}`)
 	})
+	// 60 daily candles for INFY (close 100..159, high +1, low -1); the index fails.
+	mux.HandleFunc("/instruments/historical/408065/day", func(w http.ResponseWriter, _ *http.Request) {
+		var rows []string
+		for i := range 60 {
+			c := 100 + i
+			rows = append(rows, fmt.Sprintf(`["2026-01-%02dT00:00:00+0530",%d,%d,%d,%d,1000]`, 1+i%28, c, c+1, c-1, c))
+		}
+		ok(w, `{"candles":[`+strings.Join(rows, ",")+`]}`)
+	})
+	mux.HandleFunc("/instruments/historical/256265/day", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"status":"error","message":"Insufficient permission for that call.","error_type":"PermissionException"}`)
+	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -94,7 +109,7 @@ func newTestClient(t *testing.T) (*Client, *store.Health, *atomic.Int32, *atomic
 	api.SetBaseURI(srv.URL)
 	h := store.NewHealth("kite", "full")
 	c := NewClient(api, h, func() { tokenErrors.Add(1) })
-	c.quote.every, c.other.every = 0, 0
+	c.quote.every, c.other.every, c.historical.every = 0, 0, 0
 	return c, h, &quoteCalls, &tokenOK, &tokenErrors
 }
 
@@ -150,6 +165,35 @@ func TestInstrumentsAndCircuits(t *testing.T) {
 	}
 	if apiCount(h, EndpointQuote, store.OutcomeRateLimited) != 1 {
 		t.Fatalf("rate limit not recorded: %+v", h.Snapshot().API)
+	}
+}
+
+func TestReference(t *testing.T) {
+	c, h, _, _, _ := newTestClient(t)
+	st := store.New()
+	st.SetInstruments([]store.Instrument{
+		{Token: 408065, Exchange: "NSE", Symbol: "INFY", Type: store.TypeEquity, Tier: store.TierCore},
+		{Token: 256265, Exchange: "NSE", Symbol: "NIFTY 50", Type: store.TypeIndex, Tier: store.TierCore},
+		{Token: 2953217, Exchange: "NSE", Symbol: "TCS", Type: store.TypeEquity, Tier: store.TierBroad},
+	})
+	if err := c.RefreshReference(context.Background(), st, time.Now()); err == nil || !strings.Contains(err.Error(), "NIFTY 50") {
+		t.Fatalf("expected the index failure to be reported, got %v", err)
+	}
+	for _, e := range st.Snapshot() {
+		switch e.Instrument.Symbol {
+		case "INFY":
+			r := e.Reference
+			if !e.HasReference || r.High52W != 160 || r.Low52W != 99 || r.SMA50D != 134.5 || r.SMA200D != 0 {
+				t.Fatalf("INFY reference %+v", r)
+			}
+		default:
+			if e.HasReference {
+				t.Fatalf("%s must have no reference", e.Instrument.Symbol)
+			}
+		}
+	}
+	if apiCount(h, EndpointHistorical, store.OutcomeSuccess) != 1 || apiCount(h, EndpointHistorical, store.OutcomeError) != 1 {
+		t.Fatalf("api counts %+v", h.Snapshot().API)
 	}
 }
 

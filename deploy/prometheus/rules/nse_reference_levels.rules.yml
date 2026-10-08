@@ -1,0 +1,54 @@
+# 52-week and daily moving-average levels (proposal §7.2 #20-25, Release 3) from the exporter's
+# `reference` collector (one year of Kite day candles up to the previous session, core tier).
+#   52W position = (C - L52) / (H52 - L52)        distance from 52W high = (C / H52 - 1) * 100
+#   SMA spread   = (SMA50d / SMA200d - 1) * 100
+groups:
+  - name: nse_reference_levels
+    interval: 15s
+    rules:
+      - record: stock:range_52w_position:ratio
+        expr: |
+          (stock_last_price{tier="core"} - stock_52w_low_price)
+          / ((stock_52w_high_price - stock_52w_low_price) > 0)
+      - record: stock:distance_52w_high:percent
+        expr: (stock_last_price{tier="core"} / (stock_52w_high_price > 0) - 1) * 100
+      - record: stock:sma_spread_50_200d:percent
+        expr: (stock_sma_50d_price / (stock_sma_200d_price > 0) - 1) * 100
+
+  - name: nse_reference_levels_alerts
+    interval: 15s
+    rules:
+      - alert: Stock52WeekBreakout
+        expr: |
+          (
+            label_replace(
+                stock_last_price{tier="core", instrument_type="EQ"} > stock_52w_high_price
+              and stock:relative_volume:ratio > 1.5,
+              "direction", "bullish", "", "")
+            or
+            label_replace(
+                stock_last_price{tier="core", instrument_type="EQ"} < stock_52w_low_price
+              and stock:relative_volume:ratio > 1.5,
+              "direction", "bearish", "", "")
+          )
+          and on() stock_market_open == 1
+        for: 1m
+        keep_firing_for: 30m
+        labels: {severity: info, category: price, layer: condition, condition: 52w_breakout}
+        annotations:
+          summary: "{{ $labels.symbol }} {{ $labels.direction }} 52-week breakout at {{ $value }}"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} is trading beyond its 52-week {{ if eq $labels.direction \"bullish\" }}high{{ else }}low{{ end }} on more than 1.5x relative volume."
+          effectiveness: '{{ with printf `alert:hit_rate_5d:ratio{alertname="Stock52WeekBreakout",direction=%q,horizon="15m"}` $labels.direction | query }}15m hit rate over the last 5 days: {{ . | first | value | humanizePercentage }}{{ else }}No history yet{{ end }}'
+      # The cross happened at the previous session's close; it notifies during the next session.
+      - alert: StockGoldenDeathCross
+        expr: |
+          (
+              label_replace(stock_sma_50d_200d_cross{tier="core", instrument_type="EQ"} == 1, "direction", "bullish", "", "")
+            or label_replace(stock_sma_50d_200d_cross{tier="core", instrument_type="EQ"} == -1, "direction", "bearish", "", "")
+          )
+          and on() stock_market_open == 1
+        labels: {severity: info, category: price, layer: condition, condition: sma_50_200d_cross}
+        annotations:
+          summary: "{{ $labels.symbol }} {{ if eq $labels.direction \"bullish\" }}golden{{ else }}death{{ end }} cross (daily SMA 50/200)"
+          description: "The 50-day SMA of {{ $labels.exchange }}:{{ $labels.symbol }} crossed {{ if eq $labels.direction \"bullish\" }}above{{ else }}below{{ end }} its 200-day SMA at the previous close."
+          effectiveness: '{{ with printf `alert:hit_rate_5d:ratio{alertname="StockGoldenDeathCross",direction=%q,horizon="1h"}` $labels.direction | query }}1h hit rate over the last 5 days: {{ . | first | value | humanizePercentage }}{{ else }}No history yet{{ end }}'

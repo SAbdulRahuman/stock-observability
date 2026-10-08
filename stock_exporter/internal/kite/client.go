@@ -16,6 +16,7 @@ package kite
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -27,10 +28,11 @@ import (
 	"github.com/seenimo/stock_exporter/internal/watchlist"
 )
 
-// Kite REST limits: quote endpoints 1 req/s with up to 500 instruments, others 10 req/s.
+// Kite REST limits: quote endpoints 1 req/s with up to 500 instruments, historical 3 req/s, others 10 req/s.
 const (
 	QuoteBatchSize = 500
 	quoteRate      = time.Second
+	historicalRate = 350 * time.Millisecond
 	defaultRate    = 100 * time.Millisecond
 )
 
@@ -41,6 +43,7 @@ const (
 	EndpointPositions   = "positions"
 	EndpointMargins     = "margins"
 	EndpointInstruments = "instruments"
+	EndpointHistorical  = "historical"
 )
 
 // API is the subset of the Kite REST client used by the exporter.
@@ -50,6 +53,7 @@ type API interface {
 	GetPositions() (kiteconnect.Positions, error)
 	GetUserMargins() (kiteconnect.AllMargins, error)
 	GetInstrumentsByExchange(exchange string) (kiteconnect.Instruments, error)
+	GetHistoricalData(instrumentToken int, interval string, fromDate, toDate time.Time, continuous, oi bool) ([]kiteconnect.HistoricalData, error)
 }
 
 // limiter enforces a minimum interval between calls.
@@ -84,12 +88,14 @@ type Client struct {
 	health       *store.Health
 	onTokenError func()
 	quote        *limiter
+	historical   *limiter
 	other        *limiter
 }
 
 // NewClient wraps api. onTokenError is called when Kite rejects the access token.
 func NewClient(api API, health *store.Health, onTokenError func()) *Client {
-	return &Client{api: api, health: health, onTokenError: onTokenError, quote: &limiter{every: quoteRate}, other: &limiter{every: defaultRate}}
+	return &Client{api: api, health: health, onTokenError: onTokenError,
+		quote: &limiter{every: quoteRate}, historical: &limiter{every: historicalRate}, other: &limiter{every: defaultRate}}
 }
 
 // IsTokenError reports whether err is a Kite TokenException.
@@ -163,6 +169,38 @@ func (c *Client) RefreshCircuits(ctx context.Context, st *store.Store) error {
 		}
 	}
 	return nil
+}
+
+// RefreshReference fetches one year of daily candles up to yesterday for each core-tier instrument
+// and stores its 52-week range, daily SMA 50/200 and SMA cross (needs the Kite historical data
+// add-on). A failing instrument is skipped; a token error aborts the refresh.
+func (c *Client) RefreshReference(ctx context.Context, st *store.Store, now time.Time) error {
+	var errs []error
+	to := now.AddDate(0, 0, -1)
+	for _, in := range st.Instruments() {
+		if in.Tier != store.TierCore {
+			continue
+		}
+		if err := c.historical.wait(ctx); err != nil {
+			return err
+		}
+		candles, err := c.api.GetHistoricalData(int(in.Token), "day", to.AddDate(-1, 0, 0), to, false, false)
+		if err := c.observe(EndpointHistorical, err); err != nil {
+			if IsTokenError(err) {
+				return err
+			}
+			errs = append(errs, fmt.Errorf("%s:%s: %w", in.Exchange, in.Symbol, err))
+			continue
+		}
+		highs, lows, closes := make([]float64, len(candles)), make([]float64, len(candles)), make([]float64, len(candles))
+		for i, k := range candles {
+			highs[i], lows[i], closes[i] = k.High, k.Low, k.Close
+		}
+		if r, ok := store.NewReference(highs, lows, closes, now); ok {
+			st.UpdateReference(in.Token, r)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // RefreshPortfolio fetches holdings, positions and margins.

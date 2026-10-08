@@ -30,6 +30,8 @@ cases=(
   'market-digest|alertname=MarketRegimeChange category=market severity=info layer=condition condition=regime_change regime=HIGH_VOLATILITY'
   'market-incident|alertname=MarketStressIncident category=market severity=warning layer=incident incident=market_stress'
   'market-digest|alertname=StockAbnormalReturn category=price severity=info layer=condition condition=abnormal_return direction=bullish exchange=NSE symbol=INFY'
+  'market-digest|alertname=Stock52WeekBreakout category=price severity=info layer=condition condition=52w_breakout direction=bullish exchange=NSE symbol=INFY'
+  'market-digest|alertname=StockGoldenDeathCross category=price severity=info layer=condition condition=sma_50_200d_cross direction=bearish exchange=NSE symbol=INFY'
   'market-incident|alertname=MarketImpliedMoveExceeded category=market severity=warning layer=incident incident=implied_move_exceeded'
   'market-incident|alertname=MarketBreadthStress category=market severity=warning layer=incident incident=breadth_stress direction=bearish'
   'market-incident|alertname=MarketCircuitCluster category=market severity=warning layer=incident incident=circuit_cluster band=lower'

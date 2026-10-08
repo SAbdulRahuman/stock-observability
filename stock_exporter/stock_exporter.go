@@ -178,6 +178,7 @@ type options struct {
 	kiteTokenFile      string
 	kiteMode           string
 	kiteCircuitEvery   time.Duration
+	kiteReferenceEvery time.Duration
 	kitePortfolioEvery time.Duration
 	kiteBaseURI        string
 
@@ -256,11 +257,12 @@ func start(ctx context.Context, o options, b *bootstrap.Bootstrap) (collector.De
 		b.Handle("/kite/callback", sess.CallbackHandler())
 		go sess.Watch(ctx)
 		cfg := kite.RunnerConfig{
-			Feed:            kite.FeedConfig{APIKey: o.kiteAPIKey, Mode: mode},
-			BaseURI:         o.kiteBaseURI,
-			CircuitInterval: o.kiteCircuitEvery,
-			PortfolioPoll:   collector.Enabled("portfolio"),
-			PortfolioEvery:  o.kitePortfolioEvery,
+			Feed:              kite.FeedConfig{APIKey: o.kiteAPIKey, Mode: mode},
+			BaseURI:           o.kiteBaseURI,
+			CircuitInterval:   o.kiteCircuitEvery,
+			ReferenceInterval: o.kiteReferenceEvery,
+			PortfolioPoll:     collector.Enabled("portfolio"),
+			PortfolioEvery:    o.kitePortfolioEvery,
 		}
 		go kite.Run(ctx, cfg, sess, wl, st, deps.Health, b.Logger.With("component", "kite"))
 	default:
@@ -285,6 +287,7 @@ func main() {
 	kingpin.Flag("kite.token-file", "File where the daily Kite access token is persisted (mode 0600).").Default("data/kite_session.json").StringVar(&o.kiteTokenFile)
 	kingpin.Flag("kite.ticker-mode", "Kite WebSocket mode: full, quote or ltp.").Default("full").StringVar(&o.kiteMode)
 	kingpin.Flag("kite.circuit-refresh-interval", "How often to refresh circuit limits via the quote API.").Default("5m").DurationVar(&o.kiteCircuitEvery)
+	kingpin.Flag("kite.reference-refresh-interval", "How often to refresh 52-week and daily SMA levels of core instruments from historical day candles (needs the Kite historical data add-on; 0 disables).").Default("6h").DurationVar(&o.kiteReferenceEvery)
 	kingpin.Flag("kite.portfolio-refresh-interval", "How often to refresh holdings, positions and margins.").Default("30s").DurationVar(&o.kitePortfolioEvery)
 	kingpin.Flag("kite.base-uri", "Override the Kite REST API base URI (testing).").Default("").Hidden().StringVar(&o.kiteBaseURI)
 	kingpin.Flag("sim.seed", "Random seed for the simulator.").Default("1").Int64Var(&o.simSeed)

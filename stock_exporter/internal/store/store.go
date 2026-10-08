@@ -93,11 +93,59 @@ type Circuit struct {
 
 // Entry is a consistent view of one instrument.
 type Entry struct {
-	Instrument Instrument
-	Quote      Quote
-	HasQuote   bool
-	Circuit    Circuit
-	HasCircuit bool
+	Instrument   Instrument
+	Quote        Quote
+	HasQuote     bool
+	Circuit      Circuit
+	HasCircuit   bool
+	Reference    Reference
+	HasReference bool
+}
+
+// Reference holds levels derived from up to one year of daily candles.
+// SMA50D/SMA200D are 0 when fewer than 50/200 candles are available. Cross is +1 when the
+// latest candle moved SMA50 above SMA200 (golden cross), -1 below (death cross), else 0.
+type Reference struct {
+	High52W   float64
+	Low52W    float64
+	SMA50D    float64
+	SMA200D   float64
+	Cross     int
+	UpdatedAt time.Time
+}
+
+// NewReference computes reference levels from daily candles, oldest first.
+func NewReference(highs, lows, closes []float64, at time.Time) (Reference, bool) {
+	if len(highs) == 0 || len(highs) != len(lows) || len(highs) != len(closes) {
+		return Reference{}, false
+	}
+	r := Reference{High52W: highs[0], Low52W: lows[0], UpdatedAt: at}
+	for i := range highs {
+		r.High52W = max(r.High52W, highs[i])
+		r.Low52W = min(r.Low52W, lows[i])
+	}
+	sma := func(xs []float64, n int) float64 {
+		if len(xs) < n {
+			return 0
+		}
+		sum := 0.0
+		for _, c := range xs[len(xs)-n:] {
+			sum += c
+		}
+		return sum / float64(n)
+	}
+	r.SMA50D, r.SMA200D = sma(closes, 50), sma(closes, 200)
+	if len(closes) > 200 {
+		prev := closes[:len(closes)-1]
+		p50, p200 := sma(prev, 50), sma(prev, 200)
+		switch {
+		case p50 <= p200 && r.SMA50D > r.SMA200D:
+			r.Cross = 1
+		case p50 >= p200 && r.SMA50D < r.SMA200D:
+			r.Cross = -1
+		}
+	}
+	return r, true
 }
 
 // Store is safe for concurrent use.
@@ -106,6 +154,7 @@ type Store struct {
 	instruments map[uint32]Instrument
 	quotes      map[uint32]Quote
 	circuits    map[uint32]Circuit
+	refs        map[uint32]Reference
 	portfolio   Portfolio
 	hasPortf    bool
 	createdAt   time.Time
@@ -117,6 +166,7 @@ func New() *Store {
 		instruments: map[uint32]Instrument{},
 		quotes:      map[uint32]Quote{},
 		circuits:    map[uint32]Circuit{},
+		refs:        map[uint32]Reference{},
 		createdAt:   time.Now(),
 	}
 }
@@ -141,6 +191,11 @@ func (s *Store) SetInstruments(ins []Instrument) {
 	for t := range s.circuits {
 		if _, ok := next[t]; !ok {
 			delete(s.circuits, t)
+		}
+	}
+	for t := range s.refs {
+		if _, ok := next[t]; !ok {
+			delete(s.refs, t)
 		}
 	}
 }
@@ -194,6 +249,17 @@ func (s *Store) UpdateCircuit(token uint32, c Circuit) bool {
 	return true
 }
 
+// UpdateReference stores reference levels. Unknown tokens are ignored.
+func (s *Store) UpdateReference(token uint32, r Reference) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.instruments[token]; !ok {
+		return false
+	}
+	s.refs[token] = r
+	return true
+}
+
 // Snapshot returns all instruments with their latest state, sorted by exchange and symbol.
 func (s *Store) Snapshot() []Entry {
 	s.mu.RLock()
@@ -201,7 +267,8 @@ func (s *Store) Snapshot() []Entry {
 	for t, i := range s.instruments {
 		q, hq := s.quotes[t]
 		c, hc := s.circuits[t]
-		out = append(out, Entry{Instrument: i, Quote: q, HasQuote: hq, Circuit: c, HasCircuit: hc})
+		r, hr := s.refs[t]
+		out = append(out, Entry{Instrument: i, Quote: q, HasQuote: hq, Circuit: c, HasCircuit: hc, Reference: r, HasReference: hr})
 	}
 	s.mu.RUnlock()
 	sort.Slice(out, func(a, b int) bool {

@@ -190,6 +190,22 @@ func (s *Simulator) rollover(x *state, day string, now time.Time) {
 	if x.in.Type != store.TypeIndex {
 		s.st.UpdateCircuit(x.in.Token, store.Circuit{Upper: round(x.prevClose * 1.1), Lower: round(x.prevClose * 0.9), UpdatedAt: now})
 	}
+	if x.in.Tier == store.TierCore {
+		// Hash-based (not rng) so the tick sequence of existing seeds is unchanged; ~1 in 10
+		// instruments sits within 2% of its 52-week high.
+		u := func(salt string) float64 { return float64(hash(x.in.Symbol+day+salt)%1000) / 1000 }
+		cross := 0
+		if c := u("x"); c < 0.02 {
+			cross = 1
+		} else if c > 0.98 {
+			cross = -1
+		}
+		s.st.UpdateReference(x.in.Token, store.Reference{
+			High52W: round(x.prevClose * (1.005 + 0.25*u("h"))), Low52W: round(x.prevClose * (0.95 - 0.25*u("l"))),
+			SMA50D: round(x.prevClose * (0.97 + 0.06*u("50"))), SMA200D: round(x.prevClose * (0.94 + 0.12*u("200"))),
+			Cross: cross, UpdatedAt: now,
+		})
+	}
 }
 
 func (s *Simulator) depth(last float64) store.Depth {

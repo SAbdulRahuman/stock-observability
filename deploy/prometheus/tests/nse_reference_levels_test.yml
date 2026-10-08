@@ -1,0 +1,112 @@
+# promtool test rules prometheus/tests/nse_reference_levels_test.yml
+rule_files:
+  - ../rules/nse_reference_levels.rules.yml
+
+evaluation_interval: 1m
+
+group_eval_order:
+  - nse_reference_levels
+  - nse_reference_levels_alerts
+
+tests:
+  - name: 52-week position, distance from the high and SMA spread
+    interval: 1m
+    input_series:
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1500x5'
+      - series: 'stock_52w_high_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '2000x5'
+      - series: 'stock_52w_low_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1000x5'
+      - series: 'stock_sma_50d_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '3000x5'
+      - series: 'stock_sma_200d_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '2000x5'
+    promql_expr_test:
+      - expr: stock:range_52w_position:ratio
+        eval_time: 2m
+        exp_samples:
+          - labels: 'stock:range_52w_position:ratio{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 0.5
+      - expr: stock:distance_52w_high:percent
+        eval_time: 2m
+        exp_samples:
+          - labels: 'stock:distance_52w_high:percent{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: -25
+      - expr: stock:sma_spread_50_200d:percent
+        eval_time: 2m
+        exp_samples:
+          - labels: 'stock:sma_spread_50_200d:percent{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 50
+  # INFY breaks its 52-week high at 5m on volume; TCS breaks without volume.
+  - name: 52-week breakout needs volume and an open market
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x20 0x10'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1990x4 2010x25'
+      - series: 'stock_52w_high_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '2000x30'
+      - series: 'stock_52w_low_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1000x30'
+      - series: 'stock:relative_volume:ratio{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '2x30'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '4100x30'
+      - series: 'stock_52w_high_price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '4000x30'
+      - series: 'stock_52w_low_price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '3000x30'
+      - series: 'stock:relative_volume:ratio{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: Stock52WeekBreakout
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: Stock52WeekBreakout
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core, direction: bullish, severity: info, category: price, layer: condition, condition: 52w_breakout}
+            exp_annotations:
+              summary: INFY bullish 52-week breakout at 2010
+              description: NSE:INFY is trading beyond its 52-week high on more than 1.5x relative volume.
+              effectiveness: No history yet
+      # The market closes at 21m; keep_firing_for holds the alert for 30 more minutes.
+      - eval_time: 29m
+        alertname: Stock52WeekBreakout
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core, direction: bullish, severity: info, category: price, layer: condition, condition: 52w_breakout}
+            exp_annotations:
+              summary: INFY bullish 52-week breakout at 2010
+              description: NSE:INFY is trading beyond its 52-week high on more than 1.5x relative volume.
+              effectiveness: No history yet
+
+  - name: golden and death crosses notify only while the market is open
+    interval: 1m
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '0x5 1x10'
+      - series: 'stock_sma_50d_200d_cross{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x15'
+      - series: 'stock_sma_50d_200d_cross{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '-1x15'
+      - series: 'stock_sma_50d_200d_cross{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
+        values: '1x15'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: StockGoldenDeathCross
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: StockGoldenDeathCross
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core, direction: bullish, severity: info, category: price, layer: condition, condition: sma_50_200d_cross}
+            exp_annotations:
+              summary: INFY golden cross (daily SMA 50/200)
+              description: The 50-day SMA of NSE:INFY crossed above its 200-day SMA at the previous close.
+              effectiveness: No history yet
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: TCS, sector: IT, instrument_type: EQ, tier: core, direction: bearish, severity: info, category: price, layer: condition, condition: sma_50_200d_cross}
+            exp_annotations:
+              summary: TCS death cross (daily SMA 50/200)
+              description: The 50-day SMA of NSE:TCS crossed below its 200-day SMA at the previous close.
+              effectiveness: No history yet

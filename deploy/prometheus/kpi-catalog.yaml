@@ -2728,3 +2728,60 @@ kpis:
     method: market-model residual (idiosyncratic move)
     alertable: true
     dashboard_default: true
+
+  # --- 52-week and daily SMA levels (exporter `reference` collector, nse_reference_levels, R3) ---
+  - name: stock:range_52w_position:ratio
+    kind: kpi
+    family: technical
+    level: risk_intelligence
+    capability: price
+    release: R3
+    formula: "(C - 52W low) / (52W high - 52W low)"
+    inputs: [stock_last_price, stock_52w_high_price, stock_52w_low_price]
+    rule_file: nse_reference_levels.rules.yml
+    frequency: 15s
+    scope: core
+    unit: ratio
+    range: {min: 0, max: 1}
+    warmup: 0s
+    quality: exact
+    method: position within the 52-week range of Kite day candles up to the previous session
+    limitation: "needs the Kite historical data add-on; no corporate-action adjustment"
+    dashboard_default: true
+
+  - name: stock:distance_52w_high:percent
+    kind: kpi
+    family: technical
+    level: risk_intelligence
+    capability: price
+    release: R3
+    formula: "(C / 52W high - 1) * 100"
+    inputs: [stock_last_price, stock_52w_high_price]
+    rule_file: nse_reference_levels.rules.yml
+    frequency: 15s
+    scope: core
+    unit: percent
+    warmup: 0s
+    quality: exact
+    method: distance from the 52-week high of Kite day candles up to the previous session
+    limitation: "needs the Kite historical data add-on; no corporate-action adjustment"
+    alertable: true
+    dashboard_default: true
+
+  - name: stock:sma_spread_50_200d:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R3
+    formula: "(SMA50 daily / SMA200 daily - 1) * 100"
+    inputs: [stock_sma_50d_price, stock_sma_200d_price]
+    rule_file: nse_reference_levels.rules.yml
+    frequency: 15s
+    scope: core
+    unit: percent
+    warmup: 0s
+    quality: exact
+    method: daily golden/death-cross spread from Kite day candles (>= 200 candles)
+    limitation: "needs the Kite historical data add-on"
+    dashboard_default: true

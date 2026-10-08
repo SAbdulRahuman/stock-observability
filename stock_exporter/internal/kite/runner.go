@@ -29,11 +29,12 @@ const resolveRetryDelay = 30 * time.Second
 
 // RunnerConfig configures the Kite pipeline.
 type RunnerConfig struct {
-	Feed            FeedConfig
-	BaseURI         string
-	CircuitInterval time.Duration
-	PortfolioPoll   bool
-	PortfolioEvery  time.Duration
+	Feed              FeedConfig
+	BaseURI           string
+	CircuitInterval   time.Duration
+	ReferenceInterval time.Duration // 0 disables daily reference data
+	PortfolioPoll     bool
+	PortfolioEvery    time.Duration
 }
 
 // Run starts the feed and pollers whenever a valid session exists and restarts
@@ -102,6 +103,11 @@ func runSession(ctx context.Context, cfg RunnerConfig, token string, sess *Sessi
 	if cfg.PortfolioPoll {
 		wg.Go(func() {
 			Poll(cctx, cfg.PortfolioEvery, "portfolio", logger, func(c context.Context) error { return client.RefreshPortfolio(c, st) })
+		})
+	}
+	if cfg.ReferenceInterval > 0 {
+		wg.Go(func() {
+			Poll(cctx, cfg.ReferenceInterval, EndpointHistorical, logger, func(c context.Context) error { return client.RefreshReference(c, st, time.Now()) })
 		})
 	}
 	<-cctx.Done()
