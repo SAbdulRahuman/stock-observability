@@ -24,6 +24,18 @@ func TestGetCachesWithinTTL(t *testing.T) {
 	}
 }
 
+func TestForgetReloads(t *testing.T) {
+	c := New()
+	var calls atomic.Int32
+	load := func() (any, error) { return calls.Add(1), nil }
+	c.Get("k", time.Minute, time.Hour, load)
+	c.Forget("k")
+	c.Forget("missing")
+	if r, _ := c.Get("k", time.Minute, time.Hour, load); r.Value != int32(2) {
+		t.Fatalf("after Forget got %v, want a reload", r.Value)
+	}
+}
+
 func TestGetCoalescesConcurrentLoads(t *testing.T) {
 	c := New()
 	var calls atomic.Int32

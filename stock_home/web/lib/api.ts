@@ -18,6 +18,16 @@ const quote = z.object({
   spark: z.array(point).nullish(),
 });
 
+const timelineItem = z.object({
+  name: z.string(),
+  severity: z.string(),
+  category: z.string(),
+  subject: z.string().optional(),
+  symbol: z.string().optional(),
+  start: z.string(),
+  end: z.string().nullish(),
+});
+
 const schemas = {
   status: z.object({
     market: z.object({
@@ -123,17 +133,7 @@ const schemas = {
   }),
   timeline: z.object({
     from: z.string(),
-    items: z.array(
-      z.object({
-        name: z.string(),
-        severity: z.string(),
-        category: z.string(),
-        subject: z.string().optional(),
-        symbol: z.string().optional(),
-        start: z.string(),
-        end: z.string().nullish(),
-      }),
-    ),
+    items: z.array(timelineItem),
     bySeverity: z.record(z.string(), z.number()),
     truncated: z.boolean(),
   }),
@@ -145,6 +145,7 @@ const schemas = {
     sessionClose: z.string(),
     timezone: z.string(),
     quoteSymbolsMax: z.number().optional(),
+    silencesAllowed: z.boolean().optional(),
   }),
 };
 
@@ -255,4 +256,62 @@ export function useQuotes(symbols: string[]) {
 export async function fetchQuotes(symbols: string[]): Promise<Quote[]> {
   const env = await fetchEnvelope(`/api/v1/quotes?symbols=${encodeURIComponent(symbols.join(","))}`, quotesSchema);
   return env.data.items;
+}
+
+const alertRow = z.object({
+  key: z.string(),
+  fingerprint: z.string().optional(),
+  name: z.string(),
+  severity: z.string(),
+  category: z.string().optional(),
+  summary: z.string().optional(),
+  description: z.string().optional(),
+  symbol: z.string().optional(),
+  exchange: z.string().optional(),
+  value: z.string().optional(),
+  threshold: z.string().optional(),
+  startsAt: z.string(),
+  endsAt: z.string().nullish(),
+  status: z.enum(["firing", "acknowledged", "silenced", "inhibited", "resolved"]),
+  silencedUntil: z.string().nullish(),
+  source: z.string(),
+  sourceUrl: z.string().optional(),
+  exploreUrl: z.string().optional(),
+});
+const alertListSchema = z.object({
+  items: z.array(alertRow),
+  timeline: z.array(timelineItem),
+  from: z.string(),
+  truncated: z.boolean(),
+});
+export type AlertRow = z.infer<typeof alertRow>;
+export type AlertList = z.infer<typeof alertListSchema>;
+export type TimelineItem = z.infer<typeof timelineItem>;
+
+export const ALERT_LIST_KEY = ["alert-list"];
+
+/** Active alerts (incl. silenced) plus alerts resolved in the last 24h. */
+export function useAlertList() {
+  return useQuery({
+    queryKey: ALERT_LIST_KEY,
+    queryFn: ({ signal }) => fetchEnvelope("/api/v1/alerts/items", alertListSchema, signal),
+    refetchInterval: 5_000,
+  });
+}
+
+export type SilenceKind = "acknowledge" | "silence";
+export const silenceDurations = ["30m", "1h", "2h", "4h", "24h"] as const;
+export type SilenceResult = { created: { fingerprint: string; silenceId: string }[]; failed: { fingerprint: string; error: string }[] };
+
+/** Creates Alertmanager silences through stock_home; the server derives matchers from each alert. */
+export async function createSilences(req: { fingerprints: string[]; kind: SilenceKind; duration: string; comment: string }): Promise<SilenceResult> {
+  const res = await fetch("/api/v1/silences", {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(req),
+  });
+  const body = (await res.json().catch(() => ({}))) as { data?: SilenceResult; error?: string };
+  if (body.data) return body.data;
+  throw new Error(body.error ?? `HTTP ${res.status}`);
 }

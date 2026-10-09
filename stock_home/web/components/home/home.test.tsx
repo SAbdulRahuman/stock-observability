@@ -141,7 +141,7 @@ describe("HomePage", () => {
     expect(within(alerts).getByText("VolumeSpike")).toBeInTheDocument();
     expect(within(alerts).getAllByText("Firing")).toHaveLength(2);
     expect(await within(alerts).findByText("Resolved")).toBeInTheDocument();
-    expect(within(alerts).getByLabelText("View all alerts")).toHaveAttribute("href", "/alertmanager/");
+    expect(within(alerts).getByLabelText("View all alerts")).toHaveAttribute("href", "/alerts");
 
     const watchlist = screen.getByLabelText("Watchlist");
     expect(await within(watchlist).findByText("+36.80")).toBeInTheDocument();

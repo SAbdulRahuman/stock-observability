@@ -1,6 +1,7 @@
 package source
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -27,10 +28,30 @@ type Alert struct {
 
 // Silence is the subset of an Alertmanager v2 silence used by the home page.
 type Silence struct {
-	ID     string `json:"id"`
-	Status struct {
+	ID        string    `json:"id"`
+	Comment   string    `json:"comment"`
+	CreatedBy string    `json:"createdBy"`
+	EndsAt    time.Time `json:"endsAt"`
+	Status    struct {
 		State string `json:"state"`
 	} `json:"status"`
+}
+
+// Matcher is an Alertmanager v2 label matcher.
+type Matcher struct {
+	Name    string `json:"name"`
+	Value   string `json:"value"`
+	IsRegex bool   `json:"isRegex"`
+	IsEqual bool   `json:"isEqual"`
+}
+
+// NewSilence is the body of an Alertmanager v2 silence creation.
+type NewSilence struct {
+	Matchers  []Matcher `json:"matchers"`
+	StartsAt  time.Time `json:"startsAt"`
+	EndsAt    time.Time `json:"endsAt"`
+	CreatedBy string    `json:"createdBy"`
+	Comment   string    `json:"comment"`
 }
 
 // Alertmanager reads alerts and silences from the Alertmanager v2 API.
@@ -56,6 +77,36 @@ func (a *Alertmanager) Silences(ctx context.Context) ([]Silence, error) {
 	var out []Silence
 	err := getJSON(ctx, a.client, a.baseURL+"/api/v2/silences", &out)
 	return out, err
+}
+
+// CreateSilence posts a new silence and returns its ID.
+func (a *Alertmanager) CreateSilence(ctx context.Context, s NewSilence) (string, error) {
+	body, err := json.Marshal(s)
+	if err != nil {
+		return "", err
+	}
+	url := a.baseURL + "/api/v2/silences"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("POST %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("POST %s: status %d", url, resp.StatusCode)
+	}
+	var out struct {
+		SilenceID string `json:"silenceID"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&out); err != nil {
+		return "", fmt.Errorf("POST %s: decode: %w", url, err)
+	}
+	return out.SilenceID, nil
 }
 
 func getJSON(ctx context.Context, client *http.Client, url string, v any) error {

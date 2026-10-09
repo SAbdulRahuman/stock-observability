@@ -66,6 +66,15 @@ func (c *Cache) Get(key string, ttl, maxStale time.Duration, load func() (any, e
 	return Result{}, e.err
 }
 
+// Forget drops the cached value for key so the next Get reloads it.
+func (c *Cache) Forget(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.entries[key]; ok && e.inflight == nil {
+		delete(c.entries, key)
+	}
+}
+
 func (c *Cache) refresh(e *entry, load func() (any, error)) {
 	v, err := load()
 	c.mu.Lock()

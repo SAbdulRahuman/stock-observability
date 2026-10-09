@@ -89,7 +89,7 @@ describe("AppShell", () => {
     expect(within(sidebar).getByText("Top Movers").closest("[aria-disabled]")).not.toBeNull();
 
     expect(await screen.findByText("Live Market")).toBeInTheDocument();
-    expect(screen.getByLabelText("Alerts: 3 active")).toHaveAttribute("href", "/alertmanager/");
+    expect(screen.getByLabelText("Alerts: 3 active")).toHaveAttribute("href", "/alerts");
     expect(await screen.findByText("09:15 AM – 03:30 PM")).toBeInTheDocument();
     expect(screen.getByText("OPEN")).toBeInTheDocument();
     expect(screen.getByText("Live data via Zerodha Kite API")).toBeInTheDocument();

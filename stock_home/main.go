@@ -34,6 +34,7 @@ func main() {
 		listen       = flag.String("web.listen-address", ":8080", "Address to listen on.")
 		promURL      = flag.String("prometheus.url", "http://prometheus:9090/prometheus", "Prometheus base URL including route prefix.")
 		amURL        = flag.String("alertmanager.url", "http://alertmanager:9093/alertmanager", "Alertmanager base URL including route prefix.")
+		amSilences   = flag.Bool("alertmanager.allow-silences", false, "Allow the Alerts page to create Alertmanager silences (Acknowledge/Silence) after confirmation.")
 		grafanaURL   = flag.String("grafana.url", "http://grafana:3000/grafana", "Grafana base URL including sub path.")
 		indices      = flag.String("market.indices", "NIFTY 50,NIFTY BANK,NIFTY IT,SENSEX,NIFTY NEXT 50,INDIA VIX", "Comma-separated index symbols for Market overview; the first one gets a sparkline.")
 		holidaysFile = flag.String("market.holidays-file", "", "Exchange holidays YAML (stock_exporter format).")
@@ -57,13 +58,13 @@ func main() {
 		Password: os.Getenv("STOCK_HOME_OPENBB_PASSWORD"),
 		Timeout:  *openbbTO,
 	}
-	if err := run(logger, *listen, *promURL, *amURL, *grafanaURL, *indices, *holidaysFile, *tz, *exchange, *session, *timeout, ob); err != nil {
+	if err := run(logger, *listen, *promURL, *amURL, *grafanaURL, *indices, *holidaysFile, *tz, *exchange, *session, *timeout, *amSilences, ob); err != nil {
 		logger.Error("Exiting", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, holidaysFile, tz, exchange, session string, timeout time.Duration, ob openbb.Config) error {
+func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, holidaysFile, tz, exchange, session string, timeout time.Duration, amSilences bool, ob openbb.Config) error {
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
 		return err
@@ -102,6 +103,7 @@ func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, holid
 		Exchange:        exchange,
 		SessionOpen:     sessionOpen,
 		SessionClose:    sessionClose,
+		SilencesAllowed: amSilences,
 	}, prom, source.NewAlertmanager(trim(amURL), client), client, logger, reg)
 
 	mux := http.NewServeMux()

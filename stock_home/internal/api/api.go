@@ -30,6 +30,8 @@ type Config struct {
 	Exchange        string
 	SessionOpen     string // HH:MM in Location.
 	SessionClose    string
+	// SilencesAllowed enables POST /api/v1/silences (Acknowledge/Silence on the Alerts page).
+	SilencesAllowed bool
 }
 
 // Server implements the /api/v1 endpoints.
@@ -93,6 +95,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/chart", s.chartHandler)
 	mux.HandleFunc("GET /api/v1/quotes", s.quotesHandler)
 	mux.HandleFunc("GET /api/v1/instrument", s.instrumentHandler)
+	mux.HandleFunc("GET /api/v1/alerts/items", s.section("alert-items", 5*time.Second, s.alertItems))
+	mux.HandleFunc("POST /api/v1/silences", s.createSilences)
 }
 
 type envelope struct {
@@ -200,12 +204,13 @@ type Info struct {
 	SessionClose string `json:"sessionClose"`
 	Timezone     string `json:"timezone"`
 	// QuoteSymbolsMax bounds /api/v1/quotes and therefore one watchlist group.
-	QuoteSymbolsMax int `json:"quoteSymbolsMax"`
+	QuoteSymbolsMax int  `json:"quoteSymbolsMax"`
+	SilencesAllowed bool `json:"silencesAllowed"`
 }
 
 func (s *Server) info() Info {
 	return Info{Version: s.cfg.Version, Exchange: s.cfg.Exchange, SessionOpen: s.cfg.SessionOpen, SessionClose: s.cfg.SessionClose,
-		Timezone: s.cfg.Location.String(), QuoteSymbolsMax: maxQuoteSymbols}
+		Timezone: s.cfg.Location.String(), QuoteSymbolsMax: maxQuoteSymbols, SilencesAllowed: s.cfg.SilencesAllowed}
 }
 
 // exploreURL links to Grafana Explore with a PromQL query on the provisioned Prometheus data source.

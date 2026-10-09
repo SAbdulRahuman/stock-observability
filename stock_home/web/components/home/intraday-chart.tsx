@@ -73,7 +73,17 @@ export function RangePicker({
   );
 }
 
-export function PriceChart({ chart, range, className = "h-72" }: { chart: Chart; range: ChartRange; className?: string }) {
+export function PriceChart({
+  chart,
+  range,
+  className = "h-72",
+  threshold,
+}: {
+  chart: Chart;
+  range: ChartRange;
+  className?: string;
+  threshold?: number | null;
+}) {
   const gradient = `area-${chart.symbol.replace(/[^A-Za-z0-9]/g, "")}`;
   const volume = new Map(chart.volume.map((p) => [p.t, p.v]));
   const rows: Row[] = chart.points.map((p) => ({ t: p.t, v: p.v, vol: volume.get(p.t) }));
@@ -84,7 +94,9 @@ export function PriceChart({ chart, range, className = "h-72" }: { chart: Chart;
   const maxVol = Math.max(0, ...chart.volume.map((p) => p.v));
   const fmt = tickFormats[range];
   return (
-    <figure aria-label={`${chart.symbol} ${range}: last ${formatPrice(last)}, ${up ? "up" : "down"} from ${formatPrice(first)}`}>
+    <figure
+      aria-label={`${chart.symbol} ${range}: last ${formatPrice(last)}, ${up ? "up" : "down"} from ${formatPrice(first)}${threshold != null ? `, trigger ${formatPrice(threshold)}` : ""}`}
+    >
       <div className={className}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={rows} margin={{ top: 8, right: 64, bottom: 0, left: 0 }}>
@@ -133,6 +145,16 @@ export function PriceChart({ chart, range, className = "h-72" }: { chart: Chart;
               strokeDasharray="4 4"
               label={{ value: formatPrice(last), position: "right", fill: color, fontSize: 12 }}
             />
+            {threshold != null && (
+              <ReferenceLine
+                yAxisId="price"
+                y={threshold}
+                ifOverflow="extendDomain"
+                stroke="var(--color-critical)"
+                strokeDasharray="6 3"
+                label={{ value: `Trigger ${formatPrice(threshold)}`, position: "insideTopLeft", fill: "var(--color-critical)", fontSize: 12 }}
+              />
+            )}
             <Tooltip
               content={({ active, payload }) => {
                 const row = active ? (payload?.[0]?.payload as Row | undefined) : undefined;
