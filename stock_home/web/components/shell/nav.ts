@@ -39,7 +39,7 @@ export const navItems: NavItem[] = [
   { label: "OpenBB Analysis", icon: ChartNoAxesCombined, href: "/openbb", ready: true },
   { label: "Prometheus", icon: Flame, href: "/observability/prometheus", ready: true },
   { label: "Grafana", icon: Gauge, linkId: "grafana" },
-  { label: "AlertManager", icon: BellRing, linkId: "alertmanager" },
+  { label: "AlertManager", icon: BellRing, href: "/observability/alertmanager", ready: true },
   { label: "Settings", icon: Settings, href: "/settings" },
 ];
 
