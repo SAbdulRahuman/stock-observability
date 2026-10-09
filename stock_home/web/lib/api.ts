@@ -139,6 +139,9 @@ const schemas = {
     truncated: z.boolean(),
   }),
   links: z.array(link),
+  dashboards: z.object({
+    items: z.array(z.object({ uid: z.string(), title: z.string(), folder: z.string().optional(), tags: z.array(z.string()), href: z.string() })),
+  }),
   info: z.object({
     version: z.string(),
     exchange: z.string(),
@@ -163,6 +166,7 @@ const refreshMs: Record<SectionName, number | false> = {
   system: 15_000,
   timeline: 60_000,
   links: false,
+  dashboards: 60_000,
   info: false,
 };
 

@@ -22,6 +22,7 @@ type Config struct {
 	PrometheusURL   string
 	AlertmanagerURL string
 	GrafanaURL      string
+	GrafanaToken    string // Optional service-account token for the dashboard list; never sent to the browser.
 	Indices         []string
 	SectorIndices   []string
 	Location        *time.Location
@@ -40,6 +41,7 @@ type Server struct {
 	cfg    Config
 	prom   *source.Prometheus
 	am     *source.Alertmanager
+	graf   *source.Grafana
 	http   *http.Client
 	cache  *cache.Cache
 	logger *slog.Logger
@@ -53,6 +55,7 @@ func New(cfg Config, prom *source.Prometheus, am *source.Alertmanager, client *h
 		cfg:    cfg,
 		prom:   prom,
 		am:     am,
+		graf:   source.NewGrafana(cfg.GrafanaURL, client, cfg.GrafanaToken),
 		http:   client,
 		cache:  cache.New(),
 		logger: logger,
@@ -83,6 +86,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 		{"portfolio", 30 * time.Second, s.portfolio},
 		{"system", 15 * time.Second, s.system},
 		{"timeline", 60 * time.Second, s.timeline},
+		{"dashboards", 60 * time.Second, s.dashboards},
 	}
 	for _, sec := range sections {
 		mux.HandleFunc("GET /api/v1/"+sec.name, s.section(sec.name, sec.ttl, sec.fn))

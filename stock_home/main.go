@@ -96,6 +96,7 @@ func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, secto
 		PrometheusURL:   trim(promURL),
 		AlertmanagerURL: trim(amURL),
 		GrafanaURL:      trim(grafanaURL),
+		GrafanaToken:    os.Getenv("STOCK_HOME_GRAFANA_TOKEN"),
 		Indices:         splitList(indices),
 		SectorIndices:   splitList(sectorIdx),
 		Location:        loc,
