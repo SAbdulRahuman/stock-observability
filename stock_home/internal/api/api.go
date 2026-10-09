@@ -23,6 +23,7 @@ type Config struct {
 	AlertmanagerURL string
 	GrafanaURL      string
 	Indices         []string
+	SectorIndices   []string
 	Location        *time.Location
 	Holidays        []holidays.Holiday
 	QueryTimeout    time.Duration
@@ -77,6 +78,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 		{"alerts", 5 * time.Second, s.alerts},
 		{"market", 10 * time.Second, s.market},
 		{"movers", 10 * time.Second, s.movers},
+		{"sectors", 10 * time.Second, s.sectorIndices},
 		{"circuits", 10 * time.Second, s.circuits},
 		{"portfolio", 30 * time.Second, s.portfolio},
 		{"system", 15 * time.Second, s.system},

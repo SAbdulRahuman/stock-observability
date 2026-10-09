@@ -123,7 +123,7 @@ func (s *Server) chartHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) isIndex(symbol string) bool {
-	for _, sym := range s.cfg.Indices {
+	for _, sym := range append(append([]string{}, s.cfg.Indices...), s.cfg.SectorIndices...) {
 		if strings.EqualFold(sym, symbol) {
 			return true
 		}

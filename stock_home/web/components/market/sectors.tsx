@@ -4,14 +4,14 @@ import { BarChart3, LayoutGrid } from "lucide-react";
 import { Empty, SectionCard } from "@/components/dashboard/section-card";
 import { ViewAll } from "@/components/home/view-all";
 import { Badge } from "@/components/ui/badge";
-import { type SectionData, useSection } from "@/lib/api";
+import { useSection } from "@/lib/api";
 import { formatPercent, trendClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-type Sector = SectionData<"market">["sectors"][number];
+type SectorChange = { name: string; changePercent: number };
 
 /** Sector averages exist for the current session only, so the period is fixed at 1D. */
-function DayOnly() {
+export function DayOnly() {
   return (
     <Badge variant="outline" title="Sector change is available for the current session only">
       1D
@@ -39,7 +39,7 @@ export function SectorPerformance({ exchange }: { exchange?: string }) {
   );
 }
 
-function PerformanceBars({ sectors }: { sectors: Sector[] }) {
+export function PerformanceBars({ sectors }: { sectors: SectorChange[] }) {
   const maxAbs = Math.max(...sectors.map((s) => Math.abs(s.changePercent)), 0.01);
   return (
     <ul className="space-y-1.5 text-sm">
@@ -73,26 +73,42 @@ export function SectorHeatmap({ exchange }: { exchange?: string }) {
         m.sectors.length === 0 ? (
           <Empty>No sector data yet</Empty>
         ) : (
-          <ul className="flex flex-wrap gap-1" aria-label="Sector heatmap">
-            {m.sectors.map((s) => {
-              const n = Math.max(1, s.constituents ?? 1);
-              const strength = Math.round(25 + Math.min(Math.abs(s.changePercent) / 3, 1) * 55);
-              const tone = s.changePercent >= 0 ? "var(--color-up)" : "var(--color-down)";
-              return (
-                <li
-                  key={s.name}
-                  className="flex min-h-16 min-w-20 flex-col justify-center rounded-md p-2 text-foreground"
-                  style={{ flexGrow: n, flexBasis: `${n * 12}px`, background: `color-mix(in oklch, ${tone} ${strength}%, transparent)` }}
-                  title={`${s.name}: ${formatPercent(s.changePercent)}${s.constituents ? ` · ${s.constituents} constituents` : ""}`}
-                >
-                  <span className="truncate text-xs font-semibold uppercase">{s.name}</span>
-                  <span className="text-xs tabular-nums">{formatPercent(s.changePercent)}</span>
-                </li>
-              );
-            })}
-          </ul>
+          <HeatmapTiles
+            tiles={m.sectors.map((s) => ({
+              name: s.name,
+              changePercent: s.changePercent,
+              size: s.constituents,
+              title: `${s.name}: ${formatPercent(s.changePercent)}${s.constituents ? ` · ${s.constituents} constituents` : ""}`,
+            }))}
+          />
         )
       }
     </SectionCard>
+  );
+}
+
+export type Tile = SectorChange & { size?: number; title: string };
+
+/** Treemap-style tiles: area grows with size, colour intensity with the magnitude of the change. */
+export function HeatmapTiles({ tiles, large = false }: { tiles: Tile[]; large?: boolean }) {
+  return (
+    <ul className="flex flex-wrap gap-1" aria-label="Sector heatmap">
+      {tiles.map((s) => {
+        const n = Math.max(1, s.size ?? 1);
+        const strength = Math.round(25 + Math.min(Math.abs(s.changePercent) / 3, 1) * 55);
+        const tone = s.changePercent > 0 ? "var(--color-up)" : s.changePercent < 0 ? "var(--color-down)" : "var(--color-muted-foreground)";
+        return (
+          <li
+            key={s.name}
+            className={cn("flex min-w-20 flex-col justify-center rounded-md p-2 text-foreground", large ? "min-h-24" : "min-h-16")}
+            style={{ flexGrow: n, flexBasis: `${n * 12}px`, background: `color-mix(in oklch, ${tone} ${strength}%, transparent)` }}
+            title={s.title}
+          >
+            <span className={cn("truncate font-semibold uppercase", large ? "text-sm" : "text-xs")}>{s.name}</span>
+            <span className={cn("tabular-nums", large ? "text-sm" : "text-xs")}>{formatPercent(s.changePercent)}</span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

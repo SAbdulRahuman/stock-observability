@@ -2,6 +2,7 @@
 
 import { useIsFetching, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, Upload } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { type MoversFilters, type Quote, useMoversScan, useSection } from "@/lib/api";
@@ -25,7 +26,12 @@ function csvCell(v: string | number | null | undefined): string {
 }
 
 export function TopMoversPage() {
-  const [filters, setFilters] = useState<MoversFilters>({ universe: "core", sector: "", price: "all" });
+  const params = useSearchParams();
+  const [filters, setFilters] = useState<MoversFilters>(() => ({
+    universe: params?.get("universe") === "all" ? "all" : "core",
+    sector: params?.get("sector") ?? "",
+    price: (params?.get("price") ?? "") in priceLabels ? (params?.get("price") as string) : "all",
+  }));
   const query = useMoversScan(filters);
   const exchange = useSection("info").data?.data.exchange;
   const client = useQueryClient();

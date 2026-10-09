@@ -91,6 +91,7 @@ const schemas = {
     spark: z.object({ symbol: z.string(), points: z.array(point).nullish() }).nullish(),
   }),
   movers: z.object({ gainers: z.array(quote), losers: z.array(quote), highVolume: z.array(quote).default([]) }),
+  sectors: z.object({ indices: z.array(quote) }),
   circuits: z.object({
     hits: z.array(quote.extend({ side: z.string(), distancePercent: z.number(), hit: z.boolean() })),
     near: z.array(quote.extend({ side: z.string(), distancePercent: z.number(), hit: z.boolean() })),
@@ -156,6 +157,7 @@ const refreshMs: Record<SectionName, number | false> = {
   alerts: 5_000,
   market: 10_000,
   movers: 10_000,
+  sectors: 10_000,
   circuits: 10_000,
   portfolio: 30_000,
   system: 15_000,
@@ -211,11 +213,14 @@ const chartSchema = z.object({
 export type Chart = z.infer<typeof chartSchema>;
 
 /** Price history of a configured index; the server keeps only session-time points. */
+export function fetchChart(symbol: string, range: ChartRange, signal?: AbortSignal) {
+  return fetchEnvelope(`/api/v1/chart?symbol=${encodeURIComponent(symbol)}&range=${range}`, chartSchema, signal);
+}
+
 export function useChart(symbol: string, range: ChartRange, enabled = true) {
   return useQuery({
     queryKey: ["chart", symbol, range],
-    queryFn: ({ signal }) =>
-      fetchEnvelope(`/api/v1/chart?symbol=${encodeURIComponent(symbol)}&range=${range}`, chartSchema, signal),
+    queryFn: ({ signal }) => fetchChart(symbol, range, signal),
     enabled,
     refetchInterval: range === "1D" ? 30_000 : 120_000,
   });
@@ -332,7 +337,17 @@ const moversScanSchema = z.object({
   high52: z.array(rangeItem),
   low52: z.array(rangeItem),
   distribution: z.array(z.object({ label: z.string(), from: num, to: num, count: z.number() })),
-  sectors: z.array(z.object({ name: z.string(), changePercent: z.number(), count: z.number(), gainer: quote.nullish(), loser: quote.nullish() })),
+  sectors: z.array(
+    z.object({
+      name: z.string(),
+      changePercent: z.number(),
+      count: z.number(),
+      advancers: z.number().default(0),
+      decliners: z.number().default(0),
+      gainer: quote.nullish(),
+      loser: quote.nullish(),
+    }),
+  ),
   sectorNames: z.array(z.string()),
 });
 export type MoversScan = z.infer<typeof moversScanSchema>;

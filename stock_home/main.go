@@ -37,6 +37,7 @@ func main() {
 		amSilences   = flag.Bool("alertmanager.allow-silences", false, "Allow the Alerts page to create Alertmanager silences (Acknowledge/Silence) after confirmation.")
 		grafanaURL   = flag.String("grafana.url", "http://grafana:3000/grafana", "Grafana base URL including sub path.")
 		indices      = flag.String("market.indices", "NIFTY 50,NIFTY BANK,NIFTY IT,SENSEX,NIFTY NEXT 50,INDIA VIX", "Comma-separated index symbols for Market overview; the first one gets a sparkline.")
+		sectorIdx    = flag.String("market.sector-indices", "NIFTY BANK,NIFTY IT,NIFTY AUTO,NIFTY FMCG,NIFTY PHARMA,NIFTY METAL,NIFTY ENERGY,NIFTY REALTY,NIFTY PSU BANK,NIFTY MEDIA,NIFTY FIN SERVICE", "Comma-separated sectoral index symbols for Sector View; the first five get summary cards.")
 		holidaysFile = flag.String("market.holidays-file", "", "Exchange holidays YAML (stock_exporter format).")
 		tz           = flag.String("market.timezone", "Asia/Kolkata", "Exchange timezone.")
 		exchange     = flag.String("market.exchange", "NSE", "Exchange name shown in the app shell.")
@@ -58,13 +59,13 @@ func main() {
 		Password: os.Getenv("STOCK_HOME_OPENBB_PASSWORD"),
 		Timeout:  *openbbTO,
 	}
-	if err := run(logger, *listen, *promURL, *amURL, *grafanaURL, *indices, *holidaysFile, *tz, *exchange, *session, *timeout, *amSilences, ob); err != nil {
+	if err := run(logger, *listen, *promURL, *amURL, *grafanaURL, *indices, *sectorIdx, *holidaysFile, *tz, *exchange, *session, *timeout, *amSilences, ob); err != nil {
 		logger.Error("Exiting", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, holidaysFile, tz, exchange, session string, timeout time.Duration, amSilences bool, ob openbb.Config) error {
+func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, sectorIdx, holidaysFile, tz, exchange, session string, timeout time.Duration, amSilences bool, ob openbb.Config) error {
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
 		return err
@@ -96,6 +97,7 @@ func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, holid
 		AlertmanagerURL: trim(amURL),
 		GrafanaURL:      trim(grafanaURL),
 		Indices:         splitList(indices),
+		SectorIndices:   splitList(sectorIdx),
 		Location:        loc,
 		Holidays:        hol,
 		QueryTimeout:    timeout,

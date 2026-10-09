@@ -68,6 +68,8 @@ type SectorMovers struct {
 	Name          string  `json:"name"`
 	ChangePercent float64 `json:"changePercent"`
 	Count         int     `json:"count"`
+	Advancers     int     `json:"advancers"`
+	Decliners     int     `json:"decliners"`
 	Gainer        *Quote  `json:"gainer"`
 	Loser         *Quote  `json:"loser"`
 }
@@ -251,6 +253,12 @@ func buildScan(all []moverRow, universe, sector, price string, band [2]float64) 
 			bySector[name] = sm
 		}
 		sm.Count++
+		switch {
+		case p > 0:
+			sm.Advancers++
+		case p < 0:
+			sm.Decliners++
+		}
 		sums[name] += p
 		if q := r.quote(); sm.Gainer == nil || p > *sm.Gainer.ChangePercent {
 			sm.Gainer = &q

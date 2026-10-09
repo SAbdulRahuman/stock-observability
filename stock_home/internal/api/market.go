@@ -50,11 +50,8 @@ type Spark struct {
 
 func (s *Server) market(ctx context.Context) (any, error) {
 	q := s.querier(ctx)
-	prices := bySymbol(q.vector(`max by (exchange, symbol) (stock_last_price{instrument_type="INDEX"})`))
-	changes := bySymbol(q.vector(`max by (exchange, symbol) (stock_change_percent{instrument_type="INDEX"})`))
-	abs := bySymbol(q.vector(absChangeQuery(`instrument_type="INDEX"`)))
 	m := Market{
-		Indices:        []Quote{},
+		Indices:        s.indexQuotes(q, s.cfg.Indices),
 		Advancers:      q.scalar(`market:advancers:count`),
 		Decliners:      q.scalar(`market:decliners:count`),
 		Unchanged:      q.scalar(`count(stock_change_percent{instrument_type="EQ"} == 0) or (count(stock_change_percent{instrument_type="EQ"}) * 0)`),
@@ -69,30 +66,6 @@ func (s *Server) market(ctx context.Context) (any, error) {
 	}
 	sort.Slice(m.Sectors, func(i, j int) bool { return m.Sectors[i].ChangePercent > m.Sectors[j].ChangePercent })
 
-	for _, sym := range s.cfg.Indices {
-		p, ok := prices[sym]
-		if !ok {
-			continue
-		}
-		qt := Quote{Exchange: p.Labels["exchange"], Symbol: sym, Price: &p.Value, ExploreURL: symbolExploreURL(p.Labels["exchange"], sym)}
-		if c, ok := changes[sym]; ok {
-			qt.ChangePercent = &c.Value
-		}
-		if c, ok := abs[sym]; ok {
-			qt.Change = &c.Value
-		}
-		m.Indices = append(m.Indices, qt)
-	}
-	if len(m.Indices) > 0 {
-		syms := make([]string, len(m.Indices))
-		for i, qt := range m.Indices {
-			syms[i] = qt.Symbol
-		}
-		sparks := sessionSparks(q, `, instrument_type="INDEX"`, syms, s.now(), s.cfg.Location)
-		for i := range m.Indices {
-			m.Indices[i].Spark = sparks[m.Indices[i].Symbol]
-		}
-	}
 	if len(m.Indices) > 0 {
 		sym := m.Indices[0].Symbol
 		end := s.now()

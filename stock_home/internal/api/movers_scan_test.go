@@ -47,7 +47,7 @@ func TestBuildScan(t *testing.T) {
 		t.Errorf("sectors %+v", sc.Sectors)
 	}
 	for _, s := range sc.Sectors {
-		if s.Name == "Banks" && (s.Gainer.Symbol != "SBIN" || s.Loser.Symbol != "HDFCBANK" || s.Count != 2) {
+		if s.Name == "Banks" && (s.Gainer.Symbol != "SBIN" || s.Loser.Symbol != "HDFCBANK" || s.Count != 2 || s.Advancers != 1 || s.Decliners != 1) {
 			t.Errorf("banks %+v", s)
 		}
 		if s.Name == "IT" && s.Gainer != nil {
