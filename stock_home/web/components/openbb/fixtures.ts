@@ -55,4 +55,11 @@ export const fixtures: Record<string, unknown> = {
     { symbol: "TCS.NS", name: "Tata Consultancy Services Limited", exchange: "NSI" },
     { symbol: "TCS.BO", name: "Tata Consultancy Services Limited", exchange: "BSE" },
   ]),
+  "equity/fundamental/metrics": envelope([
+    { symbol: "RELIANCE.NS", market_cap: 19110000000000, pe_ratio: 23.4, return_on_equity: 0.0912, beta: 0.41, fiscal_year: 2026 },
+  ]),
+  "equity/fundamental/income": envelope([
+    { period_ending: "2026-03-31", fiscal_period: "FY", total_revenue: 9640000000000, net_income: 696000000000 },
+    { period_ending: "2025-03-31", fiscal_period: "FY", total_revenue: 9010000000000 },
+  ]),
 };

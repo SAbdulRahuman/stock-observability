@@ -19,7 +19,7 @@ export function MarketNews() {
         <Newspaper className="size-4 text-muted-foreground" aria-hidden />
         <CardTitle id="market-news-title">Market News</CardTitle>
         <Link
-          href={`/openbb?symbol=${encodeURIComponent(NEWS.symbol)}`}
+          href={`/openbb?symbol=${encodeURIComponent(NEWS.symbol)}&tab=news`}
           className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
           aria-label="View all market news"
         >

@@ -62,11 +62,28 @@ export const schemas = {
     author: str,
     excerpt: str,
   }),
+  // Provider-specific field sets: only the fields a provider returns are shown.
+  metrics: z.record(z.string(), z.unknown()),
+  income: z.record(z.string(), z.unknown()),
 };
 
 export type Quote = z.infer<typeof schemas.quote>;
 export type Bar = z.infer<typeof schemas.historical>;
 export type Profile = z.infer<typeof schemas.profile>;
+export type Fields = Record<string, unknown>;
+
+/** Numeric fields of a provider record, excluding identifiers and dates. */
+export function numericFields(row: Fields | undefined, skip: string[] = []): [string, number][] {
+  if (!row) return [];
+  return Object.entries(row).filter(
+    (e): e is [string, number] => typeof e[1] === "number" && Number.isFinite(e[1]) && !skip.includes(e[0]) && !/(^|_)(year|date|cik)$/.test(e[0]),
+  );
+}
+
+export function fieldLabel(key: string): string {
+  const s = key.replace(/_/g, " ").replace(/\b(pe|peg|eps|ebitda|ebit|ttm|roe|roa)\b/gi, (m) => m.toUpperCase());
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 export type NewsItem = z.infer<typeof schemas.news>;
 export type SearchHit = z.infer<typeof schemas.search>;
 

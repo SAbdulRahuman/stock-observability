@@ -3,13 +3,13 @@
 import type { UseQueryResult } from "@tanstack/react-query";
 import { CircleAlert, ExternalLink, PlugZap } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, Bar as VolumeBar, CartesianGrid, ComposedChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Empty, Row, Stat } from "@/components/dashboard/section-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/primitives";
-import { formatCount, formatPercent, formatPrice } from "@/lib/format";
-import { type Bar, type NewsItem, type Profile, type Quote, isNotConfigured, safeUrl } from "@/lib/openbb";
+import { formatCount, formatPercent, formatPrice, formatVolume } from "@/lib/format";
+import { type Bar, type Fields, fieldLabel, type NewsItem, numericFields, type Profile, type Quote, isNotConfigured, safeUrl } from "@/lib/openbb";
 import { cn } from "@/lib/utils";
 
 type Result<T> = { results?: T[] | null; provider?: string | null; warnings?: { message: string }[] | null };
@@ -29,6 +29,7 @@ export function CommandCard<T>({
   icon: Icon,
   query,
   className,
+  actions,
   children,
 }: {
   id: string;
@@ -36,6 +37,7 @@ export function CommandCard<T>({
   icon: LucideIcon;
   query: UseQueryResult<Result<T>>;
   className?: string;
+  actions?: React.ReactNode;
   children: (rows: T[]) => React.ReactNode;
 }) {
   const data = query.data;
@@ -52,6 +54,7 @@ export function CommandCard<T>({
             </Badge>
           )}
           {data?.provider && <Badge variant="outline">{data.provider}</Badge>}
+          {actions}
         </div>
       </CardHeader>
       <CardContent>
@@ -92,7 +95,7 @@ function CommandFailure({ error }: { error: Error }) {
   );
 }
 
-export function QuoteView({ quote }: { quote: Quote }) {
+export function quoteChange(quote: Quote): { change: number | null; pct: number | null } {
   // yfinance quotes carry prev_close but no change fields.
   const change = quote.change ?? (quote.last_price != null && quote.prev_close != null ? quote.last_price - quote.prev_close : null);
   const pct =
@@ -101,10 +104,16 @@ export function QuoteView({ quote }: { quote: Quote }) {
       : change != null && quote.prev_close
         ? (change / quote.prev_close) * 100
         : null;
+  return { change, pct };
+}
+
+/** Selected-stock summary: identity, price, change, volume and market cap when the provider has it. */
+export function QuoteHeadline({ quote, marketCap }: { quote: Quote; marketCap?: number | null }) {
+  const { change, pct } = quoteChange(quote);
   const up = (change ?? pct ?? 0) >= 0;
   return (
-    <div className="space-y-4">
-      <div>
+    <div className="flex flex-wrap items-end justify-between gap-4">
+      <div className="min-w-0">
         <div className="truncate text-sm text-muted-foreground">
           {quote.name ?? quote.symbol}
           {quote.exchange && ` · ${quote.exchange}`}
@@ -120,15 +129,24 @@ export function QuoteView({ quote }: { quote: Quote }) {
           </Badge>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-x-6">
-        <Row label="Open">{formatPrice(quote.open)}</Row>
-        <Row label="Prev close">{formatPrice(quote.prev_close)}</Row>
-        <Row label="Day high">{formatPrice(quote.high)}</Row>
-        <Row label="Day low">{formatPrice(quote.low)}</Row>
-        <Row label="52w high">{formatPrice(quote.year_high)}</Row>
-        <Row label="52w low">{formatPrice(quote.year_low)}</Row>
-        <Row label="Volume">{formatCount(quote.volume)}</Row>
+      <div className="grid grid-cols-2 gap-6">
+        <Stat label="Volume" value={formatVolume(quote.volume)} />
+        <Stat label="Market cap" value={marketCap != null ? formatVolume(marketCap) : "—"} hint={marketCap != null && quote.currency ? quote.currency : undefined} />
       </div>
+    </div>
+  );
+}
+
+export function KeyMetrics({ quote }: { quote: Quote }) {
+  return (
+    <div className="grid grid-cols-2 gap-x-6">
+      <Row label="Open">{formatPrice(quote.open)}</Row>
+      <Row label="Prev close">{formatPrice(quote.prev_close)}</Row>
+      <Row label="Day high">{formatPrice(quote.high)}</Row>
+      <Row label="Day low">{formatPrice(quote.low)}</Row>
+      <Row label="52w high">{formatPrice(quote.year_high)}</Row>
+      <Row label="52w low">{formatPrice(quote.year_low)}</Row>
+      <Row label="Volume">{formatCount(quote.volume)}</Row>
     </div>
   );
 }
@@ -140,6 +158,7 @@ export function PriceChart({ bars }: { bars: Bar[] }) {
   const high = Math.max(...bars.map((b) => b.high));
   const low = Math.min(...bars.map((b) => b.low));
   const color = (change ?? 0) >= 0 ? "var(--color-up)" : "var(--color-down)";
+  const maxVol = Math.max(0, ...bars.map((b) => b.volume ?? 0));
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -148,16 +167,16 @@ export function PriceChart({ bars }: { bars: Bar[] }) {
         <Stat label="Period high" value={formatPrice(high)} />
         <Stat label="Period low" value={formatPrice(low)} hint={`${formatCount(bars.length)} sessions`} />
       </div>
-      <div className="h-72" role="img" aria-label="Closing price chart">
+      <div className="h-72" role="img" aria-label="Daily closing price and volume chart">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={bars} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+          <ComposedChart data={bars} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
             <defs>
               <linearGradient id="openbb-close" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={color} stopOpacity={0.3} />
                 <stop offset="100%" stopColor={color} stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
+            <CartesianGrid yAxisId="price" strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
             <XAxis
               dataKey="date"
               tickFormatter={(d: string) => fmtDate(d, shortDateFmt)}
@@ -165,20 +184,84 @@ export function PriceChart({ bars }: { bars: Bar[] }) {
               tick={{ fontSize: 12, fill: "var(--color-muted-foreground)" }}
             />
             <YAxis
+              yAxisId="price"
               domain={["auto", "auto"]}
               width={64}
               tickFormatter={(v: number) => formatPrice(v)}
               tick={{ fontSize: 12, fill: "var(--color-muted-foreground)" }}
             />
+            {/* Volume uses the bottom quarter of the plot. */}
+            <YAxis yAxisId="vol" hide domain={[0, maxVol > 0 ? maxVol * 4 : 1]} />
             <Tooltip
               labelFormatter={(d) => fmtDate(String(d))}
-              formatter={(v) => [formatPrice(Number(v)), "Close"]}
+              formatter={(v, name) => (name === "volume" ? [formatVolume(Number(v)), "Volume"] : [formatPrice(Number(v)), "Close"])}
               contentStyle={{ background: "var(--color-card)", border: "1px solid var(--color-border)", borderRadius: 8 }}
             />
-            <Area type="monotone" dataKey="close" stroke={color} strokeWidth={1.5} fill="url(#openbb-close)" isAnimationActive={false} dot={false} />
-          </AreaChart>
+            <VolumeBar yAxisId="vol" dataKey="volume" fill="var(--color-muted-foreground)" fillOpacity={0.35} isAnimationActive={false} />
+            <Area yAxisId="price" type="monotone" dataKey="close" stroke={color} strokeWidth={1.5} fill="url(#openbb-close)" isAnimationActive={false} dot={false} />
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
+      <p className="text-xs text-muted-foreground">Daily bars · prices in the listing currency · bars: traded volume</p>
+    </div>
+  );
+}
+
+/** OpenBB normalises percentages to ratios (0.12 = 12%). */
+const percentKey = /margin|growth|yield|return_on|payout/;
+
+export function formatField(key: string, v: number): string {
+  if (percentKey.test(key)) return formatPercent(v * 100, 2, false);
+  if (Math.abs(v) >= 100_000) return formatVolume(v);
+  return formatPrice(v);
+}
+
+/** Every numeric field the provider returned, labelled from its key; nothing is derived or filled in. */
+export function FieldTable({ row, limit }: { row: Fields; limit?: number }) {
+  const fields = numericFields(row);
+  if (fields.length === 0) return <Empty>The provider returned no numeric metrics</Empty>;
+  return (
+    <dl className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
+      {fields.slice(0, limit).map(([k, v]) => (
+        <Row key={k} label={fieldLabel(k)}>
+          {formatField(k, v)}
+        </Row>
+      ))}
+    </dl>
+  );
+}
+
+export function StatementTable({ rows }: { rows: Fields[] }) {
+  const periods = rows.slice(0, 4);
+  const keys = [...new Set(periods.flatMap((r) => numericFields(r).map(([k]) => k)))];
+  if (keys.length === 0) return <Empty>The provider returned no statement lines</Empty>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-xs text-muted-foreground">
+            <th className="py-1.5 text-left font-normal">Line item</th>
+            {periods.map((p, i) => (
+              <th key={i} className="py-1.5 pl-3 text-right font-normal">
+                {typeof p.period_ending === "string" ? fmtDate(p.period_ending) : "—"}
+                {typeof p.fiscal_period === "string" && ` (${p.fiscal_period})`}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y">
+          {keys.map((k) => (
+            <tr key={k}>
+              <td className="py-1.5">{fieldLabel(k)}</td>
+              {periods.map((p, i) => (
+                <td key={i} className="py-1.5 pl-3 text-right tabular-nums">
+                  {typeof p[k] === "number" ? formatField(k, p[k] as number) : "—"}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
