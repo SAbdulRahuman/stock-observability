@@ -42,6 +42,13 @@ export function formatCount(v: Num): string {
   return isNum(v) ? count.format(v) : DASH;
 }
 
+const volumeFmt = new Intl.NumberFormat("en-IN", { notation: "compact", maximumFractionDigits: 2 });
+
+/** Traded volume in lakh/crore notation, e.g. "1.24Cr". */
+export function formatVolume(v: Num): string {
+  return isNum(v) ? volumeFmt.format(v) : DASH;
+}
+
 export function formatDecimal(v: Num): string {
   return isNum(v) ? decimal.format(v) : DASH;
 }

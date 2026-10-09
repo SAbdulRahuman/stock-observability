@@ -22,8 +22,11 @@ const axisPrice = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
 
 type Row = { t: number; v: number; vol?: number };
 
-export function IntradayChart() {
-  const [range, setRange] = useState<ChartRange>("1D");
+/** Range is internal unless the page controls it (Market Overview syncs it with its page-level selector). */
+export function IntradayChart({ range: controlled, onRangeChange }: { range?: ChartRange; onRangeChange?: (r: ChartRange) => void } = {}) {
+  const [own, setOwn] = useState<ChartRange>("1D");
+  const range = controlled ?? own;
+  const setRange = onRangeChange ?? setOwn;
   const query = useChart(SYMBOL, range);
   return (
     <SectionCard
@@ -31,27 +34,31 @@ export function IntradayChart() {
       title={`${SYMBOL} Intraday Chart`}
       icon={ChartLine}
       query={query}
-      actions={
-        <div role="group" aria-label="Timeframe" className="flex rounded-lg bg-muted p-0.5">
-          {chartRanges.map((r) => (
-            <button
-              key={r}
-              type="button"
-              aria-pressed={r === range}
-              onClick={() => setRange(r)}
-              className={cn(
-                "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
-                r === range ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {r}
-            </button>
-          ))}
-        </div>
-      }
+      actions={<RangePicker value={range} onChange={setRange} />}
     >
       {(c) => (c.points.length < 2 ? <Empty>No {SYMBOL} price data for this period</Empty> : <PriceChart chart={c} range={range} />)}
     </SectionCard>
+  );
+}
+
+export function RangePicker({ value, onChange, label = "Timeframe" }: { value: ChartRange; onChange: (r: ChartRange) => void; label?: string }) {
+  return (
+    <div role="group" aria-label={label} className="flex rounded-lg bg-muted p-0.5">
+      {chartRanges.map((r) => (
+        <button
+          key={r}
+          type="button"
+          aria-pressed={r === value}
+          onClick={() => onChange(r)}
+          className={cn(
+            "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+            r === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {r}
+        </button>
+      ))}
+    </div>
   );
 }
 

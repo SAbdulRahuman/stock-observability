@@ -35,7 +35,7 @@ func main() {
 		promURL      = flag.String("prometheus.url", "http://prometheus:9090/prometheus", "Prometheus base URL including route prefix.")
 		amURL        = flag.String("alertmanager.url", "http://alertmanager:9093/alertmanager", "Alertmanager base URL including route prefix.")
 		grafanaURL   = flag.String("grafana.url", "http://grafana:3000/grafana", "Grafana base URL including sub path.")
-		indices      = flag.String("market.indices", "NIFTY 50,NIFTY BANK,NIFTY IT,SENSEX,INDIA VIX", "Comma-separated index symbols for Market overview; the first one gets a sparkline.")
+		indices      = flag.String("market.indices", "NIFTY 50,NIFTY BANK,NIFTY IT,SENSEX,NIFTY NEXT 50,INDIA VIX", "Comma-separated index symbols for Market overview; the first one gets a sparkline.")
 		holidaysFile = flag.String("market.holidays-file", "", "Exchange holidays YAML (stock_exporter format).")
 		tz           = flag.String("market.timezone", "Asia/Kolkata", "Exchange timezone.")
 		exchange     = flag.String("market.exchange", "NSE", "Exchange name shown in the app shell.")

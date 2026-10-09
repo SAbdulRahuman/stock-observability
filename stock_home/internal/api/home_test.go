@@ -173,7 +173,9 @@ func TestMoversHighVolumeAndChange(t *testing.T) {
 		{"stock_day_volume_shares", `[{"metric":` + infy + `,"value":[1,"1000"]},{"metric":` + sbin + `,"value":[1,"5000"]}]`},
 		{"max by (exchange, symbol) (stock_change_percent", `[{"metric":` + sbin + `,"value":[1,"3.11"]},{"metric":` + infy + `,"value":[1,"-0.5"]}]`},
 		{`core"})`, `[{"metric":` + sbin + `,"value":[1,"621.35"]},{"metric":` + infy + `,"value":[1,"1487.3"]}]`},
-	}, nil)
+	}, []answer{
+		{`symbol=~"SBIN|INFY", instrument_type="EQ", tier="core"`, matrix(`{"symbol":"SBIN"}`, source.Point{T: ist(t, "2026-10-08 09:20"), V: 600}, source.Point{T: ist(t, "2026-10-08 09:25"), V: 621.35})},
+	})
 	var env struct {
 		Data Movers `json:"data"`
 	}
@@ -181,8 +183,11 @@ func TestMoversHighVolumeAndChange(t *testing.T) {
 		t.Fatalf("status %d", code)
 	}
 	m := env.Data
-	if len(m.Gainers) != 1 || *m.Gainers[0].Change != 18.75 || *m.Gainers[0].Price != 621.35 {
+	if len(m.Gainers) != 1 || *m.Gainers[0].Change != 18.75 || *m.Gainers[0].Price != 621.35 || len(m.Gainers[0].Spark) != 2 {
 		t.Errorf("gainers = %+v", m.Gainers)
+	}
+	if len(m.Losers) != 1 || m.Losers[0].Spark != nil {
+		t.Errorf("losers = %+v", m.Losers)
 	}
 	if len(m.HighVolume) != 2 || m.HighVolume[0].Symbol != "SBIN" || *m.HighVolume[0].Volume != 5000 || *m.HighVolume[1].ChangePercent != -0.5 || *m.HighVolume[1].Change != -5 {
 		t.Errorf("high volume = %+v", m.HighVolume)
@@ -210,6 +215,30 @@ func TestMarketIndexChangeAndSparks(t *testing.T) {
 	n := env.Data.Indices[0]
 	if *n.Price != 24892.3 || *n.Change != 156.7 || *n.ChangePercent != 0.63 || len(n.Spark) != 2 {
 		t.Errorf("NIFTY 50 = %+v", n)
+	}
+}
+
+func TestMarketBreadthAndSectors(t *testing.T) {
+	prom, _ := fakePromSeq(t, []answer{
+		{"market:advancers:count", vec("1428", nil)},
+		{"market:decliners:count", vec("876", nil)},
+		{`count(stock_change_percent{instrument_type="EQ"} == 0)`, vec("57", nil)},
+		{"count by (sector)", `[{"metric":{"sector":"Banks"},"value":[1,"12"]}]`},
+		{"sector:change_percent:avg", `[{"metric":{"sector":"IT"},"value":[1,"-0.64"]},{"metric":{"sector":"Banks"},"value":[1,"1.98"]}]`},
+	}, nil)
+	var env struct {
+		Data Market `json:"data"`
+	}
+	if code := get(t, newTestServer(t, prom.URL, prom.URL), "/api/v1/market", &env); code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	m := env.Data
+	if *m.Advancers != 1428 || *m.Decliners != 876 || m.Unchanged == nil || *m.Unchanged != 57 {
+		t.Errorf("breadth = %v %v %v", m.Advancers, m.Decliners, m.Unchanged)
+	}
+	want := []Sector{{Name: "Banks", ChangePercent: 1.98, Constituents: 12}, {Name: "IT", ChangePercent: -0.64}}
+	if len(m.Sectors) != 2 || m.Sectors[0] != want[0] || m.Sectors[1] != want[1] {
+		t.Errorf("sectors = %+v", m.Sectors)
 	}
 }
 

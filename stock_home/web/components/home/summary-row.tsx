@@ -38,7 +38,7 @@ export function SummaryRow() {
   );
 }
 
-function IndexCard({ name, quote, loading, error, stale }: { name: string; quote?: Quote; loading: boolean; error: boolean; stale: boolean }) {
+export function IndexCard({ name, quote, loading, error, stale }: { name: string; quote?: Quote; loading: boolean; error: boolean; stale: boolean }) {
   return (
     <Card aria-label={name} className="min-w-0 p-4">
       <div className="flex items-center justify-between gap-2">

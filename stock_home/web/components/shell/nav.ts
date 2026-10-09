@@ -29,7 +29,7 @@ export type NavItem = {
 /** The single sidebar definition; pages never add their own nav. */
 export const navItems: NavItem[] = [
   { label: "Home", icon: House, href: "/", ready: true },
-  { label: "Market Overview", icon: ChartLine, href: "/market" },
+  { label: "Market Overview", icon: ChartLine, href: "/market", ready: true },
   { label: "Watchlist", icon: Heart, href: "/watchlist" },
   { label: "Alerts", icon: Bell, href: "/alerts", badge: "alerts" },
   { label: "Top Movers", icon: TrendingUp, href: "/movers" },

@@ -28,6 +28,7 @@ type Quote struct {
 type Sector struct {
 	Name          string  `json:"name"`
 	ChangePercent float64 `json:"changePercent"`
+	Constituents  int     `json:"constituents,omitempty"`
 }
 
 // Market is section 3: indices, breadth and sectors.
@@ -35,6 +36,7 @@ type Market struct {
 	Indices        []Quote  `json:"indices"`
 	Advancers      *float64 `json:"advancers"`
 	Decliners      *float64 `json:"decliners"`
+	Unchanged      *float64 `json:"unchanged"`
 	AdvanceDecline *float64 `json:"advanceDecline"`
 	Sectors        []Sector `json:"sectors"`
 	Spark          *Spark   `json:"spark"`
@@ -55,12 +57,14 @@ func (s *Server) market(ctx context.Context) (any, error) {
 		Indices:        []Quote{},
 		Advancers:      q.scalar(`market:advancers:count`),
 		Decliners:      q.scalar(`market:decliners:count`),
+		Unchanged:      q.scalar(`count(stock_change_percent{instrument_type="EQ"} == 0) or (count(stock_change_percent{instrument_type="EQ"}) * 0)`),
 		AdvanceDecline: q.scalar(`market:advance_decline:ratio`),
 		Sectors:        []Sector{},
 	}
+	members := byLabel(q.vector(`count by (sector) (stock_change_percent{instrument_type="EQ", tier="core"})`), "sector")
 	for _, smp := range q.vector(`sector:change_percent:avg`) {
 		if name := smp.Labels["sector"]; name != "" {
-			m.Sectors = append(m.Sectors, Sector{Name: name, ChangePercent: smp.Value})
+			m.Sectors = append(m.Sectors, Sector{Name: name, ChangePercent: smp.Value, Constituents: int(members[name])})
 		}
 	}
 	sort.Slice(m.Sectors, func(i, j int) bool { return m.Sectors[i].ChangePercent > m.Sectors[j].ChangePercent })
@@ -138,11 +142,24 @@ func (s *Server) movers(ctx context.Context) (any, error) {
 		m.HighVolume = append(m.HighVolume, qt)
 	}
 	sort.Slice(m.HighVolume, func(i, j int) bool { return *m.HighVolume[i].Volume > *m.HighVolume[j].Volume })
+	var syms []string
+	for _, list := range [][]Quote{m.Gainers, m.Losers} {
+		for _, qt := range list {
+			syms = append(syms, qt.Symbol)
+		}
+	}
+	var sparks map[string][]source.Point
+	if len(syms) > 0 {
+		if sparks = sessionSparks(q, `, instrument_type="EQ", tier="core"`, syms, s.now(), s.cfg.Location); q.err != nil {
+			return nil, q.err
+		}
+	}
 	for _, list := range [][]Quote{m.Gainers, m.Losers, m.HighVolume} {
 		for i := range list {
 			if c, ok := abs[list[i].Symbol]; ok {
 				list[i].Change = &c.Value
 			}
+			list[i].Spark = sparks[list[i].Symbol]
 		}
 	}
 	return m, nil
