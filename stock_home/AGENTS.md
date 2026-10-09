@@ -26,6 +26,14 @@ Go 1.25 server (`main.go`, `internal/`) + Next.js 16 static export (`web/`) embe
 - Never fetch user-supplied URLs (SSRF). Only fixed upstream hosts or registry entries.
 - Comments: one short line, only for what code cannot say.
 
+## UI shell & pages
+
+- Designs live in `ux-proposals/` (wireframe MD wins over PNG); work is tracked in `docs/ux/BACKLOG.md` and driven by the `stock-home-ui` agent.
+- One shared app shell (sidebar, header, footer); nav items are defined once in the sidebar config — pages never add their own nav.
+- Use colour tokens from `web/app/globals.css` (`--up`, `--down`, `--critical`, `--warning`, `--info`, `--ok`) and formatters from `web/lib/format.ts` (INR, Indian grouping, IST times). Gain/loss and severity also need a sign, label or icon, not colour alone.
+- Wireframe sample values are placeholders: missing data renders `—` or an "unavailable" state, never fake values.
+- Browser talks only to stock_home endpoints; Prometheus/Alertmanager access goes through allowlisted server-side handlers.
+
 ## Testing
 
 - `make test` — `go vet`, `go test -race`, `tsc --noEmit`, `vitest`. `make build` — web export + static Go binary. Both must pass before any commit.

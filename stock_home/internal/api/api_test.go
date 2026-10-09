@@ -49,7 +49,8 @@ func newTestServer(t *testing.T, promURL, amURL string) *Server {
 		t.Fatal(err)
 	}
 	ist, _ := time.LoadLocation("Asia/Kolkata")
-	cfg := Config{PrometheusURL: promURL, AlertmanagerURL: amURL, GrafanaURL: amURL, Indices: []string{"NIFTY 50"}, Location: ist, QueryTimeout: 5 * time.Second}
+	cfg := Config{PrometheusURL: promURL, AlertmanagerURL: amURL, GrafanaURL: amURL, Indices: []string{"NIFTY 50"}, Location: ist, QueryTimeout: 5 * time.Second,
+		Version: "0.1.0", Exchange: "NSE", SessionOpen: "09:15", SessionClose: "15:30"}
 	return New(cfg, prom, source.NewAlertmanager(amURL, http.DefaultClient), http.DefaultClient, slog.New(slog.DiscardHandler), prometheus.NewRegistry())
 }
 
@@ -184,6 +185,32 @@ func TestBuildTimeline(t *testing.T) {
 	}
 	if tl.BySeverity["warning"] != 3 || tl.Items[0].Subject != "INFY" {
 		t.Errorf("timeline = %+v", tl)
+	}
+}
+
+func TestShellInfoAndLinks(t *testing.T) {
+	s := newTestServer(t, "http://127.0.0.1:0", "http://127.0.0.1:0")
+	var info struct {
+		Data Info `json:"data"`
+	}
+	if code := get(t, s, "/api/v1/info", &info); code != http.StatusOK {
+		t.Fatalf("info status %d", code)
+	}
+	if want := (Info{Version: "0.1.0", Exchange: "NSE", SessionOpen: "09:15", SessionClose: "15:30", Timezone: "Asia/Kolkata"}); info.Data != want {
+		t.Errorf("info = %+v", info.Data)
+	}
+	var links struct {
+		Data []Link `json:"data"`
+	}
+	get(t, s, "/api/v1/links", &links)
+	ids := map[string]string{}
+	for _, l := range links.Data {
+		ids[l.ID] = l.Href
+	}
+	for _, id := range []string{"grafana", "prometheus", "alertmanager", "openbb"} {
+		if !strings.HasPrefix(ids[id], "/") {
+			t.Errorf("link %q missing or not same-origin: %q", id, ids[id])
+		}
 	}
 }
 

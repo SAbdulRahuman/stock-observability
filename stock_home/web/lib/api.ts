@@ -3,7 +3,7 @@ import { z } from "zod";
 
 const num = z.number().nullish();
 const point = z.object({ t: z.number(), v: z.number() });
-const link = z.object({ label: z.string(), href: z.string(), description: z.string().optional() });
+const link = z.object({ label: z.string(), href: z.string(), description: z.string().optional(), id: z.string().optional() });
 const level = z.enum(["critical", "warning", "info"]);
 
 const quote = z.object({
@@ -132,6 +132,13 @@ const schemas = {
     truncated: z.boolean(),
   }),
   links: z.array(link),
+  info: z.object({
+    version: z.string(),
+    exchange: z.string(),
+    sessionOpen: z.string(),
+    sessionClose: z.string(),
+    timezone: z.string(),
+  }),
 };
 
 /** Poll intervals match the server-side cache TTLs. */
@@ -146,6 +153,7 @@ const refreshMs: Record<SectionName, number | false> = {
   system: 15_000,
   timeline: 60_000,
   links: false,
+  info: false,
 };
 
 export type SectionName = keyof typeof schemas;
@@ -171,6 +179,6 @@ export function useSection<K extends SectionName>(name: K) {
     queryKey: ["section", name],
     queryFn: ({ signal }) => fetchSection(name, signal),
     refetchInterval: refreshMs[name],
-    staleTime: name === "links" ? Number.POSITIVE_INFINITY : 0,
+    staleTime: refreshMs[name] === false ? Number.POSITIVE_INFINITY : 0,
   });
 }

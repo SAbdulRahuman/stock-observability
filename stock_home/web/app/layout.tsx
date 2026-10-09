@@ -1,13 +1,13 @@
 import type { Metadata, Viewport } from "next";
 import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
-import { NavTabs } from "@/components/nav-tabs";
 import { Providers } from "@/components/providers";
+import { AppShell } from "@/components/shell/app-shell";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Stock Observability",
-  description: "Live market data feed, alerts, market overview and portfolio at a glance.",
+  title: "stock_home",
+  description: "Stock Observability Platform: market data, alerts and observability tools at a glance.",
 };
 
 export const viewport: Viewport = {
@@ -22,8 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en-IN" suppressHydrationWarning className={`${GeistSans.variable} ${GeistMono.variable}`}>
       <body className="min-h-dvh font-sans">
         <Providers>
-          <NavTabs />
-          {children}
+          <AppShell>{children}</AppShell>
         </Providers>
       </body>
     </html>

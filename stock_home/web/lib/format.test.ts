@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatClock,
   formatDateIST,
+  formatDateTimeIST,
   formatDuration,
   formatINR,
   formatPercent,
   formatTimeIST,
+  feedSourceLabel,
   relativeTime,
   trendClass,
 } from "./format";
@@ -52,6 +55,18 @@ describe("IST formatting", () => {
   });
   it("formats exchange dates", () => {
     expect(formatDateIST("2026-10-20")).toBe("Tue, 20 Oct");
+  });
+  it("formats the header clock and session hours", () => {
+    const { date, time } = formatDateTimeIST(new Date("2026-10-08T04:12:00Z"));
+    expect(date).toMatch(/Thu.*8.*Oct.*2026/);
+    expect(time).toMatch(/^09:42\sAM$/);
+    expect(formatClock("09:15")).toBe("09:15 AM");
+    expect(formatClock("15:30")).toBe("03:30 PM");
+    expect(formatClock("bad")).toBe("—");
+  });
+  it("names the feed source", () => {
+    expect(feedSourceLabel("kite")).toBe("Zerodha Kite API");
+    expect(feedSourceLabel("")).toBe("—");
   });
   it("describes elapsed time", () => {
     const now = new Date("2026-10-06T10:00:00Z");

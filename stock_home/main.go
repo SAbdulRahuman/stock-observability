@@ -38,6 +38,8 @@ func main() {
 		indices      = flag.String("market.indices", "NIFTY 50,NIFTY BANK,NIFTY IT,SENSEX,INDIA VIX", "Comma-separated index symbols for Market overview; the first one gets a sparkline.")
 		holidaysFile = flag.String("market.holidays-file", "", "Exchange holidays YAML (stock_exporter format).")
 		tz           = flag.String("market.timezone", "Asia/Kolkata", "Exchange timezone.")
+		exchange     = flag.String("market.exchange", "NSE", "Exchange name shown in the app shell.")
+		session      = flag.String("market.session-hours", "09:15-15:30", "Regular session hours HH:MM-HH:MM in the exchange timezone, shown in the app shell.")
 		timeout      = flag.Duration("query.timeout", 10*time.Second, "Timeout for one section refresh.")
 		openbbURL    = flag.String("openbb.url", "", "OpenBB Platform API base URL; /api/v2 commands without a native port are forwarded there. Empty disables. Credentials: env STOCK_HOME_OPENBB_USERNAME, STOCK_HOME_OPENBB_PASSWORD.")
 		openbbTO     = flag.Duration("openbb.timeout", 30*time.Second, "Timeout for one command forwarded to OpenBB.")
@@ -55,14 +57,18 @@ func main() {
 		Password: os.Getenv("STOCK_HOME_OPENBB_PASSWORD"),
 		Timeout:  *openbbTO,
 	}
-	if err := run(logger, *listen, *promURL, *amURL, *grafanaURL, *indices, *holidaysFile, *tz, *timeout, ob); err != nil {
+	if err := run(logger, *listen, *promURL, *amURL, *grafanaURL, *indices, *holidaysFile, *tz, *exchange, *session, *timeout, ob); err != nil {
 		logger.Error("Exiting", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, holidaysFile, tz string, timeout time.Duration, ob openbb.Config) error {
+func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, holidaysFile, tz, exchange, session string, timeout time.Duration, ob openbb.Config) error {
 	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return err
+	}
+	sessionOpen, sessionClose, err := parseSession(session)
 	if err != nil {
 		return err
 	}
@@ -92,6 +98,10 @@ func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, holid
 		Location:        loc,
 		Holidays:        hol,
 		QueryTimeout:    timeout,
+		Version:         version,
+		Exchange:        exchange,
+		SessionOpen:     sessionOpen,
+		SessionClose:    sessionClose,
 	}, prom, source.NewAlertmanager(trim(amURL), client), client, logger, reg)
 
 	mux := http.NewServeMux()
@@ -153,6 +163,18 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 func trim(u string) string { return strings.TrimRight(u, "/") }
+
+func parseSession(s string) (open, close string, err error) {
+	open, close, ok := strings.Cut(s, "-")
+	if ok {
+		o, err1 := time.Parse("15:04", open)
+		c, err2 := time.Parse("15:04", close)
+		if err1 == nil && err2 == nil && o.Before(c) {
+			return open, close, nil
+		}
+	}
+	return "", "", fmt.Errorf("invalid --market.session-hours %q: want HH:MM-HH:MM", s)
+}
 
 func splitList(s string) []string {
 	var out []string

@@ -1,7 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import { z } from "zod";
 import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,8 +38,15 @@ async function fetchAnalysis(symbol: string, signal?: AbortSignal): Promise<Anal
 const qualityVariant: Record<string, BadgeVariant> = { exact: "ok", approximation: "warning", heuristic: "critical", proxy: "warning" };
 
 export function Analyst() {
-  const [input, setInput] = useState("");
-  const [symbol, setSymbol] = useState("");
+  const initial = (useSearchParams()?.get("symbol") ?? "").trim().toUpperCase();
+  const [input, setInput] = useState(initial);
+  const [symbol, setSymbol] = useState(initial);
+  useEffect(() => {
+    if (initial) {
+      setInput(initial);
+      setSymbol(initial);
+    }
+  }, [initial]);
   const query = useQuery({
     queryKey: ["analyst", symbol],
     queryFn: ({ signal }) => fetchAnalysis(symbol, signal),

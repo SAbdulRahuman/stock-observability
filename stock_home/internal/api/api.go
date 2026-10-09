@@ -26,6 +26,10 @@ type Config struct {
 	Location        *time.Location
 	Holidays        []holidays.Holiday
 	QueryTimeout    time.Duration
+	Version         string
+	Exchange        string
+	SessionOpen     string // HH:MM in Location.
+	SessionClose    string
 }
 
 // Server implements the /api/v1 endpoints.
@@ -81,6 +85,9 @@ func (s *Server) Register(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("GET /api/v1/links", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, envelope{Data: quickLinks, UpdatedAt: s.now()})
+	})
+	mux.HandleFunc("GET /api/v1/info", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, envelope{Data: s.info(), UpdatedAt: s.now()})
 	})
 	mux.HandleFunc("GET /api/v1/analyst", s.analystHandler)
 }
@@ -168,15 +175,31 @@ type Link struct {
 	Label       string `json:"label"`
 	Href        string `json:"href"`
 	Description string `json:"description,omitempty"`
+	ID          string `json:"id,omitempty"`
 }
 
 var quickLinks = []Link{
-	{"Kite login", "/exporter/login", "Required once per trading day"},
-	{"Grafana", "/grafana/", "Dashboards and Explore"},
-	{"Grafana Alerting", "/grafana/alerting/list", "Rules, alerts and silences"},
-	{"Prometheus targets", "/prometheus/targets", "Scrape health"},
-	{"Prometheus rules", "/prometheus/rules", "Recording and alerting rules"},
-	{"Alertmanager", "/alertmanager/", "Alerts, silences and routing"},
+	{Label: "Kite login", Href: "/exporter/login", Description: "Required once per trading day", ID: "kite-login"},
+	{Label: "Grafana", Href: "/grafana/", Description: "Dashboards and Explore", ID: "grafana"},
+	{Label: "Grafana Alerting", Href: "/grafana/alerting/list", Description: "Rules, alerts and silences", ID: "grafana-alerting"},
+	{Label: "Prometheus targets", Href: "/prometheus/targets", Description: "Scrape health", ID: "prometheus-targets"},
+	{Label: "Prometheus rules", Href: "/prometheus/rules", Description: "Recording and alerting rules", ID: "prometheus-rules"},
+	{Label: "Alertmanager", Href: "/alertmanager/", Description: "Alerts, silences and routing", ID: "alertmanager"},
+	{Label: "Prometheus", Href: "/prometheus/", Description: "Metrics and rules", ID: "prometheus"},
+	{Label: "OpenBB", Href: "/openbb", Description: "Fundamental and technical analysis", ID: "openbb"},
+}
+
+// Info is static build and exchange configuration for the app shell.
+type Info struct {
+	Version      string `json:"version"`
+	Exchange     string `json:"exchange"`
+	SessionOpen  string `json:"sessionOpen"`
+	SessionClose string `json:"sessionClose"`
+	Timezone     string `json:"timezone"`
+}
+
+func (s *Server) info() Info {
+	return Info{Version: s.cfg.Version, Exchange: s.cfg.Exchange, SessionOpen: s.cfg.SessionOpen, SessionClose: s.cfg.SessionClose, Timezone: s.cfg.Location.String()}
 }
 
 // exploreURL links to Grafana Explore with a PromQL query on the provisioned Prometheus data source.

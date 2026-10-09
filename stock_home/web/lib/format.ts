@@ -84,6 +84,22 @@ export function formatDateIST(isoDate: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? DASH : dayFmt.format(date);
 }
 
+const headerDateFmt = new Intl.DateTimeFormat("en-IN", { timeZone: IST, weekday: "short", day: "numeric", month: "short", year: "numeric" });
+const clockFmt = new Intl.DateTimeFormat("en-IN", { timeZone: IST, hour: "2-digit", minute: "2-digit", hour12: true });
+
+/** "Thu, 8 Oct 2026" and "09:42 am" parts of an instant, in IST. */
+export function formatDateTimeIST(d: Date): { date: string; time: string } {
+  return { date: headerDateFmt.format(d), time: clockFmt.format(d).toUpperCase() };
+}
+
+/** Formats a wall-clock "HH:MM" (24h) as "09:15 AM". */
+export function formatClock(hhmm: string | null | undefined): string {
+  const m = /^(\d{2}):(\d{2})$/.exec(hhmm ?? "");
+  if (!m) return DASH;
+  const h = Number(m[1]);
+  return `${String(h % 12 || 12).padStart(2, "0")}:${m[2]} ${h < 12 ? "AM" : "PM"}`;
+}
+
 export function relativeTime(d: Date | string, now: Date = new Date()): string {
   const date = typeof d === "string" ? new Date(d) : d;
   const diff = Math.round((now.getTime() - date.getTime()) / 1000);
@@ -94,6 +110,12 @@ export function relativeTime(d: Date | string, now: Date = new Date()): string {
 export function trendClass(v: Num): string {
   if (!isNum(v) || v === 0) return "text-muted-foreground";
   return v > 0 ? "text-up" : "text-down";
+}
+
+export function feedSourceLabel(source: string | null | undefined): string {
+  if (source === "kite") return "Zerodha Kite API";
+  if (source === "sim") return "simulated feed";
+  return source || DASH;
 }
 
 export const phaseLabel: Record<string, string> = {
