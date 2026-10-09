@@ -1,0 +1,2 @@
+# Environment overrides stay in git; the published chart carries only values.yaml.
+values-*.yaml

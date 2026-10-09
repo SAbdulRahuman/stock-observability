@@ -1,11 +1,20 @@
 # Builds every deploy service locally, packages the binaries into
-# images and pushes them to the OpenShift internal registry. See README.md.
+# images and pushes them to Docker Hub or the OpenShift internal registry. See README.md.
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-OCP_REGISTRY ?= default-route-openshift-image-registry.apps.ocp4poc.c4lab.local
-NAMESPACE    ?= abdul
-REGISTRY     := $(OCP_REGISTRY)/$(NAMESPACE)
+# dockerhub: push with your `docker login` credentials; ocp: OpenShift internal registry with your `oc` token.
+PUSH_TO        ?= dockerhub
+DOCKERHUB_USER ?= aseeni
+OCP_REGISTRY   ?= default-route-openshift-image-registry.apps.ocp4poc.c4lab.local
+NAMESPACE      ?= abdul
+ifeq ($(PUSH_TO),ocp)
+REGISTRY := $(OCP_REGISTRY)/$(NAMESPACE)
+else ifeq ($(PUSH_TO),dockerhub)
+REGISTRY := docker.io/$(DOCKERHUB_USER)
+else
+$(error PUSH_TO must be dockerhub or ocp, not '$(PUSH_TO)')
+endif
 # The lab registry and the Zscaler proxy present certificates that are not trusted locally.
 TLS_VERIFY   ?= false
 GO           ?= go
@@ -30,7 +39,8 @@ AM_VERSION       := $(shell cat alertmanager/VERSION)
 OPENBB_DIR       := OpenBB/OpenBB
 OPENBB_VERSION   := $(shell git -C $(OPENBB_DIR) rev-parse --short HEAD 2>/dev/null)
 GRAFANA_IMAGE    ?= docker.io/grafana/grafana:13.2.3
-NGINX_IMAGE      ?= docker.io/nginxinc/nginx-unprivileged:1.28-alpine
+# alpine-slim drops the optional njs/xslt/image-filter/geoip modules, which the portal does not load.
+NGINX_IMAGE      ?= docker.io/nginxinc/nginx-unprivileged:1.28-alpine-slim
 PYTHON_IMAGE     ?= docker.io/library/python:3.11-slim
 BASE_IMAGES      := gcr.io/distroless/static-debian12:nonroot quay.io/prometheus/busybox-linux-amd64:latest
 
@@ -61,11 +71,14 @@ version_ldflags = -s -w \
 
 .PHONY: help
 help:
-	@echo "Usage: make <target> [OCP_REGISTRY=...] [NAMESPACE=...] [TLS_VERIFY=true|false]"
+	@echo "Usage: make <target> [PUSH_TO=dockerhub|ocp] [DOCKERHUB_USER=...] [OCP_REGISTRY=...] [NAMESPACE=...] [TLS_VERIFY=true|false]"
 	@echo
 	@echo "  build          Build binaries (incl. web UIs): $(BUILT)"
 	@echo "  docker-build   Build/copy local images: $(IMAGES)"
 	@echo "  docker-push    Push all images to $(REGISTRY)"
+	@echo "  push           Same as docker-push (no build)"
+	@echo "  helm-package   Lint and package the chart into .build/charts"
+	@echo "  helm-push      Push the packaged chart to $(HELM_REGISTRY)"
 	@echo "  all            build + docker-build + docker-push"
 	@echo "  deploy         helm upgrade --install (deploy/Makefile deploy-ocp)"
 	@echo "  clean          Remove build outputs"
@@ -164,9 +177,13 @@ docker-build-openbb:
 
 # --- docker-push ---------------------------------------------------------------
 
-.PHONY: docker-push registry-login
+.PHONY: docker-push push registry-login
 docker-push: registry-login $(addprefix docker-push-,$(IMAGES))
 
+# Pushes the images already in the local docker daemon; never rebuilds.
+push: docker-push
+
+ifeq ($(PUSH_TO),ocp)
 registry-login:
 	oc whoami -t | skopeo login --tls-verify=$(TLS_VERIFY) -u unused --password-stdin $(OCP_REGISTRY)
 
@@ -179,9 +196,38 @@ docker-push-$(1): registry-login
 	skopeo copy --retry-times 3 --dest-tls-verify=$(TLS_VERIFY) dir:.build/push docker://$(REGISTRY)/$(IMG_$(1))
 	rm -rf .build/push
 endef
+else
+# Credentials come from `docker login`; nothing is read or stored here.
+registry-login:
+	@docker info >/dev/null 2>&1 || { echo "docker daemon is not reachable"; exit 1; }
+
+define push_rule
+.PHONY: docker-push-$(1)
+docker-push-$(1): registry-login
+	@docker image inspect $(IMG_$(1)) >/dev/null 2>&1 || { echo "$(IMG_$(1)) is missing: run 'make docker-build-$(1)' first"; exit 1; }
+	docker tag $(IMG_$(1)) $(REGISTRY)/$(IMG_$(1))
+	docker push $(REGISTRY)/$(IMG_$(1))
+endef
+endif
 $(foreach i,$(IMAGES),$(eval $(call push_rule,$(i))))
 
 # --- deploy / clean -------------------------------------------------------------
+
+# The chart is published as an OCI artifact: oci://registry-1.docker.io/<user>/stock-observability.
+# Helm reuses the `docker login` credentials; otherwise run `helm registry login registry-1.docker.io`.
+CHART_DIR     := deploy/charts/stock-observability
+CHART_VERSION := $(shell awk '/^version:/ {print $$2}' $(CHART_DIR)/Chart.yaml)
+CHART_PKG     := .build/charts/stock-observability-$(CHART_VERSION).tgz
+HELM_REGISTRY ?= oci://registry-1.docker.io/$(DOCKERHUB_USER)
+
+.PHONY: helm-package helm-push
+helm-package:
+	helm lint $(CHART_DIR)
+	mkdir -p .build/charts
+	helm package $(CHART_DIR) -d .build/charts
+
+helm-push: helm-package
+	helm push $(CHART_PKG) $(HELM_REGISTRY)
 
 .PHONY: deploy
 deploy:

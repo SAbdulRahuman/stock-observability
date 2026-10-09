@@ -9,7 +9,7 @@ This directory holds every component of the stock observability stack. The top-l
 | [prometheus](prometheus) | Prometheus + promtool (with web UI) | `prometheus:v<prometheus/VERSION>` | built locally |
 | [alertmanager](alertmanager) | Alertmanager + amtool (with web UI) | `alertmanager:v<alertmanager/VERSION>` | built locally |
 | [grafana](grafana) | Grafana | `grafana:13.2.3` | official release image (copied) |
-| — | Portal reverse proxy (nginx) | `nginx-unprivileged:1.28-alpine` | official release image (copied) |
+| — | Portal reverse proxy (nginx) | `nginx-unprivileged:1.28-alpine-slim` | official release image (copied) |
 | [stock-observability](stock-observability) | Helm chart, Prometheus rules, Alertmanager config, Docker Compose | — | — |
 
 Grafana is not built from [grafana](grafana): that checkout is an unreleased 13.3.0-pre, and its frontend build needs far more memory than this workstation has.
@@ -148,7 +148,7 @@ After pushing a new image, roll it out with `make deploy` (the Helm chart re-pul
 | `NAMESPACE` | `abdul` | Registry namespace (OpenShift project) |
 | `TLS_VERIFY` | `false` | `false`: skip TLS verification for skopeo and npm, and trust the proxy CA for Elm |
 | `GRAFANA_IMAGE` | `docker.io/grafana/grafana:13.2.3` | Grafana image to copy |
-| `NGINX_IMAGE` | `docker.io/nginxinc/nginx-unprivileged:1.28-alpine` | Portal image to copy |
+| `NGINX_IMAGE` | `docker.io/nginxinc/nginx-unprivileged:1.28-alpine-slim` | Portal image to copy |
 | `PNPM` | `npx --yes pnpm@10` | pnpm command for the Prometheus UI |
 | `PROXY_CA_PROBE` | `package.elm-lang.org:443` | Host used to read the proxy CA for the Elm compiler |
 

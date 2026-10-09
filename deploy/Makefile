@@ -109,7 +109,7 @@ OPENBB_VERSION ?= $(shell git -C ../OpenBB/OpenBB rev-parse --short HEAD 2>/dev/
 # Images are built and pushed by the top-level Makefile (../Makefile).
 .PHONY: ocp-images
 ocp-images:
-	$(MAKE) -C .. build docker-build docker-push NAMESPACE=$(NAMESPACE)
+	$(MAKE) -C .. build docker-build docker-push PUSH_TO=ocp NAMESPACE=$(NAMESPACE)
 
 .PHONY: helm-lint
 helm-lint:

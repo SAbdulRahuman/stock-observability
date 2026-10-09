@@ -74,7 +74,7 @@ grafana:
 
 stockExporter:
   image:
-    repository: stock-exporter
+    repository: docker.io/aseeni/stock-exporter
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   feed:
@@ -108,7 +108,7 @@ quantlab:
 portal:
   image:
     repository: docker.io/nginxinc/nginx-unprivileged
-    tag: 1.28-alpine
+    tag: 1.28-alpine-slim
     pullPolicy: IfNotPresent
   replicas: 1
   auth:
@@ -123,7 +123,7 @@ portal:
 home:
   enabled: true
   image:
-    repository: stock-home
+    repository: docker.io/aseeni/stock-home
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   # Index tiles in Market overview; the first one gets a sparkline.
@@ -139,7 +139,7 @@ home:
 openbb:
   enabled: true
   image:
-    repository: openbb
+    repository: docker.io/aseeni/openbb
     # OpenBB/OpenBB commit; deploy-ocp sets it.
     tag: "ae02687"
     pullPolicy: IfNotPresent

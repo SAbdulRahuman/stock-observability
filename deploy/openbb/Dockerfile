@@ -26,16 +26,19 @@ ARG OPENBB_PACKAGES="\
     providers/jodi providers/deribit"
 
 # yfinance is not in the develop checkout; it adds NSE/BSE (.NS/.BO) coverage.
+# The venv holds only OpenBB and its dependencies, so the final stage does not duplicate the base Python or uv.
 RUN if [ "$TLS_VERIFY" = "false" ]; then \
         export PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org" \
                UV_INSECURE_HOST="pypi.org files.pythonhosted.org"; \
     fi \
     && pip install --no-cache-dir uv \
+    && python -m venv --without-pip /opt/venv \
     && cd openbb_platform \
-    && python -m uv pip install --python "$(command -v python)" \
+    && python -m uv pip install --no-cache --python /opt/venv/bin/python \
         $(for p in $OPENBB_PACKAGES; do printf -- '--editable %s ' "$p"; done) \
         "openbb-yfinance==${OPENBB_YFINANCE_VERSION}" \
-    && OPENBB_AUTO_BUILD=false python -c "import openbb; openbb.build(verbose=True)"
+    && OPENBB_AUTO_BUILD=false /opt/venv/bin/python -c "import openbb; openbb.build(verbose=True)" \
+    && find /app -type d -name tests -prune -exec rm -rf {} +
 
 FROM ${PYTHON_IMAGE}
 
@@ -43,12 +46,13 @@ FROM ${PYTHON_IMAGE}
 RUN useradd --uid 1001 --gid 0 --create-home --home-dir /home/openbb openbb \
     && chmod -R g=u /home/openbb
 
-COPY --from=builder /usr/local /usr/local
+COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /app /app
 
 USER 1001
 # No OPENBB_CONFIG: its [launcher] host would override OPENBB_API_HOST.
 ENV HOME=/home/openbb \
+    PATH=/opt/venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     OPENBB_AUTO_BUILD=false \
