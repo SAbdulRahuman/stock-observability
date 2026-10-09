@@ -34,6 +34,10 @@ type Config struct {
 	SessionClose    string
 	// SilencesAllowed enables POST /api/v1/silences (Acknowledge/Silence on the Alerts page).
 	SilencesAllowed bool
+	// OpenBB is only probed by the Settings integration test; the credentials never leave the server.
+	OpenBBURL      string
+	OpenBBUsername string
+	OpenBBPassword string
 }
 
 // Server implements the /api/v1 endpoints.
@@ -105,6 +109,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/stocks", s.stocksHandler)
 	s.registerProm(mux)
 	s.registerAM(mux)
+	s.registerIntegrations(mux)
 	mux.HandleFunc("GET /api/v1/alerts/items", s.section("alert-items", 5*time.Second, s.alertItems))
 	mux.HandleFunc("POST /api/v1/silences", s.createSilences)
 }
@@ -214,13 +219,16 @@ type Info struct {
 	SessionClose string `json:"sessionClose"`
 	Timezone     string `json:"timezone"`
 	// QuoteSymbolsMax bounds /api/v1/quotes and therefore one watchlist group.
-	QuoteSymbolsMax int  `json:"quoteSymbolsMax"`
-	SilencesAllowed bool `json:"silencesAllowed"`
+	QuoteSymbolsMax int      `json:"quoteSymbolsMax"`
+	SilencesAllowed bool     `json:"silencesAllowed"`
+	Indices         []string `json:"indices"`
+	HolidayCount    int      `json:"holidayCount"` // From --market.holidays-file; 0 when none is loaded.
 }
 
 func (s *Server) info() Info {
 	return Info{Version: s.cfg.Version, Exchange: s.cfg.Exchange, SessionOpen: s.cfg.SessionOpen, SessionClose: s.cfg.SessionClose,
-		Timezone: s.cfg.Location.String(), QuoteSymbolsMax: maxQuoteSymbols, SilencesAllowed: s.cfg.SilencesAllowed}
+		Timezone: s.cfg.Location.String(), QuoteSymbolsMax: maxQuoteSymbols, SilencesAllowed: s.cfg.SilencesAllowed,
+		Indices: nonNilSlice(s.cfg.Indices), HolidayCount: len(s.cfg.Holidays)}
 }
 
 // exploreURL links to Grafana Explore with a PromQL query on the provisioned Prometheus data source.

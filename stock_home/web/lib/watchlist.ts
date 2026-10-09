@@ -58,6 +58,11 @@ export function writeStore(store: Store) {
   window.dispatchEvent(new Event(CHANGE_EVENT));
 }
 
+export function clearStore() {
+  localStorage.removeItem(WATCHLIST_KEY);
+  window.dispatchEvent(new Event(CHANGE_EVENT));
+}
+
 export function readWatchlist(storage?: Pick<Storage, "getItem">): string[] {
   return readStore(storage).groups[0].symbols;
 }

@@ -107,6 +107,9 @@ func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, secto
 		SessionOpen:     sessionOpen,
 		SessionClose:    sessionClose,
 		SilencesAllowed: amSilences,
+		OpenBBURL:       trim(ob.URL),
+		OpenBBUsername:  ob.Username,
+		OpenBBPassword:  ob.Password,
 	}, prom, source.NewAlertmanager(trim(amURL), client), client, logger, reg)
 
 	mux := http.NewServeMux()

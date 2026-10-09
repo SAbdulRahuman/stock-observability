@@ -150,7 +150,19 @@ const schemas = {
     timezone: z.string(),
     quoteSymbolsMax: z.number().optional(),
     silencesAllowed: z.boolean().optional(),
+    indices: z.array(z.string()).optional(),
+    holidayCount: z.number().optional(),
   }),
+  integrations: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      configured: z.boolean(),
+      endpoint: z.string().optional(),
+      auth: z.string(),
+      note: z.string().optional(),
+    }),
+  ),
 };
 
 /** Poll intervals match the server-side cache TTLs. */
@@ -168,6 +180,7 @@ const refreshMs: Record<SectionName, number | false> = {
   links: false,
   dashboards: 60_000,
   info: false,
+  integrations: false,
 };
 
 export type SectionName = keyof typeof schemas;

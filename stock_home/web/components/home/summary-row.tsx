@@ -18,21 +18,22 @@ export const homeIndices = [
   { symbol: "INDIA VIX", name: "INDIA VIX" },
 ];
 
-export function SummaryRow() {
+export function SummaryRow({ showIndices = true }: { showIndices?: boolean }) {
   const market = useSection("market");
   const env = market.data;
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-      {homeIndices.map(({ symbol, name }) => (
-        <IndexCard
-          key={symbol}
-          name={name}
-          quote={env?.data.indices.find((q) => q.symbol === symbol)}
-          loading={!env && !market.isError}
-          error={!env && market.isError}
-          stale={!!env && (env.stale || market.isError)}
-        />
-      ))}
+      {showIndices &&
+        homeIndices.map(({ symbol, name }) => (
+          <IndexCard
+            key={symbol}
+            name={name}
+            quote={env?.data.indices.find((q) => q.symbol === symbol)}
+            loading={!env && !market.isError}
+            error={!env && market.isError}
+            stale={!!env && (env.stale || market.isError)}
+          />
+        ))}
       <MarketStatusCard className="p-4" />
     </div>
   );

@@ -40,7 +40,7 @@ export const navItems: NavItem[] = [
   { label: "Prometheus", icon: Flame, href: "/observability/prometheus", ready: true },
   { label: "Grafana", icon: Gauge, linkId: "grafana" },
   { label: "AlertManager", icon: BellRing, href: "/observability/alertmanager", ready: true },
-  { label: "Settings", icon: Settings, href: "/settings" },
+  { label: "Settings", icon: Settings, href: "/settings", ready: true },
 ];
 
 export function navItem(label: string): NavItem | undefined {

@@ -87,7 +87,7 @@ describe("AppShell", () => {
     expect(graf).toHaveAttribute("rel", "noopener noreferrer");
     expect(within(sidebar).getByText("Prometheus").closest("a")).toHaveAttribute("href", "/observability/prometheus");
     expect(within(sidebar).getByText("Market Overview").closest("a")).toHaveAttribute("href", "/market");
-    expect(within(sidebar).getByText("Settings").closest("[aria-disabled]")).not.toBeNull();
+    expect(within(sidebar).getByText("Settings").closest("a")).toHaveAttribute("href", "/settings");
 
     expect(await screen.findByText("Live Market")).toBeInTheDocument();
     expect(screen.getByLabelText("Alerts: 3 active")).toHaveAttribute("href", "/alerts");

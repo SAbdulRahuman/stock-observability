@@ -1,12 +1,14 @@
 "use client";
 
 import { Area, AreaChart, ResponsiveContainer, YAxis } from "recharts";
+import { useSettings } from "@/lib/settings";
 
 type Point = { t: number; v: number };
 
-/** Minimal area chart without axes; colour follows the trend between first and last point. */
+/** Minimal area chart without axes; colour follows the trend between first and last point. Hidden by the Settings preference. */
 export function Sparkline({ points, className, height = 48 }: { points: Point[] | null | undefined; className?: string; height?: number }) {
-  if (!points || points.length < 2) return <div className={className} style={{ height }} />;
+  const [settings] = useSettings();
+  if (!settings.showSparklines || !points || points.length < 2) return <div className={className} style={{ height }} />;
   const up = points[points.length - 1].v >= points[0].v;
   const color = up ? "var(--color-up)" : "var(--color-down)";
   const id = `spark-${up ? "up" : "down"}`;

@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { SETTINGS_KEY } from "@/lib/settings";
 import { WATCHLIST_KEY } from "@/lib/watchlist";
 import { HomePage } from "./home";
 
@@ -119,6 +120,14 @@ describe("HomePage", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/chart?symbol=NIFTY%2050&range=1D", expect.anything());
     fireEvent.click(screen.getByText("1W"));
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/chart?symbol=NIFTY%2050&range=1W", expect.anything());
+  });
+
+  it("hides the widgets switched off in Settings", async () => {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ home: { indexCards: false, recentAlerts: true, topMovers: false, watchlistSnapshot: true } }));
+    renderHome(populated);
+    expect(await screen.findByText("OPEN")).toBeInTheDocument();
+    expect(screen.queryByLabelText("NIFTY 50")).toBeNull();
+    expect(screen.queryByText("ADANIENT")).toBeNull();
   });
 
   it("switches Top Movers lists", async () => {
