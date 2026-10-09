@@ -196,7 +196,7 @@ func TestShellInfoAndLinks(t *testing.T) {
 	if code := get(t, s, "/api/v1/info", &info); code != http.StatusOK {
 		t.Fatalf("info status %d", code)
 	}
-	if want := (Info{Version: "0.1.0", Exchange: "NSE", SessionOpen: "09:15", SessionClose: "15:30", Timezone: "Asia/Kolkata"}); info.Data != want {
+	if want := (Info{Version: "0.1.0", Exchange: "NSE", SessionOpen: "09:15", SessionClose: "15:30", Timezone: "Asia/Kolkata", QuoteSymbolsMax: 20}); info.Data != want {
 		t.Errorf("info = %+v", info.Data)
 	}
 	var links struct {

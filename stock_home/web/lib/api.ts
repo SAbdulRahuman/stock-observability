@@ -144,6 +144,7 @@ const schemas = {
     sessionOpen: z.string(),
     sessionClose: z.string(),
     timezone: z.string(),
+    quoteSymbolsMax: z.number().optional(),
   }),
 };
 
@@ -193,8 +194,10 @@ export function useSection<K extends SectionName>(name: K) {
   });
 }
 
-export const chartRanges = ["1D", "1W", "1M", "3M", "1Y"] as const;
+export const chartRanges = ["1D", "1W", "1M", "3M", "1Y", "5Y"] as const;
 export type ChartRange = (typeof chartRanges)[number];
+/** Index charts on Home and Market Overview stop at 1Y. */
+export const indexRanges: readonly ChartRange[] = ["1D", "1W", "1M", "3M", "1Y"];
 
 const chartSchema = z.object({
   symbol: z.string(),
@@ -207,17 +210,37 @@ const chartSchema = z.object({
 export type Chart = z.infer<typeof chartSchema>;
 
 /** Price history of a configured index; the server keeps only session-time points. */
-export function useChart(symbol: string, range: ChartRange) {
+export function useChart(symbol: string, range: ChartRange, enabled = true) {
   return useQuery({
     queryKey: ["chart", symbol, range],
     queryFn: ({ signal }) =>
       fetchEnvelope(`/api/v1/chart?symbol=${encodeURIComponent(symbol)}&range=${range}`, chartSchema, signal),
+    enabled,
     refetchInterval: range === "1D" ? 30_000 : 120_000,
   });
 }
 
 const quotesSchema = z.object({ items: z.array(quote) });
 export type Quote = z.infer<typeof quote>;
+
+const instrumentSchema = quote.extend({
+  open: num,
+  high: num,
+  low: num,
+  prevClose: num,
+  avgVolume20d: num,
+  chartUrl: z.string(),
+});
+export type Instrument = z.infer<typeof instrumentSchema>;
+
+export function useInstrument(symbol: string | null) {
+  return useQuery({
+    queryKey: ["instrument", symbol],
+    queryFn: ({ signal }) => fetchEnvelope(`/api/v1/instrument?symbol=${encodeURIComponent(symbol ?? "")}`, instrumentSchema, signal),
+    enabled: !!symbol,
+    refetchInterval: 10_000,
+  });
+}
 
 export function useQuotes(symbols: string[]) {
   const list = symbols.join(",");
@@ -227,4 +250,9 @@ export function useQuotes(symbols: string[]) {
     enabled: symbols.length > 0,
     refetchInterval: 10_000,
   });
+}
+
+export async function fetchQuotes(symbols: string[]): Promise<Quote[]> {
+  const env = await fetchEnvelope(`/api/v1/quotes?symbols=${encodeURIComponent(symbols.join(","))}`, quotesSchema);
+  return env.data.items;
 }

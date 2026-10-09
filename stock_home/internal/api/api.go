@@ -92,6 +92,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/analyst", s.analystHandler)
 	mux.HandleFunc("GET /api/v1/chart", s.chartHandler)
 	mux.HandleFunc("GET /api/v1/quotes", s.quotesHandler)
+	mux.HandleFunc("GET /api/v1/instrument", s.instrumentHandler)
 }
 
 type envelope struct {
@@ -198,10 +199,13 @@ type Info struct {
 	SessionOpen  string `json:"sessionOpen"`
 	SessionClose string `json:"sessionClose"`
 	Timezone     string `json:"timezone"`
+	// QuoteSymbolsMax bounds /api/v1/quotes and therefore one watchlist group.
+	QuoteSymbolsMax int `json:"quoteSymbolsMax"`
 }
 
 func (s *Server) info() Info {
-	return Info{Version: s.cfg.Version, Exchange: s.cfg.Exchange, SessionOpen: s.cfg.SessionOpen, SessionClose: s.cfg.SessionClose, Timezone: s.cfg.Location.String()}
+	return Info{Version: s.cfg.Version, Exchange: s.cfg.Exchange, SessionOpen: s.cfg.SessionOpen, SessionClose: s.cfg.SessionClose,
+		Timezone: s.cfg.Location.String(), QuoteSymbolsMax: maxQuoteSymbols}
 }
 
 // exploreURL links to Grafana Explore with a PromQL query on the provisioned Prometheus data source.

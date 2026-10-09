@@ -101,7 +101,7 @@ func TestChart(t *testing.T) {
 		t.Errorf("volume window should match the 1D step: %v", queries())
 	}
 
-	for _, bad := range []string{"symbol=NIFTY%2050&range=5Y", "symbol=RELIANCE&range=1D", `symbol=NIFTY%2050%22%7D&range=1D`} {
+	for _, bad := range []string{"symbol=NIFTY%2050&range=5X", "symbol=&range=1D", `symbol=NIFTY%2050%22%7D&range=1D`} {
 		if code := get(t, s, "/api/v1/chart?"+bad, nil); code != http.StatusBadRequest {
 			t.Errorf("%s: status %d, want 400", bad, code)
 		}

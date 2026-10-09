@@ -80,9 +80,10 @@ var chartRanges = map[string]chartRange{
 	"1M": {30 * 24 * time.Hour, time.Hour, 10 * time.Minute, true, false},
 	"3M": {90 * 24 * time.Hour, 3 * time.Hour, 10 * time.Minute, true, false},
 	"1Y": {365 * 24 * time.Hour, 24 * time.Hour, 30 * time.Minute, false, false},
+	"5Y": {5 * 365 * 24 * time.Hour, 7 * 24 * time.Hour, time.Hour, false, false},
 }
 
-// Chart is the price history of one configured index with core-equity traded volume.
+// Chart is the price history of an index (with core-equity traded volume) or of one equity.
 type Chart struct {
 	Symbol      string         `json:"symbol"`
 	Range       string         `json:"range"`
@@ -92,7 +93,10 @@ type Chart struct {
 	Last        *float64       `json:"last"`
 }
 
-const chartVolumeLabel = "Core equities traded volume"
+const (
+	chartVolumeLabel  = "Core equities traded volume"
+	equityVolumeLabel = "Traded volume"
+)
 
 func (s *Server) chartHandler(w http.ResponseWriter, r *http.Request) {
 	symbol := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("symbol")))
@@ -102,16 +106,20 @@ func (s *Server) chartHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	cr, ok := chartRanges[rng]
 	if !ok {
-		writeJSON(w, http.StatusBadRequest, envelope{Error: "range must be one of 1D, 1W, 1M, 3M, 1Y", UpdatedAt: s.now()})
+		writeJSON(w, http.StatusBadRequest, envelope{Error: "range must be one of 1D, 1W, 1M, 3M, 1Y, 5Y", UpdatedAt: s.now()})
 		return
 	}
-	if !s.isIndex(symbol) {
-		writeJSON(w, http.StatusBadRequest, envelope{Error: "symbol must be a configured index", UpdatedAt: s.now()})
+	if s.isIndex(symbol) {
+		s.cached(w, "chart", "chart:"+symbol+":"+rng, cr.ttl, func(ctx context.Context) (any, error) {
+			return s.chart(ctx, symbol, rng, cr, true)
+		})
 		return
 	}
-	s.cached(w, "chart", "chart:"+symbol+":"+rng, cr.ttl, func(ctx context.Context) (any, error) {
-		return s.chart(ctx, symbol, rng, cr)
-	})
+	if !symbolPattern.MatchString(symbol) {
+		writeJSON(w, http.StatusBadRequest, envelope{Error: "symbol must be a configured index or an NSE trading symbol", UpdatedAt: s.now()})
+		return
+	}
+	s.direct(w, r, "chart", func(ctx context.Context) (any, error) { return s.chart(ctx, symbol, rng, cr, false) })
 }
 
 func (s *Server) isIndex(symbol string) bool {
@@ -123,16 +131,24 @@ func (s *Server) isIndex(symbol string) bool {
 	return false
 }
 
-func (s *Server) chart(ctx context.Context, symbol, rng string, cr chartRange) (any, error) {
+func (s *Server) chart(ctx context.Context, symbol, rng string, cr chartRange, index bool) (any, error) {
 	q := s.querier(ctx)
 	now := s.now()
-	price := sessionRange(q, fmt.Sprintf(`max(stock_last_price{symbol=%q, instrument_type="INDEX"})`, symbol), now, cr.lookback, cr.step, cr.open, cr.lastDay, s.cfg.Location)
 	window := promDuration(cr.step)
-	volume := sessionRange(q, fmt.Sprintf(`sum(increase(stock_day_volume_shares{instrument_type="EQ", tier="core"}[%s]))`, window), now, cr.lookback, cr.step, cr.open, cr.lastDay, s.cfg.Location)
+	priceExpr := fmt.Sprintf(`max(stock_last_price{symbol=%q, instrument_type="INDEX"})`, symbol)
+	volumeExpr := fmt.Sprintf(`sum(increase(stock_day_volume_shares{instrument_type="EQ", tier="core"}[%s]))`, window)
+	label := chartVolumeLabel
+	if !index {
+		priceExpr = fmt.Sprintf(`max(stock_last_price{symbol=%q, instrument_type="EQ"})`, symbol)
+		volumeExpr = fmt.Sprintf(`sum(increase(stock_day_volume_shares{symbol=%q, instrument_type="EQ"}[%s]))`, symbol, window)
+		label = equityVolumeLabel
+	}
+	price := sessionRange(q, priceExpr, now, cr.lookback, cr.step, cr.open, cr.lastDay, s.cfg.Location)
+	volume := sessionRange(q, volumeExpr, now, cr.lookback, cr.step, cr.open, cr.lastDay, s.cfg.Location)
 	if q.err != nil {
 		return nil, q.err
 	}
-	c := Chart{Symbol: symbol, Range: rng, Points: []source.Point{}, Volume: []source.Point{}, VolumeLabel: chartVolumeLabel}
+	c := Chart{Symbol: symbol, Range: rng, Points: []source.Point{}, Volume: []source.Point{}, VolumeLabel: label}
 	if len(price) > 0 {
 		c.Points = price[0].Points
 	}
@@ -190,24 +206,16 @@ func (s *Server) quotesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Not cached: arbitrary symbol lists would grow the cache without bound.
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.QueryTimeout)
-	defer cancel()
-	res, err := s.quotes(ctx, symbols)
-	if err != nil {
-		s.errors.WithLabelValues("quotes").Inc()
-		s.logger.Warn("Quotes query failed", "err", err)
-		writeJSON(w, http.StatusBadGateway, envelope{Error: "upstream unavailable", UpdatedAt: s.now()})
-		return
-	}
-	writeJSON(w, http.StatusOK, envelope{Data: res, UpdatedAt: s.now()})
+	s.direct(w, r, "quotes", func(ctx context.Context) (any, error) { return s.quotes(ctx, symbols) })
 }
 
 func (s *Server) quotes(ctx context.Context, symbols []string) (Quotes, error) {
 	q := s.querier(ctx)
 	sel := fmt.Sprintf(`symbol=~%q`, symbolAlternation(symbols))
-	prices := bySymbol(q.vector(fmt.Sprintf(`max by (exchange, symbol) (stock_last_price{%s})`, sel)))
+	prices := bySymbol(q.vector(fmt.Sprintf(`max by (exchange, symbol, sector) (stock_last_price{%s})`, sel)))
 	pct := bySymbol(q.vector(fmt.Sprintf(`max by (exchange, symbol) (stock_change_percent{%s})`, sel)))
 	abs := bySymbol(q.vector(absChangeQuery(sel)))
+	volume := bySymbol(q.vector(fmt.Sprintf(`max by (symbol) (stock_day_volume_shares{%s})`, sel)))
 	sparks := sessionSparks(q, "", symbols, s.now(), s.cfg.Location)
 	if q.err != nil {
 		return Quotes{}, q.err
@@ -217,7 +225,7 @@ func (s *Server) quotes(ctx context.Context, symbols []string) (Quotes, error) {
 		qt := Quote{Symbol: sym, Spark: sparks[sym]}
 		if p, ok := prices[sym]; ok {
 			v := p.Value
-			qt.Exchange, qt.Price = p.Labels["exchange"], &v
+			qt.Exchange, qt.Sector, qt.Price = p.Labels["exchange"], p.Labels["sector"], &v
 			qt.ExploreURL = symbolExploreURL(qt.Exchange, sym)
 		}
 		if c, ok := pct[sym]; ok {
@@ -228,10 +236,35 @@ func (s *Server) quotes(ctx context.Context, symbols []string) (Quotes, error) {
 			v := c.Value
 			qt.Change = &v
 		}
+		if c, ok := volume[sym]; ok {
+			v := c.Value
+			qt.Volume = &v
+		}
 		out.Items = append(out.Items, qt)
 	}
 	return out, nil
 }
+
+// direct serves an uncached query bounded by the request context and the query timeout.
+func (s *Server) direct(w http.ResponseWriter, r *http.Request, section string, fn func(context.Context) (any, error)) {
+	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.QueryTimeout)
+	defer cancel()
+	res, err := fn(ctx)
+	if err != nil {
+		s.errors.WithLabelValues(section).Inc()
+		s.logger.Warn("Query failed", "section", section, "err", err)
+		writeJSON(w, http.StatusBadGateway, envelope{Error: "upstream unavailable", UpdatedAt: s.now()})
+		return
+	}
+	if nf, ok := res.(notFound); ok {
+		writeJSON(w, http.StatusNotFound, envelope{Error: string(nf), UpdatedAt: s.now()})
+		return
+	}
+	writeJSON(w, http.StatusOK, envelope{Data: res, UpdatedAt: s.now()})
+}
+
+// notFound is returned by direct query functions when the subject has no data.
+type notFound string
 
 // cached serves a parameterised query through the cache with the generic upstream error.
 func (s *Server) cached(w http.ResponseWriter, section, key string, ttl time.Duration, fn func(context.Context) (any, error)) {

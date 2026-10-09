@@ -4,7 +4,7 @@ import { ChartLine } from "lucide-react";
 import { useState } from "react";
 import { Area, Bar, CartesianGrid, ComposedChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Empty, SectionCard } from "@/components/dashboard/section-card";
-import { type Chart, type ChartRange, chartRanges, useChart } from "@/lib/api";
+import { type Chart, type ChartRange, indexRanges, useChart } from "@/lib/api";
 import { formatCount, formatPrice, IST } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -16,6 +16,7 @@ const tickFormats: Record<ChartRange, Intl.DateTimeFormat> = {
   "1M": new Intl.DateTimeFormat("en-IN", { timeZone: IST, day: "numeric", month: "short" }),
   "3M": new Intl.DateTimeFormat("en-IN", { timeZone: IST, day: "numeric", month: "short" }),
   "1Y": new Intl.DateTimeFormat("en-IN", { timeZone: IST, month: "short", year: "2-digit" }),
+  "5Y": new Intl.DateTimeFormat("en-IN", { timeZone: IST, month: "short", year: "numeric" }),
 };
 const tooltipTime = new Intl.DateTimeFormat("en-IN", { timeZone: IST, day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
 const axisPrice = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
@@ -41,10 +42,20 @@ export function IntradayChart({ range: controlled, onRangeChange }: { range?: Ch
   );
 }
 
-export function RangePicker({ value, onChange, label = "Timeframe" }: { value: ChartRange; onChange: (r: ChartRange) => void; label?: string }) {
+export function RangePicker({
+  value,
+  onChange,
+  label = "Timeframe",
+  ranges = indexRanges,
+}: {
+  value: ChartRange;
+  onChange: (r: ChartRange) => void;
+  label?: string;
+  ranges?: readonly ChartRange[];
+}) {
   return (
     <div role="group" aria-label={label} className="flex rounded-lg bg-muted p-0.5">
-      {chartRanges.map((r) => (
+      {ranges.map((r) => (
         <button
           key={r}
           type="button"
@@ -62,7 +73,8 @@ export function RangePicker({ value, onChange, label = "Timeframe" }: { value: C
   );
 }
 
-function PriceChart({ chart, range }: { chart: Chart; range: ChartRange }) {
+export function PriceChart({ chart, range, className = "h-72" }: { chart: Chart; range: ChartRange; className?: string }) {
+  const gradient = `area-${chart.symbol.replace(/[^A-Za-z0-9]/g, "")}`;
   const volume = new Map(chart.volume.map((p) => [p.t, p.v]));
   const rows: Row[] = chart.points.map((p) => ({ t: p.t, v: p.v, vol: volume.get(p.t) }));
   const first = rows[0].v;
@@ -73,11 +85,11 @@ function PriceChart({ chart, range }: { chart: Chart; range: ChartRange }) {
   const fmt = tickFormats[range];
   return (
     <figure aria-label={`${chart.symbol} ${range}: last ${formatPrice(last)}, ${up ? "up" : "down"} from ${formatPrice(first)}`}>
-      <div className="h-72">
+      <div className={className}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={rows} margin={{ top: 8, right: 64, bottom: 0, left: 0 }}>
             <defs>
-              <linearGradient id="nifty-area" x1="0" y1="0" x2="0" y2="1">
+              <linearGradient id={gradient} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={color} stopOpacity={0.35} />
                 <stop offset="100%" stopColor={color} stopOpacity={0} />
               </linearGradient>
@@ -110,7 +122,7 @@ function PriceChart({ chart, range }: { chart: Chart; range: ChartRange }) {
               dataKey="v"
               stroke={color}
               strokeWidth={2}
-              fill="url(#nifty-area)"
+              fill={`url(#${gradient})`}
               dot={false}
               isAnimationActive={false}
             />

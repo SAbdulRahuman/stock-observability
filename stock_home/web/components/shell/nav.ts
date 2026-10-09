@@ -30,7 +30,7 @@ export type NavItem = {
 export const navItems: NavItem[] = [
   { label: "Home", icon: House, href: "/", ready: true },
   { label: "Market Overview", icon: ChartLine, href: "/market", ready: true },
-  { label: "Watchlist", icon: Heart, href: "/watchlist" },
+  { label: "Watchlist", icon: Heart, href: "/watchlist", ready: true },
   { label: "Alerts", icon: Bell, href: "/alerts", badge: "alerts" },
   { label: "Top Movers", icon: TrendingUp, href: "/movers" },
   { label: "Sector View", icon: Grid2x2, href: "/sectors" },
