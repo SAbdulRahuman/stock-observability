@@ -86,7 +86,7 @@ describe("AppShell", () => {
     expect(prom).toHaveAttribute("href", "/prometheus/");
     expect(prom).toHaveAttribute("rel", "noopener noreferrer");
     expect(within(sidebar).getByText("Market Overview").closest("a")).toHaveAttribute("href", "/market");
-    expect(within(sidebar).getByText("Stock Explorer").closest("[aria-disabled]")).not.toBeNull();
+    expect(within(sidebar).getByText("Dashboards").closest("[aria-disabled]")).not.toBeNull();
 
     expect(await screen.findByText("Live Market")).toBeInTheDocument();
     expect(screen.getByLabelText("Alerts: 3 active")).toHaveAttribute("href", "/alerts");
@@ -117,7 +117,7 @@ describe("AppShell", () => {
 
     fireEvent.change(input, { target: { value: " infy " } });
     fireEvent.submit(input);
-    expect(nav.push).toHaveBeenCalledWith("/analyst?symbol=INFY");
+    expect(nav.push).toHaveBeenCalledWith("/explorer?q=INFY");
 
     const toggle = screen.getByLabelText("Collapse sidebar");
     fireEvent.click(toggle);

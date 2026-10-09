@@ -363,3 +363,18 @@ export function useMoversScan(f: MoversFilters) {
     placeholderData: keepPreviousData,
   });
 }
+
+const stocksSchema = z.object({ items: z.array(quote), total: z.number(), page: z.number(), per: z.number(), sectorNames: z.array(z.string()) });
+export type Stocks = z.infer<typeof stocksSchema>;
+export type StockQuery = { q: string; sector: string; price: string; change: string; sort: string; dir: string; page: number; per: number };
+
+/** Stock Explorer: search and filter all NSE equities with a recorded change. */
+export function useStocks(p: StockQuery) {
+  const qs = new URLSearchParams({ q: p.q, sector: p.sector, price: p.price, change: p.change, sort: p.sort, dir: p.dir, page: String(p.page), per: String(p.per) });
+  return useQuery({
+    queryKey: ["stocks", qs.toString()],
+    queryFn: ({ signal }) => fetchEnvelope(`/api/v1/stocks?${qs}`, stocksSchema, signal),
+    refetchInterval: 10_000,
+    placeholderData: keepPreviousData,
+  });
+}

@@ -16,7 +16,7 @@ type Q = UseQueryResult<Envelope<MoversScan>>;
 
 function SymbolLink({ symbol }: { symbol: string }) {
   return (
-    <Link href={`/analyst?symbol=${encodeURIComponent(symbol)}`} className="font-medium hover:underline" title={`Explain ${symbol}`}>
+    <Link href={`/explorer?symbol=${encodeURIComponent(symbol)}`} className="font-medium hover:underline" title={`${symbol} details`}>
       {symbol}
     </Link>
   );

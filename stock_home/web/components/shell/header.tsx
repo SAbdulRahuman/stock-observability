@@ -41,7 +41,7 @@ export function Header({ collapsed, onToggleSidebar }: { collapsed: boolean; onT
   );
 }
 
-/** Opens the analyst view until Stock Explorer exists. */
+/** Searches symbols in Stock Explorer. */
 function StockSearch() {
   const router = useRouter();
   const [value, setValue] = useState("");
@@ -58,7 +58,7 @@ function StockSearch() {
           return;
         }
         setInvalid(false);
-        router.push(`/analyst?symbol=${encodeURIComponent(symbol)}`);
+        router.push(`/explorer?q=${encodeURIComponent(symbol)}`);
       }}
     >
       <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />

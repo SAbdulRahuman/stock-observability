@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seenimo/stock_home/internal/cache"
 	"github.com/seenimo/stock_home/internal/source"
 )
 
@@ -111,11 +112,7 @@ func (s *Server) moversScanHandler(w http.ResponseWriter, r *http.Request) {
 		bad("invalid sector")
 		return
 	}
-	res, err := s.cache.Get("movers-scan:"+universe, 10*time.Second, 2*time.Minute, func() (any, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), s.cfg.QueryTimeout)
-		defer cancel()
-		return s.moverRows(ctx, universes[universe])
-	})
+	res, err := s.moverSnapshot(universe)
 	if err != nil {
 		s.errors.WithLabelValues("movers-scan").Inc()
 		s.logger.Warn("Movers scan failed", "universe", universe, "err", err)
@@ -152,6 +149,15 @@ func or(v, def string) string {
 		return def
 	}
 	return v
+}
+
+// moverSnapshot is the cached per-universe equity snapshot shared by Top Movers, Sector View and Stock Explorer.
+func (s *Server) moverSnapshot(universe string) (cache.Result, error) {
+	return s.cache.Get("movers-scan:"+universe, 10*time.Second, 2*time.Minute, func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), s.cfg.QueryTimeout)
+		defer cancel()
+		return s.moverRows(ctx, universes[universe])
+	})
 }
 
 func symbolsOf(qs []Quote) []string {

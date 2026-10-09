@@ -80,7 +80,7 @@ describe("TopMoversPage", () => {
     expect(screen.queryByText("G5")).toBeNull();
     fireEvent.click(screen.getByText("View All (7)"));
     expect(screen.getByText("G6")).toBeInTheDocument();
-    expect(screen.getByText("G0").closest("a")).toHaveAttribute("href", "/analyst?symbol=G0");
+    expect(screen.getByText("G0").closest("a")).toHaveAttribute("href", "/explorer?symbol=G0");
 
     expect(screen.getByText(formatVolume(124_500_000))).toBeInTheDocument();
     expect(screen.getByLabelText("HAL position in 52-week range")).toHaveAttribute("aria-valuenow", "100");

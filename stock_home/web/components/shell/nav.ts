@@ -34,7 +34,7 @@ export const navItems: NavItem[] = [
   { label: "Alerts", icon: Bell, href: "/alerts", badge: "alerts", ready: true },
   { label: "Top Movers", icon: TrendingUp, href: "/movers", ready: true },
   { label: "Sector View", icon: Grid2x2, href: "/sectors", ready: true },
-  { label: "Stock Explorer", icon: Search, href: "/explorer" },
+  { label: "Stock Explorer", icon: Search, href: "/explorer", ready: true },
   { label: "Dashboards", icon: LayoutDashboard, href: "/dashboards" },
   { label: "OpenBB Analysis", icon: ChartNoAxesCombined, href: "/openbb", ready: true },
   { label: "Prometheus", icon: Flame, linkId: "prometheus" },
