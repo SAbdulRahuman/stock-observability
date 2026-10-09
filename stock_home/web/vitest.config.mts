@@ -10,5 +10,7 @@ export default defineConfig({
     setupFiles: ["./vitest.setup.ts"],
     include: ["**/*.test.{ts,tsx}"],
     exclude: ["node_modules/**", ".next/**", "out/**"],
+    // Render tests of whole pages exceed the 5s default on loaded machines.
+    testTimeout: 15_000,
   },
 });

@@ -69,6 +69,8 @@ type AlertItem struct {
 	StartsAt    time.Time `json:"startsAt"`
 	SourceURL   string    `json:"sourceUrl,omitempty"`
 	Fingerprint string    `json:"fingerprint"`
+	// Value is the rule's optional "value" annotation.
+	Value string `json:"value,omitempty"`
 }
 
 // Alerts is section 2: active alerts from Alertmanager.
@@ -122,7 +124,7 @@ func (s *Server) alerts(ctx context.Context) (any, error) {
 		out.Items = append(out.Items, AlertItem{
 			Name: a.Labels["alertname"], Severity: sev, Category: a.Labels["category"], Summary: summary,
 			Symbol: a.Labels["symbol"], Exchange: a.Labels["exchange"], StartsAt: a.StartsAt,
-			SourceURL: a.GeneratorURL, Fingerprint: a.Fingerprint,
+			SourceURL: a.GeneratorURL, Fingerprint: a.Fingerprint, Value: a.Annotations["value"],
 		})
 	}
 	sort.Slice(out.Items, func(i, j int) bool {

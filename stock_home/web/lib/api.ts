@@ -13,6 +13,9 @@ const quote = z.object({
   price: num,
   changePercent: num,
   exploreUrl: z.string(),
+  change: num,
+  volume: num,
+  spark: z.array(point).nullish(),
 });
 
 const schemas = {
@@ -63,6 +66,7 @@ const schemas = {
         startsAt: z.string(),
         sourceUrl: z.string().optional(),
         fingerprint: z.string(),
+        value: z.string().optional(),
       }),
     ),
     truncated: z.boolean(),
@@ -75,7 +79,7 @@ const schemas = {
     sectors: z.array(z.object({ name: z.string(), changePercent: z.number() })),
     spark: z.object({ symbol: z.string(), points: z.array(point).nullish() }).nullish(),
   }),
-  movers: z.object({ gainers: z.array(quote), losers: z.array(quote) }),
+  movers: z.object({ gainers: z.array(quote), losers: z.array(quote), highVolume: z.array(quote).default([]) }),
   circuits: z.object({
     hits: z.array(quote.extend({ side: z.string(), distancePercent: z.number(), hit: z.boolean() })),
     near: z.array(quote.extend({ side: z.string(), distancePercent: z.number(), hit: z.boolean() })),
@@ -124,6 +128,7 @@ const schemas = {
         severity: z.string(),
         category: z.string(),
         subject: z.string().optional(),
+        symbol: z.string().optional(),
         start: z.string(),
         end: z.string().nullish(),
       }),
@@ -164,14 +169,18 @@ export type Status = SectionData<"status">;
 export type Banner = Status["banners"][number];
 
 export async function fetchSection<K extends SectionName>(name: K, signal?: AbortSignal): Promise<Envelope<SectionData<K>>> {
-  const res = await fetch(`/api/v1/${name}`, { signal, cache: "no-store", headers: { Accept: "application/json" } });
+  return fetchEnvelope(`/api/v1/${name}`, { parse: (d) => schemas[name].parse(d) as SectionData<K> }, signal);
+}
+
+async function fetchEnvelope<T>(url: string, schema: { parse: (data: unknown) => T }, signal?: AbortSignal): Promise<Envelope<T>> {
+  const res = await fetch(url, { signal, cache: "no-store", headers: { Accept: "application/json" } });
   const body: unknown = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = (body as { error?: string }).error ?? `HTTP ${res.status}`;
     throw new Error(msg);
   }
   const env = body as { data: unknown; updatedAt: string; stale?: boolean };
-  return { data: schemas[name].parse(env.data) as SectionData<K>, updatedAt: env.updatedAt, stale: env.stale ?? false };
+  return { data: schema.parse(env.data), updatedAt: env.updatedAt, stale: env.stale ?? false };
 }
 
 export function useSection<K extends SectionName>(name: K) {
@@ -180,5 +189,41 @@ export function useSection<K extends SectionName>(name: K) {
     queryFn: ({ signal }) => fetchSection(name, signal),
     refetchInterval: refreshMs[name],
     staleTime: refreshMs[name] === false ? Number.POSITIVE_INFINITY : 0,
+  });
+}
+
+export const chartRanges = ["1D", "1W", "1M", "3M", "1Y"] as const;
+export type ChartRange = (typeof chartRanges)[number];
+
+const chartSchema = z.object({
+  symbol: z.string(),
+  range: z.string(),
+  points: z.array(point),
+  volume: z.array(point),
+  volumeLabel: z.string(),
+  last: num,
+});
+export type Chart = z.infer<typeof chartSchema>;
+
+/** Price history of a configured index; the server keeps only session-time points. */
+export function useChart(symbol: string, range: ChartRange) {
+  return useQuery({
+    queryKey: ["chart", symbol, range],
+    queryFn: ({ signal }) =>
+      fetchEnvelope(`/api/v1/chart?symbol=${encodeURIComponent(symbol)}&range=${range}`, chartSchema, signal),
+    refetchInterval: range === "1D" ? 30_000 : 120_000,
+  });
+}
+
+const quotesSchema = z.object({ items: z.array(quote) });
+export type Quote = z.infer<typeof quote>;
+
+export function useQuotes(symbols: string[]) {
+  const list = symbols.join(",");
+  return useQuery({
+    queryKey: ["quotes", list],
+    queryFn: ({ signal }) => fetchEnvelope(`/api/v1/quotes?symbols=${encodeURIComponent(list)}`, quotesSchema, signal),
+    enabled: symbols.length > 0,
+    refetchInterval: 10_000,
   });
 }

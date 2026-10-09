@@ -20,6 +20,8 @@ export function SectionCard<T>({
   hrefLabel,
   query,
   className,
+  badge,
+  actions,
   children,
 }: {
   id: string;
@@ -29,6 +31,8 @@ export function SectionCard<T>({
   hrefLabel?: string;
   query: UseQueryResult<Envelope<T>>;
   className?: string;
+  badge?: React.ReactNode;
+  actions?: React.ReactNode;
   children: (data: T) => React.ReactNode;
 }) {
   const env = query.data;
@@ -37,6 +41,7 @@ export function SectionCard<T>({
       <CardHeader>
         <Icon className="size-4 text-muted-foreground" aria-hidden />
         <CardTitle id={`${id}-title`}>{title}</CardTitle>
+        {badge}
         <div className="ml-auto flex items-center gap-2">
           {(env?.stale || (query.isError && env)) && <Badge variant="warning">stale</Badge>}
           {env && <Updated at={env.updatedAt} />}
@@ -50,6 +55,7 @@ export function SectionCard<T>({
               <ArrowUpRight className="size-4" />
             </a>
           )}
+          {actions}
         </div>
       </CardHeader>
       <CardContent>

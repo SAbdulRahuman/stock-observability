@@ -18,6 +18,10 @@ type Quote struct {
 	Price         *float64 `json:"price"`
 	ChangePercent *float64 `json:"changePercent"`
 	ExploreURL    string   `json:"exploreUrl"`
+	// Change is last price minus previous close.
+	Change *float64       `json:"change,omitempty"`
+	Volume *float64       `json:"volume,omitempty"`
+	Spark  []source.Point `json:"spark,omitempty"`
 }
 
 // Sector is the average day change of one sector.
@@ -46,6 +50,7 @@ func (s *Server) market(ctx context.Context) (any, error) {
 	q := s.querier(ctx)
 	prices := bySymbol(q.vector(`max by (exchange, symbol) (stock_last_price{instrument_type="INDEX"})`))
 	changes := bySymbol(q.vector(`max by (exchange, symbol) (stock_change_percent{instrument_type="INDEX"})`))
+	abs := bySymbol(q.vector(absChangeQuery(`instrument_type="INDEX"`)))
 	m := Market{
 		Indices:        []Quote{},
 		Advancers:      q.scalar(`market:advancers:count`),
@@ -69,7 +74,20 @@ func (s *Server) market(ctx context.Context) (any, error) {
 		if c, ok := changes[sym]; ok {
 			qt.ChangePercent = &c.Value
 		}
+		if c, ok := abs[sym]; ok {
+			qt.Change = &c.Value
+		}
 		m.Indices = append(m.Indices, qt)
+	}
+	if len(m.Indices) > 0 {
+		syms := make([]string, len(m.Indices))
+		for i, qt := range m.Indices {
+			syms[i] = qt.Symbol
+		}
+		sparks := sessionSparks(q, `, instrument_type="INDEX"`, syms, s.now(), s.cfg.Location)
+		for i := range m.Indices {
+			m.Indices[i].Spark = sparks[m.Indices[i].Symbol]
+		}
 	}
 	if len(m.Indices) > 0 {
 		sym := m.Indices[0].Symbol
@@ -86,8 +104,9 @@ func (s *Server) market(ctx context.Context) (any, error) {
 
 // Movers is section 7: top gainers and losers among core equities.
 type Movers struct {
-	Gainers []Quote `json:"gainers"`
-	Losers  []Quote `json:"losers"`
+	Gainers    []Quote `json:"gainers"`
+	Losers     []Quote `json:"losers"`
+	HighVolume []Quote `json:"highVolume"`
 }
 
 const moversN = 5
@@ -97,16 +116,41 @@ func (s *Server) movers(ctx context.Context) (any, error) {
 	const sel = `stock_change_percent{instrument_type="EQ", tier="core"}`
 	top := q.vector(fmt.Sprintf(`topk(%d, max by (exchange, symbol, sector) (%s))`, moversN, sel))
 	bottom := q.vector(fmt.Sprintf(`bottomk(%d, max by (exchange, symbol, sector) (%s))`, moversN, sel))
+	volume := q.vector(fmt.Sprintf(`topk(%d, max by (exchange, symbol, sector) (stock_day_volume_shares{instrument_type="EQ", tier="core"} > 0))`, moversN))
 	prices := bySymbol(q.vector(`max by (exchange, symbol) (stock_last_price{instrument_type="EQ", tier="core"})`))
+	abs := bySymbol(q.vector(absChangeQuery(`instrument_type="EQ", tier="core"`)))
+	pct := bySymbol(q.vector(`max by (exchange, symbol) (` + sel + `)`))
 	if q.err != nil {
 		return nil, q.err
 	}
-	m := Movers{Gainers: quotes(top, prices), Losers: quotes(bottom, prices)}
+	m := Movers{Gainers: quotes(top, prices), Losers: quotes(bottom, prices), HighVolume: []Quote{}}
 	sort.Slice(m.Gainers, func(i, j int) bool { return *m.Gainers[i].ChangePercent > *m.Gainers[j].ChangePercent })
 	sort.Slice(m.Losers, func(i, j int) bool { return *m.Losers[i].ChangePercent < *m.Losers[j].ChangePercent })
 	m.Gainers = filter(m.Gainers, func(q Quote) bool { return *q.ChangePercent > 0 })
 	m.Losers = filter(m.Losers, func(q Quote) bool { return *q.ChangePercent < 0 })
+	for _, smp := range volume {
+		qt := quote(smp, prices)
+		v := smp.Value
+		qt.Volume, qt.ChangePercent = &v, nil
+		if c, ok := pct[qt.Symbol]; ok {
+			qt.ChangePercent = &c.Value
+		}
+		m.HighVolume = append(m.HighVolume, qt)
+	}
+	sort.Slice(m.HighVolume, func(i, j int) bool { return *m.HighVolume[i].Volume > *m.HighVolume[j].Volume })
+	for _, list := range [][]Quote{m.Gainers, m.Losers, m.HighVolume} {
+		for i := range list {
+			if c, ok := abs[list[i].Symbol]; ok {
+				list[i].Change = &c.Value
+			}
+		}
+	}
 	return m, nil
+}
+
+// absChangeQuery returns last price minus a known previous close, by exchange and symbol.
+func absChangeQuery(sel string) string {
+	return fmt.Sprintf(`max by (exchange, symbol) (stock_last_price{%[1]s} - (stock_previous_close_price{%[1]s} > 0))`, sel)
 }
 
 // CircuitItem is an instrument at or near a circuit limit.

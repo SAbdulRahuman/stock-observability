@@ -90,6 +90,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, envelope{Data: s.info(), UpdatedAt: s.now()})
 	})
 	mux.HandleFunc("GET /api/v1/analyst", s.analystHandler)
+	mux.HandleFunc("GET /api/v1/chart", s.chartHandler)
+	mux.HandleFunc("GET /api/v1/quotes", s.quotesHandler)
 }
 
 type envelope struct {

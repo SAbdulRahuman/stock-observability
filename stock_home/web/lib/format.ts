@@ -30,6 +30,14 @@ export function formatPrice(v: Num): string {
   return isNum(v) ? price.format(v) : DASH;
 }
 
+/** Signed price difference such as "+126.40" or "-12.35". */
+export function formatChange(v: Num): string {
+  if (!isNum(v)) return DASH;
+  const s = price.format(Math.abs(v));
+  if (v < 0) return `-${s}`;
+  return v > 0 ? `+${s}` : s;
+}
+
 export function formatCount(v: Num): string {
   return isNum(v) ? count.format(v) : DASH;
 }

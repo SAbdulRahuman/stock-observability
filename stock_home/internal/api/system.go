@@ -89,6 +89,7 @@ type TimelineItem struct {
 	Severity string     `json:"severity"`
 	Category string     `json:"category"`
 	Subject  string     `json:"subject,omitempty"`
+	Symbol   string     `json:"symbol,omitempty"`
 	Start    time.Time  `json:"start"`
 	End      *time.Time `json:"end"` // nil while still firing.
 }
@@ -128,7 +129,7 @@ func buildTimeline(series []source.Series, start, end time.Time, step time.Durat
 			}
 			it := TimelineItem{
 				Name: s.Labels["alertname"], Severity: s.Labels["severity"], Category: s.Labels["category"],
-				Subject: subject(s.Labels), Start: time.UnixMilli(runStart).UTC(),
+				Subject: subject(s.Labels), Symbol: s.Labels["symbol"], Start: time.UnixMilli(runStart).UTC(),
 			}
 			if !ongoing {
 				e := time.UnixMilli(prev).Add(step).UTC()
