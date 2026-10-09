@@ -241,3 +241,991 @@ kubeadmin/ABKHs-TnW6m-I2pmb-vYZZg
 ## Settings UI 
 
 <img width="1536" height="1024" alt="Image" src="https://github.com/user-attachments/assets/bd36cb83-9462-4a54-9484-106fb0822eef" />
+
+<img width="1536" height="1024" alt="Image" src="https://github.com/user-attachments/assets/749777c9-40d6-4aa6-bcd5-c4103de32957" />
+
+
+--- 
+Stock Home UX wireframe 
+
+import pypandoc
+
+md = r"""# stock_home — Settings UI Wireframe
+
+**Document:** `STOCK_HOME_SETTINGS_WIREFRAME.md`  
+**Product:** stock_home — Stock Observability Platform  
+**Page:** Settings  
+**Theme:** Dark / desktop-first  
+**Primary market:** NSE  
+**Data source:** Zerodha Kite API  
+**Version:** v0.1.0
+
+---
+
+## 1. Page Objective
+
+The Settings page provides a centralized configuration surface for:
+
+- General application preferences
+- Market-data sources
+- Alert behavior and notification delivery
+- Watchlist behavior
+- Chart and display preferences
+- External integrations
+- User preferences
+- Application information
+
+The page should feel like an **operations/control plane** rather than a generic application settings screen.
+
+---
+
+# 2. Global Application Shell
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ stock_home                         🔍 Search stocks, indices, sectors...       Tue, Oct 8, 2026  09:42 AM     │
+│ Stock Observability Platform                                                  ● Live Market    ⚙   🔔 12  AS │
+├──────────────────────┬──────────────────────────────────────────────────────────────────────────────────────┤
+│                      │                                                                                      │
+│  🏠 Home             │  Settings                                                                         │
+│  📈 Market Overview  │  Configure your preferences, data sources, alerts, and system settings             │
+│  ♡  Watchlist        │                                                                                      │
+│  🔔 Alerts       12   │  [General] [Data Sources] [Alerts] [Watchlist] [Display] [Notifications]          │
+│  ↗  Top Movers       │  [Integrations] [Users] [About]                                                     │
+│  ◈  Sector View      │                                                                                      │
+│  🔎 Stock Explorer   │  ┌──────────────────────┐ ┌──────────────────────┐ ┌──────────────────────────────┐ │
+│  ▦  Dashboards       │  │ General Settings     │ │ Data Sources         │ │ Alert Settings              │ │
+│  ◈  OpenBB Analysis  │  │                      │ │                      │ │                              │ │
+│  🔵 Prometheus   ↗   │  │ Theme                │ │ Provider tabs        │ │ Default Severity             │ │
+│  🟠 Grafana      ↗   │  │ Default Exchange     │ │ API credentials      │ │ Alert Grouping               │ │
+│  🔴 AlertManager ↗   │  │ Landing Page        │ │ Connection status    │ │ Notification channels        │ │
+│  ⚙  Settings         │  │ Refresh Interval     │ │ WebSocket mode       │ │ Alert sound                  │ │
+│                      │  │ Auto Refresh         │ │ Subscribe depth      │ │ Toast notifications          │ │
+│ ┌──────────────────┐ │  │ Market Status Banner │ │ Reconnect            │ │ Auto acknowledge             │ │
+│ │ Market Status    │ │  │ Alert Sound          │ │                      │ │ Daily digest                 │ │
+│ │ ● OPEN           │ │  └──────────────────────┘ └──────────────────────┘ └──────────────────────────────┘ │
+│ │ NSE              │ │                                                                                      │
+│ │ 09:15–03:30 PM   │ │  ┌──────────────────────┐ ┌──────────────────────┐ ┌──────────────────────────────┐ │
+│ │ Live via Kite    │ │  │ Watchlist Settings   │ │ Display & Chart      │ │ Integrations & Tools        │ │
+│ └──────────────────┘ │  │                      │ │ Settings             │ │                              │ │
+│                      │  │ Default view         │ │ Default timeframe    │ │ Prometheus     ● Connected   │ │
+│                      │  │ Default sort         │ │ Chart type           │ │ Grafana        ● Connected   │ │
+│                      │  │ Items/page           │ │ Indicators           │ │ AlertManager   ● Connected   │ │
+│                      │  │ Mini charts          │ │ Color scheme         │ │ OpenBB         ● Connected   │ │
+│                      │  │ Sector tag           │ │ Volume / grid        │ │                              │ │
+│                      │  │ Alert count          │ │ Crosshair             │ │ User Preferences             │ │
+│                      │  └──────────────────────┘ └──────────────────────┘ └──────────────────────────────┘ │
+├──────────────────────┴──────────────────────────────────────────────────────────────────────────────────────┤
+│ stock_home | v0.1.0                         Data via Zerodha Kite API | NSE | ● Live                         │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+# 3. Header
+
+## 3.1 Header Layout
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ stock_home   [☰]   [ 🔍 Search stocks, indices, sectors (e.g. RELIANCE, TCS, NIFTY, Bank...) ]             │
+│                                                                                         Tue, Oct 8, 2026     │
+│                                                                                         09:42 AM             │
+│                                                                                         ● Live Market        │
+│                                                                                         ⚙  🔔12  [AS]       │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Components
+
+| Component | Behavior |
+|---|---|
+| Hamburger | Collapse/expand sidebar |
+| Global search | Search stocks, indices, sectors, metrics |
+| Date/time | Current platform time |
+| Live Market | Market connection/open-state indicator |
+| Settings icon | Current page / settings shortcut |
+| Notification icon | Opens notification center |
+| User avatar | User/profile menu |
+
+---
+
+# 4. Sidebar Navigation
+
+```text
+┌──────────────────────────┐
+│ 📊 stock_home             │
+│ Stock Observability       │
+├──────────────────────────┤
+│ 🏠 Home                   │
+│ 📈 Market Overview        │
+│ ♡  Watchlist              │
+│ 🔔 Alerts             12  │
+│ ↗  Top Movers             │
+│ ◈  Sector View            │
+│ 🔎 Stock Explorer         │
+│ ▦  Dashboards             │
+│ ◈  OpenBB Analysis        │
+│ 🔵 Prometheus         ↗   │
+│ 🟠 Grafana            ↗   │
+│ 🔴 AlertManager       ↗   │
+│ ⚙  Settings       ACTIVE  │
+├──────────────────────────┤
+│ Market Status             │
+│ ● OPEN                    │
+│ NSE                       │
+│ 09:15 AM – 03:30 PM       │
+│                           │
+│ ◉ Live data via           │
+│   Zerodha Kite API        │
+└──────────────────────────┘
+```
+
+### Sidebar Rules
+
+- Settings is visually highlighted.
+- External tools display an external-link icon.
+- Alerts badge displays current unresolved alert count.
+- Market Status remains visible at the bottom.
+- Sidebar is collapsible.
+- Mobile behavior: convert to drawer.
+
+---
+
+# 5. Settings Navigation
+
+```text
+Settings
+
+[⚙ General]
+[▣ Data Sources]
+[🔔 Alerts]
+[♡ Watchlist]
+[▣ Display]
+[✉ Notifications]
+[🔗 Integrations]
+[♙ Users]
+[ⓘ About]
+```
+
+## Navigation Behavior
+
+- Active tab uses primary blue highlight.
+- Tab changes content without leaving Settings.
+- Deep-linking should be supported:
+
+```text
+/settings/general
+/settings/data-sources
+/settings/alerts
+/settings/watchlist
+/settings/display
+/settings/notifications
+/settings/integrations
+/settings/users
+/settings/about
+```
+
+---
+
+# 6. General Settings
+
+```text
+┌─────────────────────────────────────────────┐
+│ ⚙ General Settings                          │
+│ Basic application preferences               │
+├─────────────────────────────────────────────┤
+│                                             │
+│ Theme                                       │
+│ [ ☀ Dark (Default)                     ▼ ] │
+│                                             │
+│ Default Exchange                            │
+│ [ 🇮🇳 NSE                               ▼ ] │
+│                                             │
+│ Default Landing Page                        │
+│ [ 📈 Market Overview                    ▼ ] │
+│                                             │
+│ Refresh Interval                            │
+│ [ ◷ 30 seconds                          ▼ ] │
+│                                             │
+│ Auto Refresh                         [ ON ] │
+│ Automatically refresh data at set interval  │
+│                                             │
+│ Show Market Status Banner             [ ON ] │
+│ Display market open/close status            │
+│                                             │
+│ Play Sound for Alerts                 [OFF ] │
+│ Play notification sound for new alerts      │
+│                                             │
+└─────────────────────────────────────────────┘
+```
+
+### Controls
+
+| Setting | Type | Default |
+|---|---|---|
+| Theme | Select | Dark |
+| Default Exchange | Select | NSE |
+| Landing Page | Select | Market Overview |
+| Refresh Interval | Select | 30 seconds |
+| Auto Refresh | Toggle | ON |
+| Market Status Banner | Toggle | ON |
+| Alert Sound | Toggle | OFF |
+
+---
+
+# 7. Data Sources
+
+```text
+┌─────────────────────────────────────────────┐
+│ 🗄 Data Sources                    ● Connected│
+│ Configure market data providers              │
+├─────────────────────────────────────────────┤
+│ [Zerodha Kite] [OpenBB] [Other Sources]     │
+│                                             │
+│ API Key                                     │
+│ [ ••••••••••••••••••••••••• ]        ◉    │
+│                                             │
+│ API Secret                                  │
+│ [ ••••••••••••••••••••••••• ]        ◉    │
+│                                             │
+│ Access Token                                │
+│ [ ••••••••••••••••••••••••• ]        ◉    │
+│                                             │
+│ ┌─────────────────────────────────────────┐ │
+│ │ ✓ Successfully connected to Zerodha    │ │
+│ │   Kite API                              │ │
+│ │   Last validated: Oct 8, 2026 09:40 AM │ │
+│ │                       [Test Connection] │ │
+│ └─────────────────────────────────────────┘ │
+│                                             │
+│ WebSocket Mode                       [ ON ] │
+│ Use WebSocket for live market data          │
+│                                             │
+│ Subscribe Depth                             │
+│ [ Full Market (All Segments)            ▼ ] │
+│                                             │
+│ [ ↻ Reconnect ]                             │
+└─────────────────────────────────────────────┘
+```
+
+### Data Source Requirements
+
+- Never expose secrets in plain text.
+- Support masked credentials.
+- Test connection before saving.
+- Display last validation timestamp.
+- Display connection health.
+- Support WebSocket and REST modes.
+- Support subscription depth.
+
+---
+
+# 8. Alert Settings
+
+```text
+┌─────────────────────────────────────────────┐
+│ 🔔 Alert Settings                            │
+│ Configure alert behavior and delivery       │
+├─────────────────────────────────────────────┤
+│                                             │
+│ Default Severity                            │
+│ [ 🔴 Critical                           ▼ ] │
+│                                             │
+│ Alert Grouping                              │
+│ [ 5 minutes                             ▼ ] │
+│                                             │
+│ Notification Channels                       │
+│ ☑ In-App Notifications                      │
+│ ☑ Email Notifications                       │
+│ ☐ Browser Push Notifications                │
+│ ☐ Webhook (Custom)                          │
+│                                             │
+│ Alert Sound                                 │
+│ [ Default                                ▼ ] │
+│                                             │
+│ Show Toast Notifications              [ ON ]│
+│                                             │
+│ Auto Acknowledge (Test Alerts)       [ OFF ]│
+│                                             │
+│ Enable Alert Digest (Daily)          [ ON ] │
+│                                             │
+└─────────────────────────────────────────────┘
+```
+
+### Alert Configuration Model
+
+```text
+Severity:
+  Critical
+  Warning
+  Info
+
+Grouping:
+  None
+  1 minute
+  5 minutes
+  15 minutes
+  30 minutes
+  1 hour
+
+Channels:
+  In-App
+  Email
+  Browser Push
+  Webhook
+```
+
+---
+
+# 9. Watchlist Settings
+
+```text
+┌─────────────────────────────────────────────┐
+│ ♡ Watchlist Settings                         │
+│ Manage watchlist behaviour                  │
+├─────────────────────────────────────────────┤
+│                                             │
+│ Default Watchlist View                      │
+│ [ ▦ Table View                           ▼ ]│
+│                                             │
+│ Default Sort                                │
+│ [ ↕ % Change (High to Low)              ▼ ]│
+│                                             │
+│ Items per Page                              │
+│ [ 25                                    ▼ ]│
+│                                             │
+│ Show Mini Charts                      [ ON ]│
+│                                             │
+│ Show Sector Tag                       [ ON ]│
+│                                             │
+│ Show Alerts Count                     [ ON ]│
+│                                             │
+└─────────────────────────────────────────────┘
+```
+
+### Supported Views
+
+- Table View
+- Card View
+- Compact View
+
+### Sort Options
+
+- Symbol
+- LTP
+- % Change
+- Volume
+- Alert Count
+- Last Updated
+
+---
+
+# 10. Display & Chart Settings
+
+```text
+┌─────────────────────────────────────────────┐
+│ 🖥 Display & Chart Settings                  │
+│ Customize charts and visual appearance      │
+├─────────────────────────────────────────────┤
+│                                             │
+│ Default Chart Timeframe                     │
+│ [ 1 Day                                  ▼ ]│
+│                                             │
+│ Chart Type                                  │
+│ [ Candlestick                            ▼ ]│
+│                                             │
+│ Technical Indicators                        │
+│ [ SMA20 ] [ EMA50 ] [ RSI ] [ MACD ]       │
+│                                             │
+│ Color Scheme                                │
+│ [ Green/Red (Default)                   ▼ ]│
+│                                             │
+│ Show Volume                           [ ON ]│
+│ Show Grid                             [ ON ]│
+│ Show Crosshair                         [ ON ]│
+│                                             │
+└─────────────────────────────────────────────┘
+```
+
+### Chart Timeframes
+
+```text
+1D | 1W | 1M | 3M | 1Y | 5Y
+```
+
+### Indicator Examples
+
+```text
+SMA20
+EMA50
+EMA200
+RSI
+MACD
+Bollinger Bands
+VWAP
+Volume
+ATR
+```
+
+---
+
+# 11. Integrations & Tools
+
+```text
+┌─────────────────────────────────────────────┐
+│ 🔗 Integrations & Tools                     │
+│ External tools and platform integrations    │
+├─────────────────────────────────────────────┤
+│                                             │
+│ 🔥 Prometheus                               │
+│    Metrics & Monitoring        ● Connected ↗│
+│                                             │
+│ 🟠 Grafana                                  │
+│    Dashboards & Visualization ● Connected ↗│
+│                                             │
+│ 🔴 AlertManager                             │
+│    Alerting & Notifications    ● Connected ↗│
+│                                             │
+│ ◈ OpenBB                                    │
+│    Market Data & Analysis      ● Connected ↗│
+│                                             │
+└─────────────────────────────────────────────┘
+```
+
+### Integration Status
+
+Each integration should expose:
+
+```text
+Name
+Purpose
+Connection status
+Endpoint / URL
+Last health check
+Open / Launch action
+Configure action
+```
+
+---
+
+# 12. User Preferences
+
+```text
+┌─────────────────────────────────────────────┐
+│ ♙ User Preferences                           │
+│ Display name and application settings       │
+├─────────────────────────────────────────────┤
+│                                             │
+│ Display Name                                │
+│ [ Abdul S                                ] │
+│                                             │
+│ Email                                       │
+│ [ abdul.s@example.com                    ] │
+│                                             │
+│ Timezone                                    │
+│ [ (GMT +05:30) Asia/Kolkata              ▼ ]│
+│                                             │
+│ Language                                    │
+│ [ English                                ▼ ]│
+│                                             │
+└─────────────────────────────────────────────┘
+```
+
+---
+
+# 13. Notifications Tab
+
+Recommended content:
+
+```text
+┌────────────────────────────────────────────────────────────┐
+│ Notifications                                               │
+├────────────────────────────────────────────────────────────┤
+│ In-App Notifications                         [ ON ]         │
+│ Email Notifications                          [ ON ]         │
+│ Browser Push                                 [ OFF]         │
+│ Alert Sounds                                 [ OFF]         │
+│ Daily Market Digest                          [ ON ]         │
+│ Pre-Market Summary                            [ ON ]         │
+│ Post-Market Summary                           [ ON ]         │
+│ Critical Alert Escalation                     [ ON ]         │
+│                                                            │
+│ Quiet Hours                                                   │
+│ [ 10:00 PM ] → [ 07:00 AM ]                                │
+└────────────────────────────────────────────────────────────┘
+```
+
+---
+
+# 14. Users Tab
+
+For MVP / single-user deployment:
+
+```text
+┌─────────────────────────────────────────────┐
+│ Users                                       │
+├─────────────────────────────────────────────┤
+│                                             │
+│ Current User                                │
+│ Abdul S                                     │
+│ Administrator                               │
+│ ● Active                                    │
+│                                             │
+│ [ Edit Profile ]                            │
+│ [ Change Password ]                         │
+│                                             │
+└─────────────────────────────────────────────┘
+```
+
+Future multi-user capability:
+
+```text
+Admin
+Trader
+Analyst
+Viewer
+Read-only
+```
+
+---
+
+# 15. About Tab
+
+```text
+┌─────────────────────────────────────────────┐
+│ About stock_home                            │
+├─────────────────────────────────────────────┤
+│                                             │
+│ stock_home                                  │
+│ Stock Observability Platform               │
+│                                             │
+│ Version: v0.1.0                             │
+│                                             │
+│ Data Provider                               │
+│ Zerodha Kite API                            │
+│                                             │
+│ Monitoring                                  │
+│ Prometheus                                  │
+│                                             │
+│ Visualization                               │
+│ Grafana                                     │
+│                                             │
+│ Alerting                                    │
+│ AlertManager                                │
+│                                             │
+│ Market Analysis                             │
+│ OpenBB                                       │
+│                                             │
+│ [ Documentation ] [ GitHub ] [ License ]   │
+└─────────────────────────────────────────────┘
+```
+
+---
+
+# 16. Save / Reset Behavior
+
+Settings should use predictable configuration behavior.
+
+### Preferred Pattern
+
+```text
+┌──────────────────────────────────────────────────────────┐
+│ Unsaved changes                                           │
+│ You have modified settings.                              │
+│                                                          │
+│ [ Reset ]                                  [ Save ]       │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Save Behavior
+
+1. Validate field values.
+2. Persist configuration.
+3. Apply runtime-safe changes immediately.
+4. Restart/reconnect only when required.
+5. Display success toast.
+
+Example:
+
+```text
+✓ Settings saved successfully
+```
+
+### Reset Behavior
+
+Reset only the current settings section unless the user explicitly chooses:
+
+```text
+Reset all settings
+```
+
+---
+
+# 17. Validation & Error States
+
+## Data Source Error
+
+```text
+┌─────────────────────────────────────────────┐
+│ 🔴 Connection failed                       │
+│                                             │
+│ Unable to connect to Zerodha Kite API.     │
+│                                             │
+│ Reason: Authentication failed              │
+│                                             │
+│ [ Retry ]        [ Configure Credentials ] │
+└─────────────────────────────────────────────┘
+```
+
+## Invalid Setting
+
+```text
+Refresh Interval
+
+[ -5 seconds ]
+
+🔴 Value must be greater than 0 seconds.
+```
+
+## Integration Unavailable
+
+```text
+Prometheus
+● Disconnected
+
+Last successful connection:
+08:41 AM
+
+[ Retry ] [ Configure ]
+```
+
+---
+
+# 18. Responsive Wireframe
+
+## Desktop
+
+```text
+Sidebar + Main Content
+
+┌──────────────┬──────────────────────────────────────────────┐
+│ Sidebar      │ Main Settings Content                       │
+│ 240px        │ 3-column configuration grid                 │
+└──────────────┴──────────────────────────────────────────────┘
+```
+
+## Tablet
+
+```text
+┌───────┬──────────────────────────────────────────┐
+│ 72px  │ Main content                             │
+│ icons │ 2-column cards                           │
+└───────┴──────────────────────────────────────────┘
+```
+
+## Mobile
+
+```text
+┌─────────────────────────────┐
+│ ☰ stock_home        🔔      │
+├─────────────────────────────┤
+│ Settings                    │
+│                             │
+│ [ General              ▼ ]  │
+│                             │
+│ ┌─────────────────────────┐ │
+│ │ General Settings        │ │
+│ │                         │ │
+│ │ Theme                   │ │
+│ │ [ Dark              ▼ ] │ │
+│ │                         │ │
+│ │ Auto Refresh       ON   │ │
+│ └─────────────────────────┘ │
+└─────────────────────────────┘
+```
+
+---
+
+# 19. UX Principles
+
+### 19.1 Configuration Hierarchy
+
+Organize settings in this order:
+
+```text
+Application
+   ↓
+Data
+   ↓
+Alerts
+   ↓
+Watchlist
+   ↓
+Visualization
+   ↓
+Notifications
+   ↓
+Integrations
+   ↓
+Users
+   ↓
+About
+```
+
+### 19.2 Safety
+
+Sensitive credentials must:
+
+- Always be masked.
+- Never appear in logs.
+- Never be displayed in browser console.
+- Never be included in screenshots.
+- Support token rotation.
+- Support connection testing.
+
+### 19.3 Observability
+
+Every external dependency should expose:
+
+```text
+Connection State
+Health
+Last Successful Check
+Latency
+Endpoint
+Version
+```
+
+### 19.4 Runtime Awareness
+
+Settings that affect live trading/market data should clearly indicate:
+
+```text
+Applied immediately
+Requires reconnect
+Requires exporter restart
+Requires browser refresh
+```
+
+---
+
+# 20. Recommended Component Model
+
+```text
+SettingsPage
+├── AppShell
+│   ├── Header
+│   ├── Sidebar
+│   └── MarketStatus
+│
+├── SettingsHeader
+│   ├── Title
+│   └── SettingsTabs
+│
+├── GeneralSettings
+│   ├── ThemeSelector
+│   ├── ExchangeSelector
+│   ├── LandingPageSelector
+│   ├── RefreshIntervalSelector
+│   └── ToggleSettings
+│
+├── DataSourceSettings
+│   ├── ProviderTabs
+│   ├── CredentialForm
+│   ├── ConnectionStatus
+│   ├── WebSocketSettings
+│   └── SubscriptionDepth
+│
+├── AlertSettings
+│   ├── SeveritySelector
+│   ├── GroupingSelector
+│   ├── NotificationChannels
+│   └── AlertBehavior
+│
+├── WatchlistSettings
+│   ├── ViewSelector
+│   ├── SortSelector
+│   └── DisplayToggles
+│
+├── DisplaySettings
+│   ├── ChartTimeframe
+│   ├── ChartType
+│   ├── Indicators
+│   └── DisplayToggles
+│
+├── NotificationSettings
+├── IntegrationSettings
+├── UserSettings
+└── AboutSettings
+```
+
+---
+
+# 21. Suggested Frontend Routes
+
+```text
+/app/settings
+/app/settings/general
+/app/settings/data-sources
+/app/settings/alerts
+/app/settings/watchlist
+/app/settings/display
+/app/settings/notifications
+/app/settings/integrations
+/app/settings/users
+/app/settings/about
+```
+
+For a Next.js implementation, tabs can alternatively use query parameters:
+
+```text
+/settings?tab=general
+/settings?tab=data-sources
+/settings?tab=alerts
+/settings?tab=watchlist
+/settings?tab=display
+/settings?tab=notifications
+/settings?tab=integrations
+/settings?tab=users
+/settings?tab=about
+```
+
+---
+
+# 22. Design Tokens
+
+## Colors
+
+```text
+Background:
+  #07111F
+  #0B1626
+  #101D2D
+
+Primary:
+  Blue / Electric Blue
+
+Positive:
+  Green
+
+Negative:
+  Red
+
+Warning:
+  Orange
+
+Info:
+  Cyan / Blue
+
+Border:
+  Low-opacity blue/gray
+
+Text:
+  Primary white
+  Secondary blue-gray
+  Muted gray
+```
+
+## Visual Language
+
+```text
+Dark observability console
++
+Financial trading dashboard
++
+Cloud-native operations UI
+```
+
+Use:
+
+- Rounded cards
+- Thin borders
+- Subtle shadows
+- Compact spacing
+- High information density
+- Clear status indicators
+- Green/red financial semantics
+- Consistent iconography
+- Small but readable secondary text
+
+---
+
+# 23. MVP Implementation Priority
+
+## P0 — Required
+
+```text
+✓ General
+✓ Data Sources
+✓ Alerts
+✓ Watchlist
+✓ Display
+✓ Integrations
+✓ Save / Reset
+✓ Validation
+✓ Connection status
+```
+
+## P1
+
+```text
+✓ Notifications
+✓ Users
+✓ About
+✓ Deep-linkable tabs
+✓ Responsive mobile UI
+✓ Import / Export settings
+```
+
+## P2
+
+```text
+○ Multi-user RBAC
+○ Configuration profiles
+○ Environment profiles
+○ Backup / Restore
+○ Audit history
+○ Configuration versioning
+○ API-based remote configuration
+```
+
+---
+
+# 24. Final Target
+
+The Settings page should become the **configuration control plane for the entire stock_home platform**:
+
+```text
+                         stock_home
+                             │
+              ┌──────────────┼──────────────┐
+              │              │              │
+           Market          Alerts         Data
+           Config          Config         Config
+              │              │              │
+              └──────────────┼──────────────┘
+                             │
+                         Settings
+                             │
+       ┌─────────────┬───────┼────────┬─────────────┐
+       │             │       │        │             │
+   Watchlist      Charts  Notifications Integrations Users
+       │             │       │        │             │
+       └─────────────┴───────┴────────┴─────────────┘
+                             │
+                    Runtime Configuration
+                             │
+        ┌────────────────────┼────────────────────┐
+        │                    │                    │
+  stock_exporter        Prometheus          AlertManager
+        │                    │                    │
+        └────────────────────┼────────────────────┘
+                             │
+                           Grafana
+                             │
+                           OpenBB
+```
+
+**End of wireframe**
+"""
