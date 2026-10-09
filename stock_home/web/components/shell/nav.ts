@@ -37,7 +37,7 @@ export const navItems: NavItem[] = [
   { label: "Stock Explorer", icon: Search, href: "/explorer", ready: true },
   { label: "Dashboards", icon: LayoutDashboard, href: "/dashboards", ready: true },
   { label: "OpenBB Analysis", icon: ChartNoAxesCombined, href: "/openbb", ready: true },
-  { label: "Prometheus", icon: Flame, linkId: "prometheus" },
+  { label: "Prometheus", icon: Flame, href: "/observability/prometheus", ready: true },
   { label: "Grafana", icon: Gauge, linkId: "grafana" },
   { label: "AlertManager", icon: BellRing, linkId: "alertmanager" },
   { label: "Settings", icon: Settings, href: "/settings" },

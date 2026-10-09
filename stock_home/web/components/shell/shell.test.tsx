@@ -82,9 +82,10 @@ describe("AppShell", () => {
     ]);
     expect(within(sidebar).getByText("Home").closest("a")).toHaveAttribute("aria-current", "page");
     expect(await within(sidebar).findByLabelText("3 active alerts")).toHaveTextContent("3");
-    const prom = await within(sidebar).findByTitle("Prometheus (opens in a new tab)");
-    expect(prom).toHaveAttribute("href", "/prometheus/");
-    expect(prom).toHaveAttribute("rel", "noopener noreferrer");
+    const graf = await within(sidebar).findByTitle("Grafana (opens in a new tab)");
+    expect(graf).toHaveAttribute("href", "/grafana/");
+    expect(graf).toHaveAttribute("rel", "noopener noreferrer");
+    expect(within(sidebar).getByText("Prometheus").closest("a")).toHaveAttribute("href", "/observability/prometheus");
     expect(within(sidebar).getByText("Market Overview").closest("a")).toHaveAttribute("href", "/market");
     expect(within(sidebar).getByText("Settings").closest("[aria-disabled]")).not.toBeNull();
 
@@ -103,7 +104,7 @@ describe("AppShell", () => {
     expect(await screen.findByText("Status unavailable", { selector: "span[role=status]" })).toBeInTheDocument();
     expect(await screen.findByText("unavailable")).toBeInTheDocument();
     expect(screen.queryByLabelText(/active alerts/)).toBeNull();
-    expect(screen.getByTitle("Prometheus link not configured")).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByTitle("Grafana link not configured")).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByText("Data via —")).toBeInTheDocument();
   });
 

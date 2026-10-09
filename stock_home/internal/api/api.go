@@ -103,6 +103,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/instrument", s.instrumentHandler)
 	mux.HandleFunc("GET /api/v1/movers/scan", s.moversScanHandler)
 	mux.HandleFunc("GET /api/v1/stocks", s.stocksHandler)
+	s.registerProm(mux)
 	mux.HandleFunc("GET /api/v1/alerts/items", s.section("alert-items", 5*time.Second, s.alertItems))
 	mux.HandleFunc("POST /api/v1/silences", s.createSilences)
 }
