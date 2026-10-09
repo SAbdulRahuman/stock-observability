@@ -32,7 +32,7 @@ export const navItems: NavItem[] = [
   { label: "Market Overview", icon: ChartLine, href: "/market", ready: true },
   { label: "Watchlist", icon: Heart, href: "/watchlist", ready: true },
   { label: "Alerts", icon: Bell, href: "/alerts", badge: "alerts", ready: true },
-  { label: "Top Movers", icon: TrendingUp, href: "/movers" },
+  { label: "Top Movers", icon: TrendingUp, href: "/movers", ready: true },
   { label: "Sector View", icon: Grid2x2, href: "/sectors" },
   { label: "Stock Explorer", icon: Search, href: "/explorer" },
   { label: "Dashboards", icon: LayoutDashboard, href: "/dashboards" },

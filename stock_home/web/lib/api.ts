@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 
 const num = z.number().nullish();
@@ -314,4 +314,37 @@ export async function createSilences(req: { fingerprints: string[]; kind: Silenc
   const body = (await res.json().catch(() => ({}))) as { data?: SilenceResult; error?: string };
   if (body.data) return body.data;
   throw new Error(body.error ?? `HTTP ${res.status}`);
+}
+
+const rangeItem = quote.extend({ high52: z.number(), low52: z.number(), distancePercent: z.number(), position: z.number() });
+const moversScanSchema = z.object({
+  universe: z.string(),
+  sector: z.string(),
+  price: z.string(),
+  total: z.number(),
+  advancers: z.number(),
+  decliners: z.number(),
+  unchanged: z.number(),
+  gainers: z.array(quote),
+  losers: z.array(quote),
+  mostActive: z.array(quote),
+  volumeChange: z.array(quote.extend({ relativeVolume: z.number() })),
+  high52: z.array(rangeItem),
+  low52: z.array(rangeItem),
+  distribution: z.array(z.object({ label: z.string(), from: num, to: num, count: z.number() })),
+  sectors: z.array(z.object({ name: z.string(), changePercent: z.number(), count: z.number(), gainer: quote.nullish(), loser: quote.nullish() })),
+  sectorNames: z.array(z.string()),
+});
+export type MoversScan = z.infer<typeof moversScanSchema>;
+export type RangeItem = z.infer<typeof rangeItem>;
+export type MoversFilters = { universe: string; sector: string; price: string };
+
+export function useMoversScan(f: MoversFilters) {
+  const qs = new URLSearchParams({ universe: f.universe, price: f.price, ...(f.sector ? { sector: f.sector } : {}) });
+  return useQuery({
+    queryKey: ["movers-scan", f.universe, f.sector, f.price],
+    queryFn: ({ signal }) => fetchEnvelope(`/api/v1/movers/scan?${qs}`, moversScanSchema, signal),
+    refetchInterval: 10_000,
+    placeholderData: keepPreviousData,
+  });
 }
