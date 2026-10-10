@@ -1,0 +1,115 @@
+rule_files:
+  - ../rules/nse_pattern_technicals.rules.yml
+evaluation_interval: 1m
+tests:
+  - name: daily candle shapes and pivot arithmetic
+    interval: 1m
+    input_series:
+      - series: stock_market_open
+        values: '1x10 0x10'
+      - series: 'stock_open_price{tier="core",instrument_type="EQ",symbol="ENGULF"}'
+        values: '99x20'
+      - series: 'stock_last_price{tier="core",instrument_type="EQ",symbol="ENGULF"}'
+        values: '111x20'
+      - series: 'stock_high_price{tier="core",instrument_type="EQ",symbol="ENGULF"}'
+        values: '112x20'
+      - series: 'stock_low_price{tier="core",instrument_type="EQ",symbol="ENGULF"}'
+        values: '98x20'
+      - series: 'stock:session_open:price{tier="core",instrument_type="EQ",symbol="ENGULF"}'
+        values: '110 stale'
+      - series: 'stock:session_close:price{tier="core",instrument_type="EQ",symbol="ENGULF"}'
+        values: '100 stale'
+      - series: 'stock:session_high:price{tier="core",instrument_type="EQ",symbol="ENGULF"}'
+        values: '112 stale'
+      - series: 'stock:session_low:price{tier="core",instrument_type="EQ",symbol="ENGULF"}'
+        values: '98 stale'
+      - series: 'stock_open_price{tier="core",instrument_type="EQ",symbol="HAMMER"}'
+        values: '100x20'
+      - series: 'stock_last_price{tier="core",instrument_type="EQ",symbol="HAMMER"}'
+        values: '101x20'
+      - series: 'stock_high_price{tier="core",instrument_type="EQ",symbol="HAMMER"}'
+        values: '102x20'
+      - series: 'stock_low_price{tier="core",instrument_type="EQ",symbol="HAMMER"}'
+        values: '97x20'
+      - series: 'stock_open_price{tier="core",instrument_type="EQ",symbol="DOJI"}'
+        values: '100x20'
+      - series: 'stock_last_price{tier="core",instrument_type="EQ",symbol="DOJI"}'
+        values: '100x20'
+      - series: 'stock_high_price{tier="core",instrument_type="EQ",symbol="DOJI"}'
+        values: '101x20'
+      - series: 'stock_low_price{tier="core",instrument_type="EQ",symbol="DOJI"}'
+        values: '99x20'
+    promql_expr_test:
+      - expr: count(stock:daily_pattern:bool{pattern="engulfing",direction="bullish"} == 1)
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:daily_pattern:bool{pattern="hammer_shape"} == 1)
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:daily_pattern:bool{pattern="doji"} == 1)
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(abs(stock:fibonacci_pivot:price{level="P"} - 310/3) < 0.00001)
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(abs(stock:fibonacci_pivot:price{level="R1"} - (310/3 + 14*0.382)) < 0.00001)
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:camarilla_pivot:price{level="H4"} == 107.7)
+        eval_time: 5m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: stock:daily_pattern:bool
+        eval_time: 16m
+        exp_samples: []
+  - name: Ichimoku lines and displaced cloud
+    interval: 1m
+    input_series:
+      - series: stock_market_open
+        values: '1x90'
+      - series: stock_market_seconds_to_close
+        values: '22500-60x90'
+      - series: 'stock:bar_1m_high:price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '101+1x90'
+      - series: 'stock:bar_1m_low:price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '99+1x90'
+      - series: 'stock:close_change_1m:price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '1x90'
+      - series: 'stock:signed_volume_1m:shares{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '10x90'
+      - series: 'stock:bar_1m_money_flow_volume:shares{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '5x90'
+      - series: 'stock_average_traded_price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '105x90'
+      - series: 'stock_day_volume_shares{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '10+10x90'
+    promql_expr_test:
+      - expr: count(stock:ichimoku_midpoint:price{line="tenkan"} == 148)
+        eval_time: 52m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:ichimoku_midpoint:price{line="kijun"} == 139.5)
+        eval_time: 52m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:ichimoku_span:price{span="A"} == 143.75)
+        eval_time: 52m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:ichimoku_span:price{span="B"} == 126.5)
+        eval_time: 52m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:ichimoku_cloud:price{span="B"} == 126.5)
+        eval_time: 78m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: stock:ichimoku_cloud:price
+        eval_time: 20m
+        exp_samples: []
+      - expr: count(stock:session_obv:shares == 110)
+        eval_time: 10m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:session_ad:shares == 55)
+        eval_time: 10m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:cutler_rsi_2m:index == 100)
+        eval_time: 10m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:open_anchored_vwap:price == 105)
+        eval_time: 10m
+        exp_samples: [{labels: '{}', value: 1}]

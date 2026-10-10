@@ -1,0 +1,319 @@
+groups:
+  - name: nse_pattern_technicals
+    interval: 1m
+    rules:
+      - record: stock:daily_body:price
+        expr: |
+          abs(stock_last_price{tier="core", instrument_type="EQ"} - stock_open_price)
+          and on() stock_market_open == 1
+      - record: stock:daily_range:price
+        expr: |
+          (stock_high_price{tier="core", instrument_type="EQ"} - stock_low_price >= 0)
+          and on() stock_market_open == 1
+      - record: stock:daily_upper_wick:price
+        expr: |
+          stock_high_price{tier="core", instrument_type="EQ"}
+          - ((stock_last_price > stock_open_price) or stock_open_price)
+          and on() stock_market_open == 1
+      - record: stock:daily_lower_wick:price
+        expr: |
+          ((stock_last_price{tier="core", instrument_type="EQ"} < stock_open_price) or stock_open_price{tier="core", instrument_type="EQ"})
+          - stock_low_price
+          and on() stock_market_open == 1
+      - record: stock:daily_pattern:bool
+        labels: {pattern: doji, direction: neutral}
+        expr: |
+          (stock:daily_body:price <= 0.1 * stock:daily_range:price and stock:daily_range:price > 0) * 0 + 1
+          and on() stock_market_open == 1
+      - record: stock:daily_pattern:bool
+        labels: {pattern: hammer_shape, direction: neutral}
+        expr: |
+          (stock:daily_lower_wick:price >= 2 * stock:daily_body:price
+            and stock:daily_upper_wick:price <= stock:daily_body:price
+            and stock:daily_body:price > 0) * 0 + 1
+          and on() stock_market_open == 1
+      - record: stock:daily_pattern:bool
+        labels: {pattern: shooting_star_shape, direction: neutral}
+        expr: |
+          (stock:daily_upper_wick:price >= 2 * stock:daily_body:price
+            and stock:daily_lower_wick:price <= stock:daily_body:price
+            and stock:daily_body:price > 0) * 0 + 1
+          and on() stock_market_open == 1
+      - record: stock:previous_session:price
+        labels: {field: open}
+        expr: last_over_time(stock:session_open:price{tier="core", instrument_type="EQ"}[7d]) and on() stock_market_open == 1
+      - record: stock:previous_session:price
+        labels: {field: close}
+        expr: last_over_time(stock:session_close:price{tier="core", instrument_type="EQ"}[7d]) and on() stock_market_open == 1
+      - record: stock:previous_session:price
+        labels: {field: high}
+        expr: last_over_time(stock:session_high:price{tier="core", instrument_type="EQ"}[7d]) and on() stock_market_open == 1
+      - record: stock:previous_session:price
+        labels: {field: low}
+        expr: last_over_time(stock:session_low:price{tier="core", instrument_type="EQ"}[7d]) and on() stock_market_open == 1
+      - record: stock:daily_pattern:bool
+        labels: {pattern: engulfing, direction: bullish}
+        expr: |
+          (stock_last_price{tier="core", instrument_type="EQ"} > stock_open_price
+            and stock:previous_session:price{field="close"} < ignoring(field) stock:previous_session:price{field="open"}
+            and stock_open_price <= ignoring(field) stock:previous_session:price{field="close"}
+            and stock_last_price >= ignoring(field) stock:previous_session:price{field="open"}) * 0 + 1
+          and on() stock_market_open == 1
+      - record: stock:daily_pattern:bool
+        labels: {pattern: engulfing, direction: bearish}
+        expr: |
+          (stock_last_price{tier="core", instrument_type="EQ"} < stock_open_price
+            and stock:previous_session:price{field="close"} > ignoring(field) stock:previous_session:price{field="open"}
+            and stock_open_price >= ignoring(field) stock:previous_session:price{field="close"}
+            and stock_last_price <= ignoring(field) stock:previous_session:price{field="open"}) * 0 + 1
+          and on() stock_market_open == 1
+      - record: stock:daily_pattern:bool
+        labels: {pattern: inside_day, direction: neutral}
+        expr: |
+          (stock_high_price{tier="core", instrument_type="EQ"} < ignoring(field) stock:previous_session:price{field="high"}
+            and stock_low_price > ignoring(field) stock:previous_session:price{field="low"}) * 0 + 1
+          and on() stock_market_open == 1
+      - record: stock:daily_pattern:bool
+        labels: {pattern: nr7, direction: neutral}
+        expr: |
+          (stock:daily_range:price < min without(lag) (last_over_time(stock:session_range_history:price[7d]))
+            and count without(lag) (last_over_time(stock:session_range_history:price[7d])) == 6) * 0 + 1
+          and on() stock_market_open == 1
+      - record: stock:fibonacci_pivot:price
+        labels: {level: P}
+        expr: |
+          sum without(field) (stock:previous_session:price{field=~"high|low|close"}) / 3
+          and count without(field) (stock:previous_session:price{field=~"high|low|close"}) == 3
+      - record: stock:previous_range:price
+        expr: |
+          sum without(field) (stock:previous_session:price{field="high"})
+          - sum without(field) (stock:previous_session:price{field="low"})
+      - record: stock:fibonacci_pivot:price
+        labels: {level: R1}
+        expr: sum without(level) (stock:fibonacci_pivot:price{level="P"}) + 0.382 * stock:previous_range:price
+      - record: stock:fibonacci_pivot:price
+        labels: {level: R2}
+        expr: sum without(level) (stock:fibonacci_pivot:price{level="P"}) + 0.618 * stock:previous_range:price
+      - record: stock:fibonacci_pivot:price
+        labels: {level: R3}
+        expr: sum without(level) (stock:fibonacci_pivot:price{level="P"}) + stock:previous_range:price
+      - record: stock:fibonacci_pivot:price
+        labels: {level: S1}
+        expr: sum without(level) (stock:fibonacci_pivot:price{level="P"}) - 0.382 * stock:previous_range:price
+      - record: stock:fibonacci_pivot:price
+        labels: {level: S2}
+        expr: sum without(level) (stock:fibonacci_pivot:price{level="P"}) - 0.618 * stock:previous_range:price
+      - record: stock:fibonacci_pivot:price
+        labels: {level: S3}
+        expr: sum without(level) (stock:fibonacci_pivot:price{level="P"}) - stock:previous_range:price
+      - record: stock:camarilla_pivot:price
+        labels: {level: H3}
+        expr: sum without(field) (stock:previous_session:price{field="close"}) + 1.1 / 4 * stock:previous_range:price
+      - record: stock:camarilla_pivot:price
+        labels: {level: H4}
+        expr: sum without(field) (stock:previous_session:price{field="close"}) + 1.1 / 2 * stock:previous_range:price
+      - record: stock:camarilla_pivot:price
+        labels: {level: L3}
+        expr: sum without(field) (stock:previous_session:price{field="close"}) - 1.1 / 4 * stock:previous_range:price
+      - record: stock:camarilla_pivot:price
+        labels: {level: L4}
+        expr: sum without(field) (stock:previous_session:price{field="close"}) - 1.1 / 2 * stock:previous_range:price
+      - record: stock:ichimoku_midpoint:price
+        labels: {line: tenkan}
+        expr: |
+          (max_over_time(stock:bar_1m_high:price{tier="core", instrument_type="EQ"}[9m]) + min_over_time(stock:bar_1m_low:price[9m])) / 2
+          and count_over_time(stock:bar_1m_high:price[9m]) == 9
+          and count_over_time(stock:bar_1m_low:price[9m]) == 9
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close <= 21960
+      - record: stock:ichimoku_midpoint:price
+        labels: {line: kijun}
+        expr: |
+          (max_over_time(stock:bar_1m_high:price{tier="core", instrument_type="EQ"}[26m]) + min_over_time(stock:bar_1m_low:price[26m])) / 2
+          and count_over_time(stock:bar_1m_high:price[26m]) == 26
+          and count_over_time(stock:bar_1m_low:price[26m]) == 26
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close <= 20940
+      - record: stock:ichimoku_span:price
+        labels: {span: A}
+        expr: |
+          sum without(line) (stock:ichimoku_midpoint:price) / 2
+          and count without(line) (stock:ichimoku_midpoint:price) == 2
+      - record: stock:ichimoku_span:price
+        labels: {span: B}
+        expr: |
+          (max_over_time(stock:bar_1m_high:price{tier="core", instrument_type="EQ"}[52m]) + min_over_time(stock:bar_1m_low:price[52m])) / 2
+          and count_over_time(stock:bar_1m_high:price[52m]) == 52
+          and count_over_time(stock:bar_1m_low:price[52m]) == 52
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close <= 19380
+      - record: stock:ichimoku_cloud:price
+        expr: |
+          stock:ichimoku_span:price offset 26m
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close <= 17820
+      - record: stock:session_obv:shares
+        expr: |
+          (
+            (stock:session_obv:shares offset 1m + stock:signed_volume_1m:shares)
+              and timestamp(stock:session_obv:shares offset 1m) == time() - 60
+            or (stock:signed_volume_1m:shares and on() stock_market_seconds_to_close >= 22380)
+          )
+          and on() stock_market_open == 1
+      - record: stock:session_ad:shares
+        expr: |
+          (
+            (stock:session_ad:shares offset 1m + stock:bar_1m_money_flow_volume:shares{tier="core", instrument_type="EQ"})
+              and timestamp(stock:session_ad:shares offset 1m) == time() - 60
+            or (stock:bar_1m_money_flow_volume:shares{tier="core", instrument_type="EQ"} and on() stock_market_seconds_to_close >= 22380)
+          )
+          and timestamp(stock:bar_1m_money_flow_volume:shares) > time() - 60
+          and on() stock_market_open == 1
+      - record: stock:open_anchored_vwap:price
+        expr: |
+          stock_average_traded_price{tier="core", instrument_type="EQ"}
+          and stock_day_volume_shares > 0
+          and on() stock_market_open == 1
+      - record: stock:cutler_rsi_2m:index
+        expr: |
+          (
+            100 * sum_over_time(clamp_min(stock:close_change_1m:price, 0)[2m:1m])
+            / (sum_over_time(abs(stock:close_change_1m:price)[2m:1m]) > 0)
+          )
+          and count_over_time(stock:close_change_1m:price[2m]) == 2
+          and on() stock_market_open == 1
+          and on() stock_market_seconds_to_close <= 22320
+      - record: stock:range_retracement_20m:price
+        labels: {level: "0.382", direction: bullish}
+        expr: |
+          sum without(bound) (stock:donchian_prior_20m:price{bound="high"})
+          - 0.382 * (sum without(bound) (stock:donchian_prior_20m:price{bound="high"}) - sum without(bound) (stock:donchian_prior_20m:price{bound="low"}))
+          and on() stock_market_open == 1
+      - record: stock:range_retracement_20m:price
+        labels: {level: "0.618", direction: bullish}
+        expr: |
+          sum without(bound) (stock:donchian_prior_20m:price{bound="high"})
+          - 0.618 * (sum without(bound) (stock:donchian_prior_20m:price{bound="high"}) - sum without(bound) (stock:donchian_prior_20m:price{bound="low"}))
+          and on() stock_market_open == 1
+      - record: stock:range_retracement_20m:price
+        labels: {level: "0.382", direction: bearish}
+        expr: |
+          sum without(bound) (stock:donchian_prior_20m:price{bound="low"})
+          + 0.382 * (sum without(bound) (stock:donchian_prior_20m:price{bound="high"}) - sum without(bound) (stock:donchian_prior_20m:price{bound="low"}))
+          and on() stock_market_open == 1
+      - record: stock:range_retracement_20m:price
+        labels: {level: "0.618", direction: bearish}
+        expr: |
+          sum without(bound) (stock:donchian_prior_20m:price{bound="low"})
+          + 0.618 * (sum without(bound) (stock:donchian_prior_20m:price{bound="high"}) - sum without(bound) (stock:donchian_prior_20m:price{bound="low"}))
+          and on() stock_market_open == 1
+
+      - record: stock:weinstein_ma_30w:price
+        expr: |
+          avg_over_time(stock:session_close:price{tier="core", instrument_type="EQ"}[210d])
+          and count_over_time(stock:session_close:price[210d]) >= 140
+          and on() stock_market_open == 1
+      - record: stock:stage_30w:code
+        expr: |
+          ((stock_last_price{tier="core", instrument_type="EQ"} > stock:weinstein_ma_30w:price
+            and stock:weinstein_ma_30w:price > stock:weinstein_ma_30w:price offset 7d) * 0 + 2)
+          or ((stock_last_price{tier="core", instrument_type="EQ"} < stock:weinstein_ma_30w:price
+            and stock:weinstein_ma_30w:price < stock:weinstein_ma_30w:price offset 7d) * 0 + 4)
+      - record: stock:momentum_12_1m:percent
+        expr: |
+          (exp(sum_over_time(stock:session_log_return:ratio{tier="core", instrument_type="EQ"}[335d] offset 30d)) - 1) * 100
+          and count_over_time(stock:session_log_return:ratio[335d] offset 30d) >= 220
+          and on() stock_market_open == 1
+      - record: stock:momentum_leader_12_1m:percent
+        expr: topk(scalar(ceil((count(stock:momentum_12_1m:percent) or vector(0)) / 10)), stock:momentum_12_1m:percent)
+      - record: market:net_advances:count
+        expr: |
+          ((count(stock_change_percent{tier="core", instrument_type="EQ"} > 0) or vector(0))
+            - (count(stock_change_percent{tier="core", instrument_type="EQ"} < 0) or vector(0)))
+          and on() count(stock_change_percent{tier="core", instrument_type="EQ"}) > 0
+          and on() stock_market_open == 1
+      - record: market:mcclellan:count
+        expr: |
+          sum without(period) (last_over_time(market:breadth_ema:count{period="19"}[7d]))
+          - sum without(period) (last_over_time(market:breadth_ema:count{period="39"}[7d]))
+          and on() stock_market_open == 1
+
+  - name: nse_pattern_snapshots
+    interval: 30m
+    rules:
+      - record: stock:heikin_ashi:price
+        labels: {field: open}
+        expr: |
+          (
+            (sum without(field) (last_over_time(stock:heikin_ashi:price{field=~"open|close"}[7d])) / 2
+              and count without(field) (last_over_time(stock:heikin_ashi:price{field=~"open|close"}[7d])) == 2)
+            or (stock_open_price{tier="core", instrument_type="EQ"} + stock_last_price) / 2
+          )
+          and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:heikin_ashi:price
+        labels: {field: close}
+        expr: |
+          (stock_open_price{tier="core", instrument_type="EQ"} + stock_high_price + stock_low_price + stock_last_price) / 4
+          and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:heikin_ashi:price
+        labels: {field: high}
+        expr: |
+          max without(field) (
+            stock:heikin_ashi:price{field=~"open|close"}
+            or label_replace(stock_high_price{tier="core", instrument_type="EQ"}, "field", "raw", "", "")
+          )
+          and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:heikin_ashi:price
+        labels: {field: low}
+        expr: |
+          min without(field) (
+            stock:heikin_ashi:price{field=~"open|close"}
+            or label_replace(stock_low_price{tier="core", instrument_type="EQ"}, "field", "raw", "", "")
+          )
+          and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:session_range_history:price
+        labels: {lag: "5"}
+        expr: sum without(lag) (last_over_time(stock:session_range_history:price{lag="4"}[7d])) and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:session_range_history:price
+        labels: {lag: "4"}
+        expr: sum without(lag) (last_over_time(stock:session_range_history:price{lag="3"}[7d])) and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:session_range_history:price
+        labels: {lag: "3"}
+        expr: sum without(lag) (last_over_time(stock:session_range_history:price{lag="2"}[7d])) and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:session_range_history:price
+        labels: {lag: "2"}
+        expr: sum without(lag) (last_over_time(stock:session_range_history:price{lag="1"}[7d])) and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:session_range_history:price
+        labels: {lag: "1"}
+        expr: sum without(lag) (last_over_time(stock:session_range_history:price{lag="0"}[7d])) and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:session_range_history:price
+        labels: {lag: "0"}
+        expr: (stock_high_price{tier="core", instrument_type="EQ"} - stock_low_price) and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:session_open:price
+        expr: stock_open_price{tier="core", instrument_type="EQ"} and on() stock_market_phase{phase="post_close"} == 1
+      - record: stock:session_range:price
+        expr: (stock_high_price{tier="core", instrument_type="EQ"} - stock_low_price) and on() stock_market_phase{phase="post_close"} == 1
+      - record: market:session_net_advances:count
+        expr: |
+          ((count(stock_change_percent{tier="core", instrument_type="EQ"} > 0) or vector(0))
+            - (count(stock_change_percent{tier="core", instrument_type="EQ"} < 0) or vector(0)))
+          and on() count(stock_change_percent{tier="core", instrument_type="EQ"}) > 0
+          and on() stock_market_phase{phase="post_close"} == 1
+      - record: market:breadth_ema:count
+        labels: {period: "19"}
+        expr: |
+          (
+            0.1 * market:session_net_advances:count
+              + 0.9 * sum without(period) (last_over_time(market:breadth_ema:count{period="19"}[7d]))
+            or (avg_over_time(market:session_net_advances:count[35d]) and count_over_time(market:session_net_advances:count[35d]) >= 19)
+          )
+          and on() stock_market_phase{phase="post_close"} == 1
+      - record: market:breadth_ema:count
+        labels: {period: "39"}
+        expr: |
+          (
+            0.05 * market:session_net_advances:count
+              + 0.95 * sum without(period) (last_over_time(market:breadth_ema:count{period="39"}[7d]))
+            or (avg_over_time(market:session_net_advances:count[70d]) and count_over_time(market:session_net_advances:count[70d]) >= 39)
+          )
+          and on() stock_market_phase{phase="post_close"} == 1

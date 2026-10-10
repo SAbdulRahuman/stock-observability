@@ -1,0 +1,296 @@
+rule_files:
+  - ../rules/nse_extended_technicals.rules.yml
+evaluation_interval: 1m
+tests:
+  - name: bearish signals and Supertrend reversal
+    interval: 1m
+    input_series:
+      - series: stock_market_open
+        values: '1x40'
+      - series: stock_market_seconds_to_close
+        values: '22500-60x40'
+      - series: 'stock:bar_1m_close:price{tier="core",instrument_type="EQ",symbol="DOWN"}'
+        values: '200-1x40'
+      - series: 'stock:bar_1m_high:price{tier="core",instrument_type="EQ",symbol="DOWN"}'
+        values: '201-1x40'
+      - series: 'stock:bar_1m_low:price{tier="core",instrument_type="EQ",symbol="DOWN"}'
+        values: '200-1x40'
+      - series: 'stock:bar_1m_volume:shares{tier="core",instrument_type="EQ",symbol="DOWN"}'
+        values: '10x40'
+      - series: 'stock:stochastic_k_14m:percent{tier="core",instrument_type="EQ",symbol="DOWN"}'
+        values: '85 82x39'
+      - series: 'stock:stochastic_d_3m:percent{tier="core",instrument_type="EQ",symbol="DOWN"}'
+        values: '84x40'
+      - series: 'stock:macd_histogram:price{tier="core",instrument_type="EQ",symbol="DOWN"}'
+        values: '2 1x39'
+      - series: 'stock:adx_14m:index{tier="core",instrument_type="EQ",symbol="DOWN"}'
+        values: '30 29x39'
+      - series: 'stock:bar_1m_close:price{tier="core",instrument_type="EQ",symbol="TURN"}'
+        values: '100+1x8 90x31'
+      - series: 'stock:bar_1m_high:price{tier="core",instrument_type="EQ",symbol="TURN"}'
+        values: '100+1x8 91x31'
+      - series: 'stock:bar_1m_low:price{tier="core",instrument_type="EQ",symbol="TURN"}'
+        values: '99+1x8 89x31'
+      - series: 'stock:atr_14m:points{tier="core",instrument_type="EQ",symbol="TURN"}'
+        values: '2x40'
+    promql_expr_test:
+      - expr: count(stock:technical_signal:bool{signal=~"stochastic_cross|macd_histogram_fading",direction="bearish"} == 1)
+        eval_time: 1m
+        exp_samples: [{labels: '{}', value: 2}]
+      - expr: count(stock:technical_signal:bool{signal="adx_rollover",direction="neutral"} == 1)
+        eval_time: 1m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:technical_signal:bool{signal="donchian_breakout",direction="bearish"} == 1)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:williams_r_14m:percent{symbol="DOWN"} == -100)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:force_index_1m:price_shares{symbol="DOWN"} == -10)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:obv_change_20m:shares{symbol="DOWN"} == -200)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:supertrend_direction:sign{symbol="TURN"} == -1)
+        eval_time: 9m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:supertrend_14m:price{symbol="TURN"} == 96)
+        eval_time: 9m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: missing bars do not become fresh arithmetic inputs
+    interval: 1m
+    input_series:
+      - series: stock_market_open
+        values: '1x40'
+      - series: stock_market_seconds_to_close
+        values: '22500-60x40'
+      - series: 'stock:bar_1m_close:price{tier="core",instrument_type="EQ",symbol="GAP"}'
+        values: '100+1x20 _ 122+1x18'
+      - series: 'stock:bar_1m_high:price{tier="core",instrument_type="EQ",symbol="GAP"}'
+        values: '101+1x20 _ 123+1x18'
+      - series: 'stock:bar_1m_low:price{tier="core",instrument_type="EQ",symbol="GAP"}'
+        values: '99+1x20 _ 121+1x18'
+      - series: 'stock:bar_1m_volume:shares{tier="core",instrument_type="EQ",symbol="GAP"}'
+        values: '10x40'
+    promql_expr_test:
+      - expr: 'stock:roc_10m:percent or stock:force_index_1m:price_shares or stock:kama_efficiency_10m:ratio'
+        eval_time: 21m
+        exp_samples: []
+      - expr: 'stock:regression_20m:price or stock:vwma_20m:price or stock:obv_change_20m:shares'
+        eval_time: 22m
+        exp_samples: []
+  - name: source bars evaluated at a different group offset
+    interval: 15s
+    input_series:
+      - series: stock_market_open
+        values: '1x100'
+      - series: stock_market_seconds_to_close
+        values: '22500-15x100'
+      - series: 'stock:bar_1m_close:price{tier="core",instrument_type="EQ",symbol="OFFSET"}'
+        values: '_ 100 _ _ _ 101 _ _ _ 102 _ _ _ 103 _ _ _ 104 _ _ _ 105 _ _ _ 106 _ _ _ 107 _ _ _ 108 _ _ _ 109 _ _ _ 110 _ _ _ 111 _ _ _ 112 _ _ _ 113 _ _ _ 114 _ _ _ 115 _ _ _ 116 _ _ _ 117 _ _ _ 118 _ _ _ 119 _ _ _ 120 _ _ _ 121 _ _ _ 122 _ _ _ 123 _ _ _ 124'
+    promql_expr_test:
+      - expr: count(stock:roc_10m:percent > 0)
+        eval_time: 20m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:regression_20m:price == 119)
+        eval_time: 20m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(abs(stock:hma_20m:price - 122.33333333333333) < 0.00001)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: rising bars and zero denominators
+    interval: 1m
+    input_series:
+      - series: stock_market_open
+        values: '1x40'
+      - series: stock_market_seconds_to_close
+        values: '22500-60x40'
+      - series: 'stock:bar_1m_close:price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '100+1x40'
+      - series: 'stock:bar_1m_high:price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '101+1x40'
+      - series: 'stock:bar_1m_low:price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '99+1x40'
+      - series: 'stock:bar_1m_volume:shares{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '10x40'
+      - series: 'stock:bar_1m_money_flow_volume:shares{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '5x40'
+      - series: 'stock:bar_1m_high:price{tier="core",instrument_type="EQ",symbol="FLAT"}'
+        values: '100x40'
+      - series: 'stock:bar_1m_low:price{tier="core",instrument_type="EQ",symbol="FLAT"}'
+        values: '100x40'
+      - series: 'stock:bar_1m_close:price{tier="core",instrument_type="EQ",symbol="FLAT"}'
+        values: '100x40'
+      - series: 'stock:bar_1m_volume:shares{tier="core",instrument_type="EQ",symbol="FLAT"}'
+        values: '0x40'
+      - series: 'stock:rsi_wilder_14m:index{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '20+1x40'
+      - series: 'stock:rsi_wilder_14m:index{tier="core",instrument_type="EQ",symbol="FLAT"}'
+        values: '50x40'
+      - series: 'stock:ema_12m:price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '110x40'
+      - series: 'stock:ema_26m:price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '100x40'
+    promql_expr_test:
+      - expr: count(stock:ppo_12_26m:percent == 10)
+        eval_time: 30m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:stochastic_rsi_14m:ratio == 1)
+        eval_time: 30m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: stock:stochastic_rsi_14m:ratio{symbol="FLAT"}
+        eval_time: 30m
+        exp_samples: []
+      - expr: count(stock:roc_acceleration_10m:points < 0)
+        eval_time: 20m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: stock:roc_10m:percent{symbol="UP"}
+        eval_time: 20m
+        exp_samples:
+          - labels: 'stock:roc_10m:percent{tier="core",instrument_type="EQ",symbol="UP"}'
+            value: 9.090909090909083
+      - expr: stock:williams_r_14m:percent{symbol="UP"}
+        eval_time: 20m
+        exp_samples:
+          - labels: 'stock:williams_r_14m:percent{tier="core",instrument_type="EQ",symbol="UP"}'
+            value: -6.666666666666667
+      - expr: stock:force_index_1m:price_shares{symbol="UP"}
+        eval_time: 20m
+        exp_samples:
+          - labels: 'stock:force_index_1m:price_shares{tier="core",instrument_type="EQ",symbol="UP"}'
+            value: 10
+      - expr: stock:obv_change_20m:shares{symbol="UP"}
+        eval_time: 20m
+        exp_samples:
+          - labels: 'stock:obv_change_20m:shares{tier="core",instrument_type="EQ",symbol="UP"}'
+            value: 200
+      - expr: stock:ad_change_20m:shares{symbol="UP"}
+        eval_time: 20m
+        exp_samples:
+          - labels: 'stock:ad_change_20m:shares{tier="core",instrument_type="EQ",symbol="UP"}'
+            value: 100
+      - expr: stock:vwma_20m:price{symbol="UP"}
+        eval_time: 20m
+        exp_samples:
+          - labels: 'stock:vwma_20m:price{tier="core",instrument_type="EQ",symbol="UP"}'
+            value: 110.5
+      - expr: 'stock:williams_r_14m:percent{symbol="FLAT"} or stock:vwma_20m:price{symbol="FLAT"}'
+        eval_time: 20m
+        exp_samples: []
+      - expr: stock:roc_10m:percent
+        eval_time: 5m
+        exp_samples: []
+      - expr: count(stock:kama_efficiency_10m:ratio{symbol="UP"} == 1)
+        eval_time: 20m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:kama_efficiency_10m:ratio{symbol="FLAT"} == 0)
+        eval_time: 20m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:kama_10m:price{symbol="FLAT"} == 100)
+        eval_time: 20m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(abs(stock:kama_10m:price{symbol="UP"} - (105.5 + (111 - 105.5) * 4/9)) < 0.00001)
+        eval_time: 11m
+        exp_samples: [{labels: '{}', value: 1}]
+  - name: channels regression and squeeze release
+    interval: 1m
+    input_series:
+      - series: stock_market_open
+        values: '1x29 0x10'
+      - series: stock_market_seconds_to_close
+        values: '22500-60x40'
+      - series: 'stock:bar_1m_close:price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '100+1x40'
+      - series: 'stock:bar_1m_high:price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '100+1x40'
+      - series: 'stock:bar_1m_low:price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '99+1x40'
+      - series: 'stock:bar_1m_true_range:points{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '2x40'
+      - series: 'stock:atr_14m:points{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '2x40'
+      - series: 'stock:ema_20m:price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '100x40'
+      - series: 'stock:sma_20m:price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '100x40'
+      - series: 'stock:bollinger_20m:price{tier="core",instrument_type="EQ",symbol="UP",band="upper"}'
+        values: '102x23 105x17'
+      - series: 'stock:bollinger_20m:price{tier="core",instrument_type="EQ",symbol="UP",band="lower"}'
+        values: '98x23 95x17'
+      - series: 'stock:macd_histogram:price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '1x40'
+      - series: 'stock:bar_1m_close:price{tier="broad",instrument_type="EQ",symbol="BROAD"}'
+        values: '100+1x40'
+    promql_expr_test:
+      - expr: count(stock:keltner_20m:price{band="upper"} == 104)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:keltner_20m:price{band="lower"} == 96)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:ttm_squeeze_20m:bool == 1)
+        eval_time: 23m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:ttm_squeeze_20m:bool == 0)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: stock:technical_signal:bool{signal="ttm_squeeze_release"}
+        eval_time: 24m
+        exp_samples:
+          - labels: 'stock:technical_signal:bool{tier="core",instrument_type="EQ",symbol="UP",signal="ttm_squeeze_release",direction="bullish"}'
+            value: 1
+      - expr: stock:technical_signal:bool{signal="ttm_squeeze_release"}
+        eval_time: 25m
+        exp_samples: []
+      - expr: count(stock:donchian_prior_20m:price{bound="high"} == 23 + 100)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:donchian_prior_20m:price{bound="low"} == 103)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:technical_signal:bool{signal="donchian_breakout",direction="bullish"} == 1)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:chandelier_22m:price{side="long"} == 118)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:chandelier_22m:price{side="short"} == 108)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:choppiness_14m:index > 0 < 100)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:regression_slope_20m:price_per_minute == 1)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(abs(stock:regression_error_20m:price) < 0.00001)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:regression_channel_20m:price == 124)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 2}]
+      - expr: count(abs(stock:hma_20m:price - 123.33333333333333) < 0.00001)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:envelope_20m:price{band="upper"} == 102)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:envelope_20m:price{band="lower"} == 98)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:supertrend_direction:sign == -1)
+        eval_time: 0m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:supertrend_direction:sign == 1)
+        eval_time: 8m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:supertrend_14m:price == 117.5)
+        eval_time: 24m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: '{__name__=~"stock:(technical_signal|keltner_20m|regression_20m|hma_20m|envelope_20m):.*"}'
+        eval_time: 35m
+        exp_samples: []
+      - expr: '{__name__=~"stock:.*",tier="broad"} unless stock:bar_1m_close:price'
+        eval_time: 24m
+        exp_samples: []

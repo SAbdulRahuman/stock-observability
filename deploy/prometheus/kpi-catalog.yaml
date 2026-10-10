@@ -11,6 +11,672 @@
 # warmup_sessions: completed sessions of EOD snapshots needed before the KPI has a value
 # coverage: tracked by kpi:coverage:ratio and KPIDataQualityDegraded
 kpis:
+  - {name: 'stock:daily_body:price', kind: helper, release: R6, formula: 'abs(C-O)', inputs: [stock_last_price, stock_open_price], rule_file: nse_pattern_technicals.rules.yml, frequency: 1m, scope: core, unit: price}
+  - {name: 'stock:daily_range:price', kind: helper, release: R6, formula: 'H-L', inputs: [stock_high_price, stock_low_price], rule_file: nse_pattern_technicals.rules.yml, frequency: 1m, scope: core, unit: price}
+  - {name: 'stock:daily_upper_wick:price', kind: helper, release: R6, formula: 'H-max(O,C)', inputs: [stock_high_price, stock_open_price, stock_last_price], rule_file: nse_pattern_technicals.rules.yml, frequency: 1m, scope: core, unit: price}
+  - {name: 'stock:daily_lower_wick:price', kind: helper, release: R6, formula: 'min(O,C)-L', inputs: [stock_low_price, stock_open_price, stock_last_price], rule_file: nse_pattern_technicals.rules.yml, frequency: 1m, scope: core, unit: price}
+  - {name: 'stock:previous_session:price', kind: helper, release: R6, formula: 'Last completed daily OHLC by field', inputs: ['stock:session_open:price', 'stock:session_close:price', 'stock:session_high:price', 'stock:session_low:price'], rule_file: nse_pattern_technicals.rules.yml, frequency: 1m, scope: core, unit: price}
+  - {name: 'stock:previous_range:price', kind: helper, release: R6, formula: 'Previous H-L', inputs: ['stock:previous_session:price'], rule_file: nse_pattern_technicals.rules.yml, frequency: 1m, scope: core, unit: price}
+  - {name: 'stock:session_open:price', kind: snapshot, release: R6, formula: 'O at post_close', inputs: [stock_open_price], rule_file: nse_pattern_technicals.rules.yml, frequency: 30m, scope: core, unit: price}
+  - {name: 'stock:session_range:price', kind: snapshot, release: R6, formula: 'H-L at post_close', inputs: [stock_high_price, stock_low_price], rule_file: nse_pattern_technicals.rules.yml, frequency: 30m, scope: core, unit: price}
+  - {name: 'stock:session_range_history:price', kind: helper, release: R6, formula: 'Six trading-session ranges shifted oldest first at post_close', inputs: [stock_high_price, stock_low_price], rule_file: nse_pattern_technicals.rules.yml, frequency: 30m, scope: core, unit: price, limitation: 'Requires one post_close evaluation per session and no gap longer than seven days'}
+  - {name: 'stock:daily_pattern:bool', kind: signal, release: R6, formula: 'Daily candle shape or range condition holds', inputs: ['stock:daily_body:price', 'stock:daily_range:price', 'stock:daily_upper_wick:price', 'stock:daily_lower_wick:price', 'stock:previous_session:price', 'stock:session_range_history:price'], rule_file: nse_pattern_technicals.rules.yml, frequency: 1m, scope: core, unit: bool, limitation: 'Provisional during the session; shapes alone are not reversals; NR7 requires six completed sessions'}
+  - name: stock:fibonacci_pivot:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: price
+    release: R6
+    formula: 'P=(H+L+C)/3; P +/- range times 0.382, 0.618, 1'
+    inputs: ['stock:previous_session:price', 'stock:previous_range:price']
+    rule_file: nse_pattern_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    quality: heuristic
+    method: previous-session Fibonacci floor pivots by level
+    limitation: 'Levels are not proven support or resistance'
+  - name: stock:camarilla_pivot:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: price
+    release: R6
+    formula: 'C +/- 1.1*(H-L)/4 or /2'
+    inputs: ['stock:previous_session:price', 'stock:previous_range:price']
+    rule_file: nse_pattern_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    quality: heuristic
+    method: Camarilla H3 H4 L3 L4 from prior session
+  - {name: 'stock:ichimoku_midpoint:price', kind: helper, release: R6, formula: '(HH+LL)/2 over 9 or 26 one-minute bars', inputs: ['stock:bar_1m_high:price', 'stock:bar_1m_low:price'], rule_file: nse_pattern_technicals.rules.yml, frequency: 1m, scope: core, unit: price}
+  - {name: 'stock:ichimoku_span:price', kind: helper, release: R6, formula: 'A=(Tenkan+Kijun)/2; B=(HH52+LL52)/2 before displacement', inputs: ['stock:ichimoku_midpoint:price', 'stock:bar_1m_high:price', 'stock:bar_1m_low:price'], rule_file: nse_pattern_technicals.rules.yml, frequency: 1m, scope: core, unit: price}
+  - name: stock:ichimoku_cloud:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R6
+    formula: 'Senkou A and B from 26 bars ago'
+    inputs: ['stock:ichimoku_span:price']
+    rule_file: nse_pattern_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 78m
+    quality: exact
+    method: current-time cloud after forward displacement of 9 26 52 intraday lines
+    limitation: 'One-minute variant; future timestamps and graphical Chikou displacement are not stored'
+  - name: stock:session_obv:shares
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volume
+    release: R6
+    formula: 'OBVprev + sign(C-Cprev)*V'
+    inputs: ['stock:signed_volume_1m:shares']
+    rule_file: nse_pattern_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: shares
+    quality: exact
+    method: cumulative intraday OBV resetting at the open
+    limitation: 'Not all-history OBV; a gap suppresses the line until the next open'
+  - name: stock:session_ad:shares
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volume
+    release: R6
+    formula: 'ADprev + CLV*V'
+    inputs: ['stock:bar_1m_money_flow_volume:shares']
+    rule_file: nse_pattern_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: shares
+    quality: exact
+    method: cumulative intraday accumulation-distribution resetting at the open
+    limitation: 'Not all-history AD; a gap suppresses the line until the next open'
+  - name: stock:open_anchored_vwap:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volume
+    release: R6
+    formula: 'Exchange average traded price since session open'
+    inputs: [stock_average_traded_price, stock_day_volume_shares]
+    rule_file: nse_pattern_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    quality: exact
+    method: session-open anchor using exchange VWAP
+    limitation: 'No arbitrary earnings or swing-point anchor'
+  - name: stock:cutler_rsi_2m:index
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R6
+    formula: '100*sum(positive delta,2)/sum(abs(delta),2)'
+    inputs: ['stock:close_change_1m:price']
+    rule_file: nse_pattern_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: index
+    quality: exact
+    method: two-minute Cutler RSI
+    limitation: 'Not Wilder RSI2 or the full Connors RSI composite; constant price gives no output'
+  - name: stock:range_retracement_20m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: price
+    release: R6
+    formula: 'HH - fraction*(HH-LL) or LL + fraction*(HH-LL)'
+    inputs: ['stock:donchian_prior_20m:price']
+    rule_file: nse_pattern_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 20m
+    quality: heuristic
+    method: 0.382 and 0.618 retracements of the prior twenty-bar range
+    limitation: 'Rolling range, not confirmed swing-point Fibonacci anchors'
+  - name: stock:heikin_ashi:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R6
+    formula: 'HAC=(O+H+L+C)/4; HAO=(prior HAO+prior HAC)/2; HAH=max(H,HAO,HAC); HAL=min(L,HAO,HAC)'
+    inputs: [stock_open_price, stock_high_price, stock_low_price, stock_last_price]
+    rule_file: nse_pattern_technicals.rules.yml
+    frequency: 30m
+    scope: core
+    unit: price
+    quality: exact
+    method: completed-session Heikin Ashi seeded from (O+C)/2
+    limitation: 'Sparse EOD values, read with last_over_time; synthesized prices are not executable quotes'
+  - {name: 'stock:weinstein_ma_30w:price', kind: helper, release: R6, formula: 'Mean completed daily close over 210 days with at least 140 observations', inputs: ['stock:session_close:price'], rule_file: nse_pattern_technicals.rules.yml, frequency: 1m, scope: core, unit: price}
+  - name: stock:stage_30w:code
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R6
+    formula: '2 above rising MA; 4 below falling MA'
+    inputs: ['stock:weinstein_ma_30w:price', stock_last_price]
+    rule_file: nse_pattern_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: code
+    warmup: 210d
+    quality: heuristic
+    method: stage 2 and 4 screening using a daily-close thirty-week approximation and seven-day slope
+    limitation: 'Not weekly-close SMA or full Weinstein stages 1 and 3; requires retention above 217 days'
+  - name: stock:momentum_12_1m:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R6
+    formula: '100*(exp(sum(log return over 335 days ending 30 days ago))-1)'
+    inputs: ['stock:session_log_return:ratio']
+    rule_file: nse_pattern_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent
+    quality: approximation
+    method: 365-day lookback excluding most recent thirty calendar days, at least 220 sessions
+    limitation: 'Requires over one year retention; not calendar-month boundaries or corporate-action-adjusted total returns'
+  - name: stock:momentum_leader_12_1m:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R6
+    formula: 'Top ceil(N/10) stocks by trailing 12-minus-1 momentum'
+    inputs: ['stock:momentum_12_1m:percent']
+    rule_file: nse_pattern_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent
+    quality: heuristic
+    method: top decile among eligible tracked core equities
+    limitation: 'Watchlist selection and survivorship bias; not an investable market-wide backtest'
+  - {name: 'market:net_advances:count', kind: helper, release: R6, formula: 'Tracked core advancers minus decliners', inputs: [stock_change_percent], rule_file: nse_pattern_technicals.rules.yml, frequency: 1m, scope: market, unit: count}
+  - {name: 'market:session_net_advances:count', kind: snapshot, release: R6, formula: 'Tracked core advancers minus decliners at post_close', inputs: [stock_change_percent], rule_file: nse_pattern_technicals.rules.yml, frequency: 30m, scope: market, unit: count}
+  - {name: 'market:breadth_ema:count', kind: helper, release: R6, formula: 'Daily EMA19 and EMA39 of session net advances', inputs: ['market:session_net_advances:count'], rule_file: nse_pattern_technicals.rules.yml, frequency: 30m, scope: market, unit: count}
+  - name: market:mcclellan:count
+    kind: kpi
+    family: market
+    level: market_health
+    capability: breadth
+    release: R6
+    formula: 'Daily EMA19(net advances)-EMA39(net advances)'
+    inputs: ['market:breadth_ema:count']
+    rule_file: nse_pattern_technicals.rules.yml
+    frequency: 1m
+    scope: market
+    unit: count
+    quality: exact
+    method: unadjusted McClellan oscillator on tracked core equity breadth
+    limitation: 'Last completed-session value; not ratio-adjusted or full-exchange breadth; stable universe required'
+  - name: stock:roc_10m:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R6
+    formula: "100 * (C / C[10m ago] - 1)"
+    inputs: [stock:bar_1m_close:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent
+    warmup: 10m
+    quality: exact
+    method: percent rate of change of sampled one-minute closes
+    limitation: "Not the existing absolute price momentum; absent with a zero reference price"
+
+  - name: stock:roc_acceleration_10m:points
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R6
+    formula: "ROC10 - ROC10[1m ago]"
+    inputs: [stock:roc_10m:percent]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: points
+    warmup: 11m
+    quality: exact
+    method: one-bar change in ten-minute ROC in percentage points
+
+  - name: stock:williams_r_14m:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R6
+    formula: "-100 * (HH14 - C) / (HH14 - LL14)"
+    inputs: [stock:bar_1m_high:price, stock:bar_1m_low:price, stock:bar_1m_close:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent
+    range: {min: -100, max: 0}
+    warmup: 14m
+    quality: exact
+    method: Williams percent R on fourteen complete sampled bars
+    limitation: "Absent for a flat range or missing bars"
+
+  - name: stock:stochastic_rsi_14m:ratio
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R6
+    formula: "(RSI14 - min(RSI14,14m)) / (max(RSI14,14m) - min(RSI14,14m))"
+    inputs: [stock:rsi_wilder_14m:index]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: ratio
+    range: {min: 0, max: 1}
+    warmup: 27m
+    quality: exact
+    method: unsmoothed stochastic of fourteen Wilder RSI observations
+    limitation: "Absent when RSI is constant or observations are incomplete"
+
+  - name: stock:ppo_12_26m:percent
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R6
+    formula: "100 * (EMA12 - EMA26) / EMA26"
+    inputs: [stock:ema_12m:price, stock:ema_26m:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: percent
+    warmup: 26m
+    quality: exact
+    method: percentage price oscillator line using existing EMA state
+    limitation: "PPO line only; not a PPO signal-line crossover"
+
+  - name: stock:force_index_1m:price_shares
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: momentum
+    release: R6
+    formula: "(C - C[1m ago]) * V"
+    inputs: [stock:bar_1m_close:price, stock:bar_1m_volume:shares]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price_shares
+    warmup: 1m
+    quality: exact
+    method: unsmoothed one-bar Elder Force Index
+
+  - name: stock:signed_volume_1m:shares
+    kind: helper
+    release: R6
+    formula: "sign(C - C[1m ago]) * V"
+    inputs: [stock:bar_1m_close:price, stock:bar_1m_volume:shares]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: shares
+
+  - name: stock:obv_change_20m:shares
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volume
+    release: R6
+    formula: "sum(sign(C - Cprev) * V,20m)"
+    inputs: [stock:signed_volume_1m:shares]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: shares
+    warmup: 20m
+    quality: exact
+    method: twenty-bar OBV change
+    limitation: "Rolling change, not a cumulative OBV line; unchanged close contributes zero"
+
+  - name: stock:ad_change_20m:shares
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volume
+    release: R6
+    formula: "sum(CLV * V,20m)"
+    inputs: [stock:bar_1m_money_flow_volume:shares]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: shares
+    warmup: 20m
+    quality: exact
+    method: twenty-bar accumulation-distribution change
+    limitation: "Rolling change, not a cumulative A/D line; zero-range bars contribute zero"
+
+  - name: stock:vwma_20m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R6
+    formula: "sum(C * V,20m) / sum(V,20m)"
+    inputs: [stock:bar_1m_close:price, stock:bar_1m_volume:shares]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 20m
+    quality: exact
+    method: volume-weighted moving average of sampled closes
+    limitation: "Not trade-level VWAP; absent with zero total volume or missing bars"
+
+  - name: stock:keltner_20m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R6
+    formula: "EMA20 +/- 2 * Wilder ATR14"
+    inputs: [stock:ema_20m:price, stock:atr_14m:points]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 20m
+    quality: exact
+    method: modern Keltner variant with band upper and lower
+
+  - name: stock:ttm_squeeze_20m:bool
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R6
+    formula: "BB_upper < KC_upper AND BB_lower > KC_lower"
+    inputs: [stock:bollinger_20m:price, stock:keltner_20m:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: bool
+    range: {min: 0, max: 1}
+    warmup: 20m
+    quality: heuristic
+    method: Bollinger-inside-Keltner squeeze state
+    limitation: "TTM-style variant using EMA20 and 2*ATR14; release direction uses MACD, not the proprietary oscillator"
+
+  - name: stock:donchian_prior_20m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: price
+    release: R6
+    formula: "max(H[previous 20 bars]) or min(L[previous 20 bars])"
+    inputs: [stock:bar_1m_high:price, stock:bar_1m_low:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 20m
+    quality: exact
+    method: prior-bar Donchian channel with bound high and low
+    limitation: "Intraday twenty-minute channel, not twenty sessions; excludes current bar to avoid self-comparison"
+
+  - name: stock:choppiness_14m:index
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R6
+    formula: "100 * log10(sum(TR,14m)/(HH14-LL14)) / log10(14)"
+    inputs: [stock:bar_1m_true_range:points, stock:bar_1m_high:price, stock:bar_1m_low:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: index
+    warmup: 14m
+    quality: exact
+    method: Choppiness Index using unsmoothed per-bar true range
+    limitation: "Absent for flat ranges or incomplete windows; opening gaps may produce values outside customary bounds"
+
+  - name: stock:chandelier_22m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R6
+    formula: "HH22 - 3*ATR14 for long; LL22 + 3*ATR14 for short"
+    inputs: [stock:bar_1m_high:price, stock:bar_1m_low:price, stock:atr_14m:points]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 22m
+    quality: exact
+    method: Chandelier level variant using existing Wilder ATR14 and side long or short
+    limitation: "Raw rolling levels, not a ratcheted trade-specific trailing stop; not canonical ATR22"
+
+  - name: stock:regression_slope_20m:price_per_minute
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R6
+    formula: "60 * deriv(C[20m])"
+    inputs: [stock:bar_1m_close:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price_per_minute
+    warmup: 20m
+    quality: exact
+    method: least-squares slope on twenty complete one-minute closes
+
+  - name: stock:regression_20m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R6
+    formula: "predict_linear(C[20m],0) - deriv(C[20m]) * (time() - timestamp(C))"
+    inputs: [stock:bar_1m_close:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 20m
+    quality: exact
+    method: least-squares fitted price at the last bar timestamp
+    limitation: "Trend fit, not an out-of-sample price forecast"
+
+  - name: stock:regression_error_20m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R6
+    formula: "sqrt(max(0,(var(C)-slope_per_minute^2*(20^2-1)/12)*20/18))"
+    inputs: [stock:bar_1m_close:price, stock:regression_slope_20m:price_per_minute]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 20m
+    quality: exact
+    method: residual standard error with two fitted parameters on twenty equally spaced bars
+    limitation: "Requires regular one-minute rule evaluations; missing bars suppress output"
+
+  - name: stock:regression_channel_20m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R6
+    formula: "LSMA20 +/- 2 * residual_standard_error20"
+    inputs: [stock:regression_20m:price, stock:regression_error_20m:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 20m
+    quality: heuristic
+    method: regression channel with band upper and lower
+    limitation: "Not a calibrated prediction interval or a guarantee of mean reversion"
+
+  - name: stock:hma_20m_input:price
+    kind: helper
+    release: R6
+    formula: "2 * WMA10(C) - WMA20(C)"
+    inputs: [stock:bar_1m_close:price, stock:regression_20m:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+
+  - name: stock:hma_20m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R6
+    formula: "WMA4(2*WMA10(C)-WMA20(C))"
+    inputs: [stock:hma_20m_input:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 23m
+    quality: exact
+    method: Hull moving average with floor(sqrt(20))=4, WMA=(LSMA+2*SMA)/3
+    limitation: "Requires regular complete one-minute windows"
+
+  - name: stock:envelope_20m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: volatility
+    release: R6
+    formula: "SMA20 * (1 +/- 0.02)"
+    inputs: [stock:sma_20m:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 20m
+    quality: heuristic
+    method: fixed two-percent moving-average envelope with band upper and lower
+
+  - name: stock:technical_signal:bool
+    kind: signal
+    release: R6
+    formula: "1 while an extended condition holds or in the minute of a transition"
+    inputs: [stock:roc_10m:percent, stock:roc_acceleration_10m:points, stock:adx_14m:index, stock:macd_histogram:price, stock:stochastic_k_14m:percent, stock:stochastic_d_3m:percent, stock:donchian_prior_20m:price, stock:ttm_squeeze_20m:bool, stock:obv_change_20m:shares, stock:bar_1m_close:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: bool
+    limitation: "Informational signals, not notifications; not integrated into the existing effectiveness ledger"
+
+  - name: stock:close_change_1m:price
+    kind: helper
+    release: R6
+    formula: "C - C[1m ago]"
+    inputs: [stock:bar_1m_close:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+
+  - name: stock:kama_efficiency_10m:ratio
+    kind: helper
+    release: R6
+    formula: "abs(C-C[10m ago]) / sum(abs(C-Cprev),10m); zero for constant price"
+    inputs: [stock:bar_1m_close:price, stock:close_change_1m:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: ratio
+
+  - name: stock:kama_10m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R6
+    formula: "KAMAprev + (ER10*(2/3-2/31)+2/31)^2 * (C-KAMAprev)"
+    inputs: [stock:kama_efficiency_10m:ratio, stock:bar_1m_close:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 10m
+    quality: exact
+    method: Kaufman adaptive moving average with ER10, fast2 and slow30, seeded with SMA10
+    limitation: "Reseeds after a missing state evaluation; requires eleven consecutive closes"
+
+  - name: stock:supertrend_basic:price
+    kind: helper
+    release: R6
+    formula: "(H+L)/2 +/- 3*ATR14"
+    inputs: [stock:bar_1m_high:price, stock:bar_1m_low:price, stock:atr_14m:points]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+
+  - name: stock:supertrend_band:price
+    kind: helper
+    release: R6
+    formula: "Ratchet upper down and lower up unless previous close crosses the previous band"
+    inputs: [stock:supertrend_basic:price, stock:bar_1m_close:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+
+  - name: stock:supertrend_direction:sign
+    kind: helper
+    release: R6
+    formula: "+1 after crossing the upper band; -1 after crossing the lower band"
+    inputs: [stock:supertrend_band:price, stock:supertrend_basic:price, stock:bar_1m_close:price]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: sign
+
+  - name: stock:supertrend_14m:price
+    kind: kpi
+    family: technical
+    level: stock_intelligence
+    capability: trend
+    release: R6
+    formula: "Final lower band in an uptrend, final upper band in a downtrend"
+    inputs: [stock:supertrend_band:price, stock:supertrend_direction:sign]
+    rule_file: nse_extended_technicals.rules.yml
+    frequency: 1m
+    scope: core
+    unit: price
+    warmup: 14m
+    quality: exact
+    method: stateful Supertrend using Wilder ATR14, multiplier3, seeded in the down direction
+    limitation: "Initialization and ATR period affect results; informational trend line, not a guaranteed stop execution price"
+
   # --- EOD session snapshots (nse_eod_snapshot) ----------------------------------------------
   - name: stock:session_high:price
     kind: snapshot

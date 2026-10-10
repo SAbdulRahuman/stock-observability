@@ -1,0 +1,30 @@
+rule_files:
+  - ../rules/nse_pattern_technicals.rules.yml
+evaluation_interval: 24h
+tests:
+  - name: long history screens preserve stock identity
+    interval: 24h
+    input_series:
+      - series: stock_market_open
+        values: '1x370'
+      - series: 'stock:session_close:price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '100+1x370'
+      - series: 'stock_last_price{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '100+1x370'
+      - series: 'stock:session_log_return:ratio{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '0.001x370'
+      - series: 'stock:session_log_return:ratio{tier="core",instrument_type="EQ",symbol="DOWN"}'
+        values: '-0.001x370'
+    promql_expr_test:
+      - expr: count(stock:stage_30w:code{symbol="UP"} == 2)
+        eval_time: 150d
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:momentum_leader_12_1m:percent{symbol="UP"})
+        eval_time: 365d
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: stock:momentum_leader_12_1m:percent{symbol="DOWN"}
+        eval_time: 365d
+        exp_samples: []
+      - expr: stock:momentum_12_1m:percent
+        eval_time: 10d
+        exp_samples: []

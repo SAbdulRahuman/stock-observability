@@ -1,0 +1,62 @@
+rule_files:
+  - ../rules/nse_pattern_technicals.rules.yml
+evaluation_interval: 30m
+tests:
+  - name: daily breadth EMA recurrence
+    interval: 15m
+    input_series:
+      - series: 'stock_market_phase{phase="post_close"}'
+        values: '0 0 1 0 0'
+      - series: 'market:breadth_ema:count{period="19"}'
+        values: '10 stale'
+      - series: 'market:breadth_ema:count{period="39"}'
+        values: '20 stale'
+      - series: 'stock_change_percent{tier="core",instrument_type="EQ",symbol="UP"}'
+        values: '1x4'
+    promql_expr_test:
+      - expr: count(abs(market:breadth_ema:count{period="19"} - 9.1) < 0.00001)
+        eval_time: 30m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(abs(market:breadth_ema:count{period="39"} - 19.05) < 0.00001)
+        eval_time: 30m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: market:breadth_ema:count
+        eval_time: 1h
+        exp_samples: []
+  - name: daily history shifts once per session and Heikin Ashi uses previous values
+    interval: 30m
+    input_series:
+      - series: 'stock_market_phase{phase="post_close"}'
+        values: '1 0x46 1 0x46 1 0x46 1 0x46 1 0x46 1'
+      - series: stock_market_open
+        values: '0x240 1'
+      - series: 'stock_open_price{tier="core",instrument_type="EQ",symbol="TEST"}'
+        values: '100x241'
+      - series: 'stock_last_price{tier="core",instrument_type="EQ",symbol="TEST"}'
+        values: '104x241'
+      - series: 'stock_high_price{tier="core",instrument_type="EQ",symbol="TEST"}'
+        values: '110x241'
+      - series: 'stock_low_price{tier="core",instrument_type="EQ",symbol="TEST"}'
+        values: '90x240 99'
+    promql_expr_test:
+      - expr: count(last_over_time(stock:session_range_history:price[7d]))
+        eval_time: 120h
+        exp_samples: [{labels: '{}', value: 6}]
+      - expr: count(stock:daily_pattern:bool{pattern="nr7"} == 1)
+        eval_time: 120h30m
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:heikin_ashi:price{field="close"} == 101)
+        eval_time: 24h
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:heikin_ashi:price{field="open"} == 101.5)
+        eval_time: 24h
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:heikin_ashi:price{field="high"} == 110)
+        eval_time: 24h
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: count(stock:heikin_ashi:price{field="low"} == 90)
+        eval_time: 24h
+        exp_samples: [{labels: '{}', value: 1}]
+      - expr: stock:heikin_ashi:price
+        eval_time: 25h
+        exp_samples: []
