@@ -1,0 +1,7 @@
+/stock_website
+/dist/
+/ui/dist/*
+!/ui/dist/.gitkeep
+*.db
+*.db-shm
+*.db-wal

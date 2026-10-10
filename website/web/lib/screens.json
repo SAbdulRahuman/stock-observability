@@ -1,0 +1,37 @@
+[
+  {
+    "id": "home",
+    "path": "/",
+    "title": "Home",
+    "kicker": "Everything at a glance",
+    "points": ["Index cards with intraday sparklines", "Market breadth, top movers and active alerts", "Feed health, so you can trust what you see"]
+  },
+  {
+    "id": "market",
+    "path": "/market",
+    "title": "Market overview",
+    "kicker": "The whole market, one screen",
+    "points": ["Advancers vs decliners in real time", "Sector heat ranked by day change", "Index charts from 1D to 1Y"]
+  },
+  {
+    "id": "movers",
+    "path": "/movers",
+    "title": "Top movers",
+    "kicker": "Find what is moving now",
+    "points": ["Gainers, losers and volume leaders", "Filter by universe, sector and price band", "Every row links to the stock explorer"]
+  },
+  {
+    "id": "explorer",
+    "path": "/explorer?symbol=RELIANCE",
+    "title": "Stock explorer",
+    "kicker": "Every metric of one stock",
+    "points": ["Price history and five-level depth", "Order-book imbalance and circuit distance", "The KPIs computed for this symbol"]
+  },
+  {
+    "id": "alerts",
+    "path": "/alerts",
+    "title": "Alerts",
+    "kicker": "Signals, not noise",
+    "points": ["Price, circuit, flow and portfolio alerts", "Grouped, and muted outside NSE hours", "Drill down to the rule that fired"]
+  }
+]

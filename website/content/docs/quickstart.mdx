@@ -1,0 +1,54 @@
+---
+title: Quickstart
+---
+
+iSee Ticks runs entirely on your own machine. The built-in **market simulator** generates realistic NSE-style ticks, so you
+need no broker account to try it.
+
+## What you get
+
+| Component | Port | Role |
+| --- | --- | --- |
+| Exporter | 9101 | Turns ticks into Prometheus metrics |
+| Prometheus | 9090 | Stores metrics, evaluates KPI and alert rules |
+| Alertmanager | 9093 | Groups and routes alerts, mutes outside market hours |
+| Quant lab | 9108 | Option Greeks, max pain and short-horizon forecasts |
+| Product home | 8080 | The iSee Ticks UI and JSON API |
+
+## 1. Start the data stack
+
+You need Docker with Compose. From the repository root:
+
+```bash
+cd deploy
+make up-sim
+```
+
+This starts the exporter in simulator mode (market forced open), Prometheus with all rules, Alertmanager and the quant lab.
+Check the exporter at `http://localhost:9101/metrics` and Prometheus targets at `http://localhost:9090/targets`.
+
+## 2. Run the product home
+
+You need Go and Node.js 22.
+
+```bash
+cd stock_home
+make build
+./stock_home \
+  --prometheus.url=http://localhost:9090 \
+  --alertmanager.url=http://localhost:9093 \
+  --market.holidays-file=../stock_exporter/examples/holidays-nse-2026.yml
+```
+
+Open `http://localhost:8080`. Index cards, movers and alerts fill in within a minute as Prometheus evaluates the rules.
+
+## 3. Customise the watchlist
+
+The simulator and the live feed read the same YAML watchlist. Copy `stock_exporter/examples/watchlist.yml`, add or remove
+instruments, and restart the exporter. Fewer instruments means fewer series and a lighter machine.
+
+## Next steps
+
+- Read the [system architecture](../../../stock-observability-proposal/03-SYSTEM-ARCHITECTURE.md).
+- See how KPIs are defined in the [formula and rules engine](../../../stock-observability-proposal/05-FORMULA-RULES-ENGINE.md).
+- Try the hosted [live demo](/demo) when you just want to look around.

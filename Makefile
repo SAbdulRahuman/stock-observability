@@ -83,6 +83,8 @@ help:
 	@echo "  deploy         helm upgrade --install (deploy/Makefile deploy-ocp)"
 	@echo "  clean          Remove build outputs"
 	@echo "  build-<name>, docker-build-<name>, docker-push-<name> for a single service"
+	@echo "  build-website  Build the iSee Ticks website binary (website/stock_website)"
+	@echo "  dist-website   Package website/dist/stock_website-<ver>.linux-amd64.tar.gz for the VM"
 	@echo
 	@echo "Images:"
 	@$(foreach i,$(IMAGES),printf '  %-15s %s\n' "$(i)" "$(IMG_$(i))";)
@@ -100,6 +102,14 @@ build-stock-exporter:
 
 build-stock-home:
 	$(MAKE) -C stock_home build NPM_STRICT_SSL=$(TLS_VERIFY)
+
+# The website runs as a native binary on the VM (deploy/vm), so it has no image.
+.PHONY: build-website dist-website
+build-website:
+	$(MAKE) -C website build NPM_STRICT_SSL=$(TLS_VERIFY)
+
+dist-website:
+	$(MAKE) -C website dist NPM_STRICT_SSL=$(TLS_VERIFY)
 
 build-prometheus:
 	cd prometheus/web/ui && $(NPM_ENV) $(PNPM) install --frozen-lockfile --config.strict-ssl=$(TLS_VERIFY)
@@ -236,3 +246,4 @@ deploy:
 .PHONY: clean
 clean:
 	rm -rf .build prometheus/.build alertmanager/.build stock_exporter/stock_exporter stock_home/stock_home
+	$(MAKE) -C website clean

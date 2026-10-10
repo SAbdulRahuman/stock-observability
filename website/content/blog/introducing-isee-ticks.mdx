@@ -1,0 +1,36 @@
+---
+title: "Introducing iSee Ticks"
+date: 2026-10-10
+summary: "Why we pointed a production observability stack at the Indian stock market, and what you can try today."
+author: "iSee Ticks team"
+---
+
+Engineers already have great tools for watching fast-moving systems: metrics, rules, alerts and dashboards. Markets are
+fast-moving systems too. **iSee Ticks** applies that toolbox to NSE equities, indices and derivatives.
+
+## See every tick
+
+A streaming exporter subscribes to the broker's WebSocket feed and publishes every instrument as Prometheus metrics: last
+price, day change, volume, circuit limits and five levels of market depth. Order-book imbalance and other derived KPIs are
+computed right next to the raw data.
+
+## Observe every move
+
+Recording rules turn raw metrics into a catalogue of market KPIs: breadth, sector moves, pivot and reference levels,
+derivatives signals and risk measures. Each KPI has a contract and a test, so a dashboard number always means the same
+thing.
+
+Alertmanager sends price, circuit, flow and portfolio alerts, and it knows the NSE calendar: no pages at 2 a.m. or on
+exchange holidays.
+
+## One home for all of it
+
+You should not need PromQL to answer "what moved and why". The product home puts market overview, watchlist, movers,
+sectors, a stock explorer and alerts in one fast UI, and links to Grafana whenever you want to dig deeper.
+
+## Try it
+
+The [live demo](/demo) runs the whole stack on one small cloud VM, fed by the built-in market simulator. It is read-only,
+needs no sign-in, and every number in it is synthetic.
+
+If you want hosted access or the first public build, [join the waitlist](/waitlist).

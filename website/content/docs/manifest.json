@@ -1,0 +1,37 @@
+[
+  {
+    "slug": "quickstart",
+    "title": "Quickstart",
+    "description": "Run the stack on your machine with the built-in market simulator.",
+    "group": "Get started",
+    "file": "content/docs/quickstart.mdx"
+  },
+  {
+    "slug": "architecture",
+    "title": "System architecture",
+    "description": "Components, responsibilities and data flow from feed to product home.",
+    "group": "Design",
+    "file": "../stock-observability-proposal/03-SYSTEM-ARCHITECTURE.md"
+  },
+  {
+    "slug": "product-plan",
+    "title": "Product master plan",
+    "description": "Vision, product layers, domains and the phased roadmap.",
+    "group": "Design",
+    "file": "../stock-observability-proposal/01-PRODUCT-MASTER-PLAN.md"
+  },
+  {
+    "slug": "rules-engine",
+    "title": "Formula and rules engine",
+    "description": "How KPIs and alerts are defined as Prometheus rules.",
+    "group": "Design",
+    "file": "../stock-observability-proposal/05-FORMULA-RULES-ENGINE.md"
+  },
+  {
+    "slug": "feature-backlog",
+    "title": "Feature backlog",
+    "description": "What is built, what is next.",
+    "group": "Design",
+    "file": "../stock-observability-proposal/04-FEATURE-BACKLOG.md"
+  }
+]
