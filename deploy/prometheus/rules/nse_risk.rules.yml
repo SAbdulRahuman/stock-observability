@@ -9,10 +9,24 @@ groups:
   - name: nse_risk_daily
     interval: 30m
     rules:
+      # stock:var_95_1d:percent
+      #   What:  Historical 1-day Value at Risk at 95%: the session loss (positive percent) exceeded on only 5% of the
+      #          last ~60 sessions. E.g. 2.1 = a bad day (1 in 20) loses about 2.1%.
+      #   How:   -100 * quantile_over_time(0.05, stock:session_log_return:ratio{instrument_type="EQ"}[90d]) using the EOD
+      #          snapshots ln(C/PC) (one sample per session, core tier); gated on count_over_time(...[90d]) >= 20 sessions.
+      #          Group interval 30m, so the value is re-published all day.
+      #   Debug: count_over_time(stock:session_log_return:ratio{symbol="X"}[90d]). Empty until 20 EOD snapshots exist
+      #          (Prometheus must be up in the 15:30-16:00 post_close window) or for non-core / non-EQ symbols.
       - record: stock:var_95_1d:percent
         expr: |
           -100 * quantile_over_time(0.05, stock:session_log_return:ratio{instrument_type="EQ"}[90d])
           and count_over_time(stock:session_log_return:ratio{instrument_type="EQ"}[90d]) >= 20
+      # stock:cvar_95_1d:percent
+      #   What:  Parametric 1-day expected shortfall (CVaR) at 95%: average loss (positive percent) on the worst 5% of
+      #          days, assuming normal session log returns; always >= the normal VaR.
+      #   How:   100 * (2.063 sigma - mu), sigma/mu = stddev/avg_over_time of stock:session_log_return:ratio{EQ}[90d];
+      #          2.063 = phi(1.645) / 0.05 (normal tail mean). Gated on >= 20 sessions.
+      #   Debug: stddev_over_time/avg_over_time of stock:session_log_return:ratio[90d]. Empty before 20 EOD snapshots.
       - record: stock:cvar_95_1d:percent
         expr: |
           100 * (
@@ -20,8 +34,22 @@ groups:
             - avg_over_time(stock:session_log_return:ratio{instrument_type="EQ"}[90d])
           )
           and count_over_time(stock:session_log_return:ratio{instrument_type="EQ"}[90d]) >= 20
+      # stock:max_drawdown_60d:percent
+      #   What:  Worst closing drawdown of the last ~60 sessions, in percent (<= 0; -18 = closed 18% below the running
+      #          peak close at some point).
+      #   How:   min_over_time(stock:session_drawdown:percent{instrument_type="EQ"}[90d]); the EOD drawdown is
+      #          (close / max close over 90d - 1) * 100. 90 calendar days ~ 60 sessions. No warm-up guard: the value
+      #          is meaningful only once the 90d window is populated.
+      #   Debug: stock:session_drawdown:percent and stock:session_close:price for the symbol. Empty without EOD snapshots.
       - record: stock:max_drawdown_60d:percent
         expr: min_over_time(stock:session_drawdown:percent{instrument_type="EQ"}[90d])
+      # stock:beta_nifty_20d:ratio
+      #   What:  Daily beta to NIFTY 50 over ~20 sessions: 1 = moves with the index, > 1 amplifies it, < 0 moves against.
+      #   How:   (E[r r_N] - E[r] E[r_N]) / Var(r_N) over 28 calendar days of EOD session log returns (core EQ vs
+      #          symbol="NIFTY 50"), with E[r r_N] from stock:session_return_x_nifty:ratio; NIFTY terms joined
+      #          on() group_left(); `> 0` drops zero index variance; gated on >= 15 sessions of the cross product.
+      #   Debug: count_over_time(stock:session_return_x_nifty:ratio[28d]), stock:session_log_return:ratio{symbol="NIFTY 50"}.
+      #          Empty before 15 EOD snapshots, or if NIFTY 50 is not scraped (or exists twice, breaking on()).
       - record: stock:beta_nifty_20d:ratio
         expr: |
           (
@@ -31,6 +59,14 @@ groups:
           )
           / on() group_left() (stdvar_over_time(stock:session_log_return:ratio{symbol="NIFTY 50"}[28d]) > 0)
           and count_over_time(stock:session_return_x_nifty:ratio[28d]) >= 15
+      # stock:alpha_20d:percent
+      #   What:  Annualised Jensen's alpha over ~20 sessions, in percent per year: return in excess of what beta and the
+      #          NIFTY 50 return explain (> 0 outperformed on a risk-adjusted basis).
+      #   How:   252 * 100 * (mean r - R_f/252 - beta (mean r_N - R_f/252)), means over 28d of EOD session log returns,
+      #          R_f = max(stock_risk_free_rate_ratio) (annual, textfile collector), beta = stock:beta_nifty_20d:ratio
+      #          (so it inherits beta's >= 15-session gate).
+      #   Debug: stock:beta_nifty_20d:ratio and stock_risk_free_rate_ratio. Empty when beta is empty or the textfile
+      #          risk_free_rate.prom is missing.
       - record: stock:alpha_20d:percent
         expr: |
           252 * 100 * (
@@ -40,20 +76,44 @@ groups:
               * on() group_left() (avg_over_time(stock:session_log_return:ratio{symbol="NIFTY 50"}[28d]) - on() max(stock_risk_free_rate_ratio) / 252)
           )
 
+      # portfolio:volatility_20d:percent
+      #   What:  Annualised volatility of the portfolio's daily return over ~20 sessions, in percent (e.g. 15 = 15%/yr).
+      #   How:   stddev_over_time(portfolio:session_return:ratio[28d]) * sqrt(252) * 100 (15.8745 = sqrt(252));
+      #          gated on >= 10 EOD sessions.
+      #   Debug: portfolio:session_return:ratio (EOD), portfolio:holding_value:sum. Empty when the portfolio collector is
+      #          disabled (needs a Kite account), or fewer than 10 snapshots.
       - record: portfolio:volatility_20d:percent
         expr: |
           stddev_over_time(portfolio:session_return:ratio[28d]) * 15.874507866387544 * 100
           and count_over_time(portfolio:session_return:ratio[28d]) >= 10
+      # portfolio:sharpe_60d:ratio
+      #   What:  Annualised Sharpe ratio of the portfolio over ~60 sessions: excess return per unit of volatility
+      #          (> 1 good, < 0 lost against the risk-free rate).
+      #   How:   (mean r - R_f/252) / stddev(r) * sqrt(252) over portfolio:session_return:ratio[90d], R_f from
+      #          stock_risk_free_rate_ratio; `> 0` drops zero stddev; gated on >= 20 sessions.
+      #   Debug: count_over_time(portfolio:session_return:ratio[90d]), stock_risk_free_rate_ratio. Empty without the
+      #          portfolio collector or the risk-free textfile metric.
       - record: portfolio:sharpe_60d:ratio
         expr: |
           (avg_over_time(portfolio:session_return:ratio[90d]) - on() max(stock_risk_free_rate_ratio) / 252)
           / (stddev_over_time(portfolio:session_return:ratio[90d]) > 0) * 15.874507866387544
           and count_over_time(portfolio:session_return:ratio[90d]) >= 20
+      # portfolio:sortino_60d:ratio
+      #   What:  Annualised Sortino ratio over ~60 sessions: like Sharpe but divides by downside deviation only, so
+      #          upside volatility is not penalised.
+      #   How:   (mean r - R_f/252) / sqrt(mean(min(r, 0)^2)) * sqrt(252), downside from portfolio:session_downside_sq:ratio
+      #          [90d]; `> 0` drops portfolios with no down day; gated on >= 20 sessions.
+      #   Debug: portfolio:session_downside_sq:ratio. Empty if there was no losing session in 90 days (zero denominator).
       - record: portfolio:sortino_60d:ratio
         expr: |
           (avg_over_time(portfolio:session_return:ratio[90d]) - on() max(stock_risk_free_rate_ratio) / 252)
           / (sqrt(avg_over_time(portfolio:session_downside_sq:ratio[90d])) > 0) * 15.874507866387544
           and count_over_time(portfolio:session_return:ratio[90d]) >= 20
+      # portfolio:var_95_1d:percent
+      #   What:  Historical 1-day 95% VaR of the portfolio as a positive loss percent; threshold for PortfolioVaRBreach.
+      #   How:   -100 * quantile_over_time(0.05, portfolio:session_return:ratio[90d]) (simple daily returns, EOD);
+      #          gated on >= 20 sessions.
+      #   Debug: count_over_time(portfolio:session_return:ratio[90d]). Empty without the portfolio collector or < 20 sessions.
       - record: portfolio:var_95_1d:percent
         expr: |
           -100 * quantile_over_time(0.05, portfolio:session_return:ratio[90d])
@@ -62,8 +122,19 @@ groups:
   - name: nse_risk_portfolio
     interval: 15s
     rules:
+      # portfolio:day_return:percent
+      #   What:  Live portfolio return for today, in percent of yesterday's value (negative = loss).
+      #   How:   portfolio:day_change:sum / (portfolio:holding_value:sum - portfolio:day_change:sum) * 100, with the
+      #          denominator (previous-close value) guarded by `> 0`. Evaluated every 15s.
+      #   Debug: portfolio:day_change:sum, portfolio:holding_value:sum (stock_portfolio_* from the portfolio collector,
+      #          disabled by default). Empty without holdings.
       - record: portfolio:day_return:percent
         expr: portfolio:day_change:sum / ((portfolio:holding_value:sum - portfolio:day_change:sum) > 0) * 100
+      # PortfolioVaRBreach
+      #   What:  Fires when today's portfolio loss is larger than its historical 1-day VaR(95); value = loss in percent.
+      #   How:   -portfolio:day_return:percent > portfolio:var_95_1d:percent, and on() stock_market_open == 1, for: 5m.
+      #   Debug: portfolio:day_return:percent and portfolio:var_95_1d:percent. Silent before 20 EOD portfolio snapshots,
+      #          without the portfolio collector, or when the market is closed.
       - alert: PortfolioVaRBreach
         expr: |
           -portfolio:day_return:percent > portfolio:var_95_1d:percent
@@ -82,6 +153,13 @@ groups:
   - name: nse_risk_intraday
     interval: 1m
     rules:
+      # stock:covariance_nifty_60m:ratio
+      #   What:  Covariance of a core equity's 1m log returns with NIFTY 50's over the last 60 minutes (ratio^2, tiny
+      #          numbers ~1e-7); > 0 = moves with the index. Building block of the 60m beta/correlation.
+      #   How:   avg_over_time(stock:log_return_x_nifty_1m:ratio[60m]) - avg(r{EQ}[60m]) * avg(r{symbol="NIFTY 50"}[60m])
+      #          (population covariance; NIFTY joined on() group_left()); gated on >= 30 bars of the cross product.
+      #   Debug: count_over_time(stock:log_return_x_nifty_1m:ratio[60m]). Empty in the first 30 minutes of each session
+      #          (log returns exist only while the market is open), or without a single NIFTY 50 series.
       - record: stock:covariance_nifty_60m:ratio
         expr: |
           (
@@ -90,10 +168,21 @@ groups:
               * on() group_left() avg_over_time(stock:log_return_1m:ratio{symbol="NIFTY 50"}[60m])
           )
           and count_over_time(stock:log_return_x_nifty_1m:ratio[60m]) >= 30
+      # stock:beta_nifty_60m:ratio
+      #   What:  Intraday beta to NIFTY 50 over 60 one-minute bars (1 = moves one-for-one with the index).
+      #   How:   stock:covariance_nifty_60m:ratio / stdvar_over_time(r{symbol="NIFTY 50"}[60m]), on() group_left();
+      #          `> 0` drops a flat index. Inherits the >= 30 bar gate from the covariance.
+      #   Debug: stock:covariance_nifty_60m:ratio, stdvar_over_time(stock:log_return_1m:ratio{symbol="NIFTY 50"}[60m]).
       - record: stock:beta_nifty_60m:ratio
         expr: |
           stock:covariance_nifty_60m:ratio
           / on() group_left() (stdvar_over_time(stock:log_return_1m:ratio{symbol="NIFTY 50"}[60m]) > 0)
+      # stock:correlation_nifty_60m:ratio
+      #   What:  Pearson correlation (-1..1) of 1m log returns with NIFTY 50 over 60 minutes; near 1 = index-driven,
+      #          near 0 = stock-specific moves.
+      #   How:   covariance / (stddev_over_time(r{EQ}[60m]) * stddev_over_time(r{NIFTY 50}[60m])), `> 0` guard on the
+      #          product; inherits the >= 30 bar gate from the covariance.
+      #   Debug: stock:covariance_nifty_60m:ratio and both stddevs. Empty for a symbol whose price did not move in 60m.
       - record: stock:correlation_nifty_60m:ratio
         expr: |
           stock:covariance_nifty_60m:ratio
@@ -102,6 +191,14 @@ groups:
               * on() group_left() stddev_over_time(stock:log_return_1m:ratio{symbol="NIFTY 50"}[60m])
               > 0
             )
+      # stock:ewma_variance_1m:ratio
+      #   What:  RiskMetrics EWMA variance of 1m log returns (ratio^2 per minute); reacts faster than a flat window.
+      #          Mostly read via stock:ewma_vol_annualised:percent.
+      #   How:   Stateful: h = 0.94 * last_over_time(self[3m]) + 0.06 * ln(C / C[1m ago])^2 (core EQ, `> 0` guard on the
+      #          lagged price). If the previous value is missing it is seeded with stdvar_over_time(r[60m]) once >= 30
+      #          1m returns exist (`and` binds tighter than `or`). Gated on market open, so it re-seeds every session.
+      #   Debug: stock:ewma_variance_1m:ratio vs stdvar_over_time(stock:log_return_1m:ratio[60m]). Empty in the first 30
+      #          minutes of a session and after the close; a gap > 3m (Prometheus restart) also forces a re-seed.
       - record: stock:ewma_variance_1m:ratio
         expr: |
           (
@@ -111,13 +208,30 @@ groups:
               and count_over_time(stock:log_return_1m:ratio{instrument_type="EQ"}[60m]) >= 30
           )
           and on() stock_market_open == 1
+      # stock:ewma_vol_annualised:percent
+      #   What:  EWMA volatility annualised, in percent per year (e.g. 25 = 25% annual volatility).
+      #   How:   sqrt(stock:ewma_variance_1m:ratio * 94500) * 100, 94500 = 375 one-minute bars * 252 sessions.
+      #   Debug: stock:ewma_variance_1m:ratio; empty whenever that is empty (warm-up, market closed).
       - record: stock:ewma_vol_annualised:percent
         expr: sqrt(stock:ewma_variance_1m:ratio * 94500) * 100
+      # market:implied_move:points {horizon=1d}
+      #   What:  One standard deviation of the NIFTY 50 one-day move implied by INDIA VIX, in index points.
+      #   How:   max(NIFTY 50 last price) * max(INDIA VIX last price) / 100 / sqrt(365) (19.105 = sqrt(365), VIX is an
+      #          annualised calendar-day volatility); and on() market open. Single series without instrument labels.
+      #   Debug: stock_last_price{symbol=~"NIFTY 50|INDIA VIX"}. Empty when either index is not in the watchlist or the
+      #          market is closed.
       - record: market:implied_move:points
         labels: {horizon: 1d}
         expr: |
           max(stock_last_price{symbol="NIFTY 50"}) * on() max(stock_last_price{symbol="INDIA VIX"}) / 100 / 19.1049731745428
           and on() stock_market_open == 1
+      # stock:market_model_expected_return_15m:percent
+      #   What:  Return (percent) a core equity "should" have made over the last 15 minutes given NIFTY 50's move and its
+      #          60m market model (alpha + beta * index return).
+      #   How:   1500 * (mean r - beta * mean r_N) + beta * (NIFTY / NIFTY[15m ago] - 1) * 100, means of 1m log returns
+      #          over 60m, beta = stock:beta_nifty_60m:ratio (1500 = 15 bars * 100 %); NIFTY terms on() group_left().
+      #   Debug: stock:beta_nifty_60m:ratio and NIFTY 50 stock_last_price offset 15m. Empty in the first 30 minutes of
+      #          the session (beta warm-up).
       - record: stock:market_model_expected_return_15m:percent
         expr: |
           (
@@ -128,6 +242,13 @@ groups:
             + stock:beta_nifty_60m:ratio
               * on() group_left() ((max(stock_last_price{symbol="NIFTY 50"}) / max(stock_last_price{symbol="NIFTY 50"} offset 15m > 0) - 1) * 100)
           )
+      # stock:abnormal_return_15m:percent
+      #   What:  Abnormal (idiosyncratic) 15-minute return in percentage points: actual minus market-model expected;
+      #          large |values| point to stock-specific news rather than the market.
+      #   How:   (C / C[15m ago] - 1) * 100 (core EQ, `> 0` guard on the lagged price) -
+      #          stock:market_model_expected_return_15m:percent, matched one-to-one on all labels.
+      #   Debug: stock:market_model_expected_return_15m:percent and stock_last_price offset 15m. Empty during the beta
+      #          warm-up (first 30 minutes) and after the close.
       - record: stock:abnormal_return_15m:percent
         expr: |
           (stock_last_price{tier="core", instrument_type="EQ"} / (stock_last_price{tier="core", instrument_type="EQ"} offset 15m > 0) - 1) * 100
@@ -136,6 +257,14 @@ groups:
   - name: nse_risk_alerts
     interval: 1m
     rules:
+      # StockAbnormalReturn
+      #   What:  Fires (direction=bullish/bearish) when a core equity's 15m abnormal return exceeds 3 standard deviations
+      #          of its own residuals over the last day; value = abnormal return in percent.
+      #   How:   label_replace(x > 3 * stddev_over_time(x[1d]), "direction", "bullish") or the < -3 sigma side as bearish,
+      #          x = stock:abnormal_return_15m:percent; and ignoring(direction) count_over_time(x[1d]) >= 60 residuals;
+      #          and on() market open; for: 1m.
+      #   Debug: stock:abnormal_return_15m:percent and stddev_over_time(...[1d]). Silent for the first ~60 residual
+      #          minutes after Prometheus starts collecting (warm-up), or when the market is closed.
       # Idiosyncratic move (e.g. news): residual beyond 3 sigma of its own last day, >= 60 residuals.
       - alert: StockAbnormalReturn
         expr: |
@@ -151,6 +280,13 @@ groups:
           summary: "{{ $labels.symbol }} {{ $labels.direction }} abnormal return vs NIFTY 50"
           description: "The 15-minute return of {{ $labels.exchange }}:{{ $labels.symbol }} deviates from its 60-minute market model by more than 3 standard deviations of the residual."
           effectiveness: '{{ with printf `alert:hit_rate_5d:ratio{alertname="StockAbnormalReturn",direction=%q,horizon="15m"}` $labels.direction | query }}15m hit rate over the last 5 days: {{ . | first | value | humanizePercentage }}{{ else }}No history yet{{ end }}'
+      # MarketImpliedMoveExceeded
+      #   What:  Fires when NIFTY 50 has moved (either way) more than twice the VIX-implied 1-day standard deviation from
+      #          the previous close; value = absolute move in points.
+      #   How:   abs(max(NIFTY 50 last) - max(NIFTY 50 previous close)) > on() 2 * market:implied_move:points{horizon="1d"};
+      #          and on() market open; for: 1m.
+      #   Debug: stock_last_price/stock_previous_close_price{symbol="NIFTY 50"}, market:implied_move:points. Silent
+      #          without INDIA VIX in the watchlist or when the market is closed.
       - alert: MarketImpliedMoveExceeded
         expr: |
           abs(max(stock_last_price{symbol="NIFTY 50"}) - max(stock_previous_close_price{symbol="NIFTY 50"}))

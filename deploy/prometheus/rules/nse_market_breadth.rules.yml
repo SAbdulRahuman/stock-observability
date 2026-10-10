@@ -7,10 +7,26 @@ groups:
   - name: nse_market_breadth
     interval: 15s
     rules:
+      # market:above_vwap:ratio
+      #   What:  Fraction (0-1, not %) of all tracked equities trading above their day VWAP; > 0.8 broad buying,
+      #          < 0.2 broad selling, ~0.5 mixed.
+      #   How:   count(stock_last_price{EQ} > stock_average_traded_price{EQ}, VWAP `> 0`) / count(VWAP > 0), all tiers;
+      #          `or on() vector(0)` turns an empty numerator into 0. Single series without labels. 15s group, no
+      #          market-open gate (the closing value persists after the session).
+      #   Debug: count(stock_average_traded_price{instrument_type="EQ"} > 0). Empty only when no EQ has a VWAP yet
+      #          (before the first trades of the day / exporter down).
       - record: market:above_vwap:ratio
         expr: |
           (count(stock_last_price{instrument_type="EQ"} > (stock_average_traded_price{instrument_type="EQ"} > 0)) or on() vector(0))
           / count(stock_average_traded_price{instrument_type="EQ"} > 0)
+      # market:trin:ratio
+      #   What:  Arms index (TRIN) of all tracked equities on day change: 1 = neutral, > 1 bearish (volume concentrated
+      #          in decliners), < 1 bullish; > 2 / < 0.5 are extremes (MarketBreadthStress).
+      #   How:   (advancers / decliners) / (advancing volume / declining volume), advancers = count(stock_change_percent
+      #          {EQ} > 0), decliners = count(< 0), volumes = sum(stock_day_volume_shares{EQ} and change > 0 / < 0);
+      #          unchanged stocks are ignored; declining-volume `> 0` guard. Single unlabelled series.
+      #   Debug: market:advancers:count, market:decliners:count. Empty when there are no advancers or no decliners
+      #          (count() of an empty set returns nothing) or zero declining volume.
       - record: market:trin:ratio
         expr: |
           (
@@ -21,14 +37,36 @@ groups:
               sum(stock_day_volume_shares{instrument_type="EQ"} and stock_change_percent{instrument_type="EQ"} > 0)
             / (sum(stock_day_volume_shares{instrument_type="EQ"} and stock_change_percent{instrument_type="EQ"} < 0) > 0)
           )
+      # market:dispersion:percent
+      #   What:  Cross-sectional dispersion: standard deviation of day change % across core (NIFTY 200) equities, in
+      #          percentage points. High = stock-picker's market / news-driven; low = everything moves together.
+      #   How:   stddev(stock_change_percent{tier="core", instrument_type="EQ"}) (population stddev across series).
+      #   Debug: count(stock_change_percent{tier="core", instrument_type="EQ"}); 0 with a single instrument, empty with none.
       - record: market:dispersion:percent
         expr: stddev(stock_change_percent{tier="core", instrument_type="EQ"})
+      # market:circuit_hits:count {band=upper}
+      #   What:  Number of tracked equities at or above their upper circuit (price band) limit right now.
+      #   How:   count(stock_last_price{EQ} >= stock_circuit_upper_limit_price) with one-to-one label matching against the
+      #          circuit collector series; `or on() vector(0)` reports 0 instead of empty. Static label band="upper".
+      #   Debug: stock_circuit_upper_limit_price{symbol="X"}. Always 0 if the circuit collector is disabled or its labels
+      #          differ from the quote series.
       - record: market:circuit_hits:count
         labels: {band: upper}
         expr: count(stock_last_price{instrument_type="EQ"} >= stock_circuit_upper_limit_price) or on() vector(0)
+      # market:circuit_hits:count {band=lower}
+      #   What:  Number of tracked equities at or below their lower circuit limit right now.
+      #   How:   count(stock_last_price{EQ} <= stock_circuit_lower_limit_price) or on() vector(0); label band="lower".
+      #   Debug: stock_circuit_lower_limit_price{symbol="X"}; same caveats as band="upper".
       - record: market:circuit_hits:count
         labels: {band: lower}
         expr: count(stock_last_price{instrument_type="EQ"} <= stock_circuit_lower_limit_price) or on() vector(0)
+      # sector:relative_strength:percent
+      #   What:  Per sector, the average day change of its NIFTY 200 stocks minus the NIFTY 50 day change, in percentage
+      #          points. > 0 = sector outperforming the index today; +/-2 pp is the SectorRotation threshold.
+      #   How:   avg by (sector) (stock_change_percent{tier="core", EQ, sector!~"unknown|Index"}) - on() group_left()
+      #          stock_change_percent{symbol="NIFTY 50", instrument_type="INDEX"}. Equal-weighted, not index-weighted.
+      #   Debug: stock_change_percent{symbol="NIFTY 50"} must return exactly one series - empty if the index is not in
+      #          the watchlist; an evaluation error if it matches several series (e.g. duplicated exchange labels).
       - record: sector:relative_strength:percent
         expr: |
           avg by (sector) (stock_change_percent{tier="core", instrument_type="EQ", sector!~"unknown|Index"})
@@ -38,6 +76,13 @@ groups:
   - name: nse_market_breadth_alerts
     interval: 15s
     rules:
+      # SectorRotation
+      #   What:  Fires (info) per sector when it has out- (direction="bullish") or under-performed ("bearish") NIFTY 50
+      #          by more than 2 percentage points for 10 minutes in session. Value = relative strength in pp.
+      #   How:   label_replace(sector:relative_strength:percent > 2, "direction", "bullish") or (... < -2, "bearish"),
+      #          and on() stock_market_open == 1; `for: 10m`.
+      #   Debug: sector:relative_strength:percent. Not firing when NIFTY 50 is missing (RS empty) or the gap oscillates
+      #          around 2 pp (resets `for:`).
       - alert: SectorRotation
         expr: |
           (
@@ -52,6 +97,13 @@ groups:
           summary: "{{ $labels.sector }} {{ if eq $labels.direction \"bullish\" }}outperforms{{ else }}underperforms{{ end }} NIFTY 50 by {{ $value | printf \"%.2f\" }} pp"
           description: "The average day change of NIFTY 200 stocks in {{ $labels.sector }} has differed from NIFTY 50 by more than 2 percentage points for 10 minutes."
 
+      # MarketBreadthStress {direction=bearish}
+      #   What:  Market-wide selling stress (warning): heavy volume in decliners (TRIN > 2) and fewer than 20% of tracked
+      #          equities above VWAP, for 10 minutes in session. Value = TRIN.
+      #   How:   market:trin:ratio > 2 and on() market:above_vwap:ratio < 0.2 and on() stock_market_open == 1; `for: 10m`;
+      #          static labels incident=breadth_stress, direction=bearish, severity=warning.
+      #   Debug: market:trin:ratio, market:above_vwap:ratio. Silent when TRIN is empty (no advancers or no decliners -
+      #          e.g. a total wipe-out day where nothing advances).
       - alert: MarketBreadthStress
         expr: |
           market:trin:ratio > 2
@@ -62,6 +114,12 @@ groups:
         annotations:
           summary: "Market breadth stress: TRIN {{ $value | printf \"%.2f\" }}"
           description: "TRIN is above 2 and fewer than 20% of tracked equities trade above VWAP; selling is broad and volume-heavy."
+      # MarketBreadthStress {direction=bullish}
+      #   What:  Market-wide buying euphoria (info): TRIN < 0.5 and more than 80% of tracked equities above VWAP, for
+      #          10 minutes in session. Value = TRIN.
+      #   How:   market:trin:ratio < 0.5 and on() market:above_vwap:ratio > 0.8 and on() stock_market_open == 1;
+      #          `for: 10m`; static labels direction=bullish, severity=info.
+      #   Debug: same inputs as the bearish rule; silent when there are no decliners (TRIN empty).
       - alert: MarketBreadthStress
         expr: |
           market:trin:ratio < 0.5
@@ -73,6 +131,12 @@ groups:
           summary: "Market breadth euphoria: TRIN {{ $value | printf \"%.2f\" }}"
           description: "TRIN is below 0.5 and more than 80% of tracked equities trade above VWAP; buying is broad and volume-heavy."
 
+      # MarketCircuitCluster
+      #   What:  Fires (warning) when at least 20 tracked equities sit at their lower circuit or at least 40 at their
+      #          upper circuit for 1 minute in session; one alert series per band. Value = number of stocks.
+      #   How:   market:circuit_hits:count{band="lower"} >= 20 or market:circuit_hits:count{band="upper"} >= 40, and
+      #          on() stock_market_open == 1; `for: 1m`; the band label comes from the recording.
+      #   Debug: market:circuit_hits:count. Never fires if the circuit collector is off (counts stay 0).
       # Initial thresholds; calibrate after 20 sessions.
       - alert: MarketCircuitCluster
         expr: |

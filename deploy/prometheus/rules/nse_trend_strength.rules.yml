@@ -12,6 +12,12 @@ groups:
   - name: nse_trend_strength
     interval: 1m
     rules:
+      # stock:bar_1m_true_range:points
+      #   What:  True range of the last 1-minute bar in price points; input of ATR14 and the ultimate oscillator.
+      #   How:   TR = max(H, Cp) - min(L, Cp), H/L = max/min_over_time(stock_last_price{tier="core"}[1m]) (1s LTP
+      #          samples), Cp = LTP offset 1m (previous bar close). `(H > Cp) or Cp` selects the larger value.
+      #          Gated on() stock_market_open == 1.
+      #   Debug: Only recorded while the market is open; at 09:16 Cp is the pre-open LTP. 0 = no price move.
       - record: stock:bar_1m_true_range:points
         expr: |
           (
@@ -19,6 +25,11 @@ groups:
             - ((min_over_time(stock_last_price{tier="core"}[1m]) < stock_last_price{tier="core"} offset 1m) or stock_last_price{tier="core"} offset 1m)
           )
           and on() stock_market_open == 1
+      # stock:bar_1m_buying_pressure:points
+      #   What:  Williams buying pressure of the last 1m bar: how far the close is above the true low (0..TR).
+      #   How:   BP = C - min(L, Cp), C = stock_last_price{tier="core"}, L = min_over_time(LTP[1m]),
+      #          Cp = LTP offset 1m; gated on() stock_market_open == 1.
+      #   Debug: Compare with stock:bar_1m_true_range:points; BP = TR means the bar closed at its true high.
       - record: stock:bar_1m_buying_pressure:points
         expr: |
           (
@@ -26,6 +37,13 @@ groups:
             - ((min_over_time(stock_last_price{tier="core"}[1m]) < stock_last_price{tier="core"} offset 1m) or stock_last_price{tier="core"} offset 1m)
           )
           and on() stock_market_open == 1
+      # stock:bar_1m_dm_plus:points
+      #   What:  Wilder +DM of the last 1m bar in points: the up-move of the high when it beats the down-move of
+      #          the low, else 0.
+      #   How:   up = H - Hp, down = Lp - L with H/L = max/min_over_time(LTP{tier="core"}[1m]) and Hp/Lp the same
+      #          one bar earlier ([1m] offset 1m). +DM = up if up > 0 and up > down; the `or 0 * (H - Hp)`
+      #          branch emits 0 with the same labels otherwise. Gated on() stock_market_open == 1.
+      #   Debug: Mostly 0 in a down/flat tape (expected). Needs 2m of 1s LTP samples.
       - record: stock:bar_1m_dm_plus:points
         expr: |
           (
@@ -36,6 +54,12 @@ groups:
             or 0 * (max_over_time(stock_last_price{tier="core"}[1m]) - max_over_time(stock_last_price{tier="core"}[1m] offset 1m))
           )
           and on() stock_market_open == 1
+      # stock:bar_1m_dm_minus:points
+      #   What:  Wilder -DM of the last 1m bar in points: the down-move of the low when it beats the up-move of
+      #          the high, else 0.
+      #   How:   down = Lp - L, up = H - Hp (same bar H/L as +DM). -DM = down if down > 0 and down > up, else
+      #          `0 * (H - Hp)`. Gated on() stock_market_open == 1.
+      #   Debug: +DM and -DM are never both > 0 for the same bar.
       - record: stock:bar_1m_dm_minus:points
         expr: |
           (
@@ -47,6 +71,14 @@ groups:
           )
           and on() stock_market_open == 1
 
+      # stock:atr_14m:points
+      #   What:  Intraday Wilder ATR(14) on 1m bars in price points: the typical 1-minute true range right now.
+      #   How:   Stateful: s = prev + (TR - prev) / 14, prev = last_over_time(stock:atr_14m:points[3m]) (own value),
+      #          TR = stock:bar_1m_true_range:points. Seed / re-seed (no state, i.e. session start or gap > 3m):
+      #          avg_over_time(TR[14m]) once count_over_time(TR[14m]) >= 14. Gated on() stock_market_open == 1, so
+      #          the state lapses overnight.
+      #   Debug: First value ~14-15m after the open; check count_over_time(stock:bar_1m_true_range:points[14m]).
+      #          A Prometheus gap > 3m restarts the smoothing.
       - record: stock:atr_14m:points
         expr: |
           (
@@ -54,6 +86,11 @@ groups:
             or (avg_over_time(stock:bar_1m_true_range:points[14m]) and count_over_time(stock:bar_1m_true_range:points[14m]) >= 14)
           )
           and on() stock_market_open == 1
+      # stock:dm_plus_14m:points
+      #   What:  Wilder-smoothed +DM(14) on 1m bars (points); numerator of +DI.
+      #   How:   s = prev + (+DM - prev) / 14, prev = last_over_time(self[3m]); seeded with
+      #          avg_over_time(stock:bar_1m_dm_plus:points[14m]) once 14 bars exist. Gated on market open.
+      #   Debug: Same warm-up / gap behaviour as stock:atr_14m:points.
       - record: stock:dm_plus_14m:points
         expr: |
           (
@@ -61,6 +98,11 @@ groups:
             or (avg_over_time(stock:bar_1m_dm_plus:points[14m]) and count_over_time(stock:bar_1m_dm_plus:points[14m]) >= 14)
           )
           and on() stock_market_open == 1
+      # stock:dm_minus_14m:points
+      #   What:  Wilder-smoothed -DM(14) on 1m bars (points); numerator of -DI.
+      #   How:   s = prev + (-DM - prev) / 14, prev = last_over_time(self[3m]); seeded with
+      #          avg_over_time(stock:bar_1m_dm_minus:points[14m]) once 14 bars exist. Gated on market open.
+      #   Debug: Same warm-up / gap behaviour as stock:atr_14m:points.
       - record: stock:dm_minus_14m:points
         expr: |
           (
@@ -68,14 +110,34 @@ groups:
             or (avg_over_time(stock:bar_1m_dm_minus:points[14m]) and count_over_time(stock:bar_1m_dm_minus:points[14m]) >= 14)
           )
           and on() stock_market_open == 1
+      # stock:di_plus_14m:percent
+      #   What:  +DI(14): smoothed upward directional movement as % of ATR (0-100); +DI > -DI = up-trend bias.
+      #   How:   100 * stock:dm_plus_14m:points / stock:atr_14m:points; `ATR > 0` guards the division.
+      #   Debug: Absent before ATR14 is seeded (~15m) or when ATR is 0 (no price movement).
       - record: stock:di_plus_14m:percent
         expr: 100 * stock:dm_plus_14m:points / (stock:atr_14m:points > 0)
+      # stock:di_minus_14m:percent
+      #   What:  -DI(14): smoothed downward directional movement as % of ATR (0-100); -DI > +DI = down-trend bias.
+      #   How:   100 * stock:dm_minus_14m:points / stock:atr_14m:points; `ATR > 0` guards the division.
+      #   Debug: Absent before ATR14 is seeded (~15m) or when ATR is 0.
       - record: stock:di_minus_14m:percent
         expr: 100 * stock:dm_minus_14m:points / (stock:atr_14m:points > 0)
+      # stock:dx_14m:index
+      #   What:  Directional index DX (0-100): how one-sided the directional movement is this bar; ADX smooths it.
+      #   How:   DX = 100 * |+DI - -DI| / (+DI + -DI); `sum > 0` guards the division.
+      #   Debug: Absent when both DIs are 0 (no directional movement over the smoothing window).
       - record: stock:dx_14m:index
         expr: |
           100 * abs(stock:di_plus_14m:percent - stock:di_minus_14m:percent)
           / ((stock:di_plus_14m:percent + stock:di_minus_14m:percent) > 0)
+      # stock:adx_14m:index
+      #   What:  ADX(14) on 1m bars (0-100): trend strength regardless of direction. > 25 trending, < 20 ranging
+      #          (used by stock:momentum_regime:info).
+      #   How:   Stateful Wilder smoothing of stock:dx_14m:index: s = prev + (DX - prev) / 14,
+      #          prev = last_over_time(self[3m]); seeded with avg_over_time(DX[14m]) once 14 DX values exist.
+      #          Gated on() stock_market_open == 1.
+      #   Debug: First value ~28m after the open (14 bars for ATR/DM + 14 DX values); check
+      #          count_over_time(stock:dx_14m:index[14m]). Gap > 3m re-seeds.
       - record: stock:adx_14m:index
         expr: |
           (
@@ -84,6 +146,12 @@ groups:
           )
           and on() stock_market_open == 1
 
+      # stock:trix_ema1_15m:price
+      #   What:  First EMA15 of the 1m close (TRIX stage 1), in price.
+      #   How:   Stateful EMA: 0.125 * C + 0.875 * last_over_time(self[3m]), 0.125 = 2 / (15 + 1). Seed / re-seed:
+      #          avg_over_time(stock_last_price{tier="core"}[15m:1m]) once stock_market_seconds_to_close <= 21600
+      #          (15 minutes after the 09:15 open; 22500 - 21600 = 900 s). Gated on market open.
+      #   Debug: First value ~09:30 IST; after a gap > 3m it re-seeds immediately from the last 15 closes.
       - record: stock:trix_ema1_15m:price
         expr: |
           (
@@ -91,6 +159,11 @@ groups:
             or (avg_over_time(stock_last_price{tier="core"}[15m:1m]) and on() stock_market_seconds_to_close <= 21600)
           )
           and on() stock_market_open == 1
+      # stock:trix_ema2_15m:price
+      #   What:  EMA15 of stock:trix_ema1_15m:price (TRIX stage 2), in price.
+      #   How:   0.125 * EMA1 + 0.875 * last_over_time(self[3m]); seeded with avg_over_time(EMA1[15m]) once
+      #          count_over_time(EMA1[15m]) >= 15. Gated on market open.
+      #   Debug: First value ~30m after the open; empty while EMA1 has < 15 samples.
       - record: stock:trix_ema2_15m:price
         expr: |
           (
@@ -98,6 +171,11 @@ groups:
             or (avg_over_time(stock:trix_ema1_15m:price[15m]) and count_over_time(stock:trix_ema1_15m:price[15m]) >= 15)
           )
           and on() stock_market_open == 1
+      # stock:trix_ema3_15m:price
+      #   What:  EMA15 of stock:trix_ema2_15m:price (TRIX stage 3, triple-smoothed close), in price.
+      #   How:   0.125 * EMA2 + 0.875 * last_over_time(self[3m]); seeded with avg_over_time(EMA2[15m]) once
+      #          count_over_time(EMA2[15m]) >= 15. Gated on market open.
+      #   Debug: First value ~44m after the open; empty while EMA2 has < 15 samples.
       - record: stock:trix_ema3_15m:price
         expr: |
           (
@@ -105,9 +183,21 @@ groups:
             or (avg_over_time(stock:trix_ema2_15m:price[15m]) and count_over_time(stock:trix_ema2_15m:price[15m]) >= 15)
           )
           and on() stock_market_open == 1
+      # stock:trix_15m:percent
+      #   What:  TRIX(15): 1-bar % rate of change of the triple-smoothed EMA. Sign = trend direction, zero-line
+      #          crosses = momentum turns; values are tiny (hundredths of a %).
+      #   How:   (EMA3 / EMA3 offset 1m - 1) * 100 on stock:trix_ema3_15m:price; `offset > 0` guards the division.
+      #   Debug: Needs two EMA3 samples (~45m after the open); check stock:trix_ema3_15m:price offset 1m.
       - record: stock:trix_15m:percent
         expr: (stock:trix_ema3_15m:price / (stock:trix_ema3_15m:price offset 1m > 0) - 1) * 100
 
+      # stock:ultimate_oscillator:index
+      #   What:  Williams ultimate oscillator (0-100) on 1m bars: buying pressure share blended over 7/14/28 bars.
+      #          > 70 overbought, < 30 oversold.
+      #   How:   UO = 100 * (4 A7 + 2 A14 + A28) / 7, A_n = sum_over_time(bar_1m_buying_pressure[n m]) /
+      #          sum_over_time(bar_1m_true_range[n m]); each `sum TR > 0` guards its division. Emitted only when
+      #          count_over_time(stock:bar_1m_true_range:points[28m]) >= 28 bars.
+      #   Debug: First value ~29m after the open; absent if any window has zero true range (no movement).
       - record: stock:ultimate_oscillator:index
         expr: |
           100 * (

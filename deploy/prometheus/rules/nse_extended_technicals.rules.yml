@@ -1,7 +1,22 @@
+# Extended technicals (Release 6) on the 1m bars of nse_bars.rules.yml (C/H/L/V = stock:bar_1m_*), core-tier
+# equities only (tier="core", instrument_type="EQ"), in session only. Most rules need N complete bars
+# (count_over_time guards) and a stock_market_seconds_to_close warm-up gate (22500 s = 09:15 open). Freshness
+# checks `timestamp(bar) > time() - 60` make sure a bar is from this minute, not a stale lookback value.
+# Stateful rules (KAMA, Supertrend) read their previous value via `offset 1m`. stock:technical_signal:bool is
+# 1 while/when a condition holds and absent otherwise (informational, not alerts).
 groups:
   - name: nse_extended_technicals
     interval: 1m
     rules:
+      # stock:roc_10m:percent
+      #   What:  10-minute rate of change of the 1m close, in percent: +0.5 = price 0.5% above 10 bars ago.
+      #          Momentum oscillator centred on 0.
+      #   How:   (C / (C offset 10m > 0) - 1) * 100, C = stock:bar_1m_close:price{tier="core", instrument_type="EQ"}.
+      #          Freshness: the current bar is < 60 s old and the 10m-ago bar is < 660 s old (so neither is a
+      #          stale lookback value). Gated on stock_market_open == 1 and stock_market_seconds_to_close <= 21900
+      #          (10 minutes after the open).
+      #   Debug: stock:bar_1m_close:price and timestamp(stock:bar_1m_close:price offset 10m). Empty before 09:25
+      #          IST, outside the session, for non-core/non-EQ, when a bar was missed or the reference close is 0.
       - record: stock:roc_10m:percent
         expr: |
           (stock:bar_1m_close:price{tier="core", instrument_type="EQ"} / (stock:bar_1m_close:price offset 10m > 0) - 1) * 100
@@ -9,8 +24,22 @@ groups:
           and timestamp(stock:bar_1m_close:price offset 10m) > time() - 660
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 21900
+      # stock:roc_acceleration_10m:points
+      #   What:  One-minute change of ROC10 in percentage points: > 0 = momentum increasing, < 0 = decelerating.
+      #   How:   stock:roc_10m:percent - stock:roc_10m:percent offset 1m, gated on stock_market_open == 1. The
+      #          offset value has no freshness check (5m lookback), so after a gap it compares to an older ROC.
+      #   Debug: stock:roc_10m:percent now and offset 1m. Empty until ROC10 has two values (~11 minutes after
+      #          the open) and outside the session.
       - record: stock:roc_acceleration_10m:points
         expr: (stock:roc_10m:percent - stock:roc_10m:percent offset 1m) and on() stock_market_open == 1
+      # stock:williams_r_14m:percent
+      #   What:  Williams %R over 14 bars, -100..0: where the close sits in the 14-bar high-low range. Above -20 =
+      #          near the top (overbought), below -80 = near the bottom (oversold).
+      #   How:   -100 * (HH14 - C) / ((HH14 - LL14) > 0), HH14 = max_over_time(stock:bar_1m_high:price[14m]),
+      #          LL14 = min_over_time(stock:bar_1m_low:price[14m]). Requires 14 high and 14 low bars in the window,
+      #          stock_market_open == 1 and stock_market_seconds_to_close <= 21720 (13 minutes after the open).
+      #   Debug: count_over_time(stock:bar_1m_high:price[14m]) and the HH14/LL14 terms. Empty before ~14 bars,
+      #          after a missed bar, outside the session or for a flat range (> 0 guard).
       - record: stock:williams_r_14m:percent
         expr: |
           -100 * (max_over_time(stock:bar_1m_high:price{tier="core", instrument_type="EQ"}[14m]) - stock:bar_1m_close:price)
@@ -19,6 +48,14 @@ groups:
           and count_over_time(stock:bar_1m_low:price[14m]) >= 14
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 21720
+      # stock:stochastic_rsi_14m:ratio
+      #   What:  Stochastic RSI, 0..1: where Wilder RSI14 sits in its own 14-minute range. > 0.8 = RSI at the top
+      #          of its recent range (overbought), < 0.2 = at the bottom (oversold). Unsmoothed.
+      #   How:   (RSI - min_over_time(RSI[14m])) / ((max_over_time(RSI[14m]) - min_over_time(RSI[14m])) > 0), RSI =
+      #          stock:rsi_wilder_14m:index{tier="core", instrument_type="EQ"} (nse_momentum). Requires 14 RSI samples
+      #          in the window, stock_market_open == 1, stock_market_seconds_to_close <= 20880 (27 minutes after open).
+      #   Debug: stock:rsi_wilder_14m:index and count_over_time(stock:rsi_wilder_14m:index[14m]). Empty before
+      #          ~09:42 IST, outside the session, or when RSI was constant over 14 minutes (> 0 guard).
       - record: stock:stochastic_rsi_14m:ratio
         expr: |
           (stock:rsi_wilder_14m:index{tier="core", instrument_type="EQ"} - min_over_time(stock:rsi_wilder_14m:index[14m]))
@@ -26,10 +63,25 @@ groups:
           and count_over_time(stock:rsi_wilder_14m:index[14m]) >= 14
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 20880
+      # stock:ppo_12_26m:percent
+      #   What:  Percentage price oscillator: MACD as percent of EMA26, comparable across share prices. > 0 =
+      #          EMA12 above EMA26 (upward momentum). Line only, no signal line.
+      #   How:   100 * (stock:ema_12m:price - stock:ema_26m:price) / (stock:ema_26m:price > 0), core EQ only (the
+      #          EMAs live in nse_trend), gated on stock_market_open == 1.
+      #   Debug: stock:ema_12m:price, stock:ema_26m:price. Empty before 09:41 IST (EMA26 seed), outside the
+      #          session, for non-EQ symbols.
       - record: stock:ppo_12_26m:percent
         expr: |
           100 * (stock:ema_12m:price{tier="core", instrument_type="EQ"} - stock:ema_26m:price) / (stock:ema_26m:price > 0)
           and on() stock_market_open == 1
+      # stock:force_index_1m:price_shares
+      #   What:  One-bar Elder Force Index in rupee-shares: close change * bar volume. Sign = direction, size =
+      #          conviction (large values = big move on heavy volume). Unsmoothed.
+      #   How:   (C - C offset 1m) * V, C = stock:bar_1m_close:price, V = stock:bar_1m_volume:shares (day-volume
+      #          delta). Freshness: C and V < 60 s old, previous C < 120 s old. Gated on stock_market_open == 1 and
+      #          stock_market_seconds_to_close <= 22440 (1 minute after the open).
+      #   Debug: stock:bar_1m_close:price, stock:bar_1m_volume:shares. Empty outside the session, in the first
+      #          minute, after a missed bar or for non-EQ/non-core symbols (V is EQ only).
       - record: stock:force_index_1m:price_shares
         expr: |
           (stock:bar_1m_close:price{tier="core", instrument_type="EQ"} - stock:bar_1m_close:price offset 1m) * stock:bar_1m_volume:shares
@@ -38,6 +90,12 @@ groups:
           and timestamp(stock:bar_1m_volume:shares) > time() - 60
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 22440
+      # stock:signed_volume_1m:shares
+      #   What:  Helper: bar volume signed by the close direction (+V up bar, -V down bar, 0 unchanged); the OBV
+      #          increment.
+      #   How:   sgn(C - C offset 1m) * V, same inputs, freshness checks and gates (1 minute after the open) as
+      #          stock:force_index_1m:price_shares.
+      #   Debug: stock:bar_1m_close:price, stock:bar_1m_volume:shares; empty after a missed bar or when closed.
       - record: stock:signed_volume_1m:shares
         expr: |
           sgn(stock:bar_1m_close:price{tier="core", instrument_type="EQ"} - stock:bar_1m_close:price offset 1m) * stock:bar_1m_volume:shares
@@ -46,22 +104,47 @@ groups:
           and timestamp(stock:bar_1m_volume:shares) > time() - 60
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 22440
+      # stock:obv_change_20m:shares
+      #   What:  On-balance-volume change over the last 20 bars, in shares: > 0 = more volume on up bars than down
+      #          bars (accumulation). A rolling change, not a cumulative OBV line.
+      #   How:   sum_over_time(stock:signed_volume_1m:shares[20m]), only with 20 helper samples in the window,
+      #          stock_market_open == 1 and stock_market_seconds_to_close <= 21300 (20 minutes after the open).
+      #   Debug: count_over_time(stock:signed_volume_1m:shares[20m]). Empty before ~09:36 IST, after any missed
+      #          bar in the last 20 minutes, or outside the session.
       - record: stock:obv_change_20m:shares
         expr: |
           sum_over_time(stock:signed_volume_1m:shares[20m])
           and count_over_time(stock:signed_volume_1m:shares[20m]) >= 20
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 21300
+      # stock:keltner_20m:price {band=upper}
+      #   What:  Upper Keltner channel (rupees): EMA20 + 2 * ATR14; a close above it is an unusually strong move.
+      #   How:   stock:ema_20m:price{tier="core", instrument_type="EQ"} + 2 * stock:atr_14m:points (Wilder ATR,
+      #          nse_trend_strength), one-to-one labels, gated on stock_market_open == 1.
+      #   Debug: stock:ema_20m:price, stock:atr_14m:points. Empty before 09:35 IST (EMA20 seed) or outside the
+      #          session.
       - record: stock:keltner_20m:price
         labels: {band: upper}
         expr: |
           (stock:ema_20m:price{tier="core", instrument_type="EQ"} + 2 * stock:atr_14m:points)
           and on() stock_market_open == 1
+      # stock:keltner_20m:price {band=lower}
+      #   What:  Lower Keltner channel (rupees): EMA20 - 2 * ATR14; a close below it is an unusually weak move.
+      #   How:   stock:ema_20m:price - 2 * stock:atr_14m:points, core EQ, gated on stock_market_open == 1.
+      #   Debug: as for band=upper.
       - record: stock:keltner_20m:price
         labels: {band: lower}
         expr: |
           (stock:ema_20m:price{tier="core", instrument_type="EQ"} - 2 * stock:atr_14m:points)
           and on() stock_market_open == 1
+      # stock:ttm_squeeze_20m:bool
+      #   What:  TTM-style squeeze state: 1 = Bollinger bands (20, 2 sigma) are entirely inside the Keltner channel
+      #          (volatility compression, often before a breakout), 0 = not in a squeeze.
+      #   How:   (BB_upper < bool KC_upper) * ignoring(band) (BB_lower > bool KC_lower), then sum without(band) to
+      #          drop the band label. BB = stock:bollinger_20m:price (nse_volatility), KC = stock:keltner_20m:price.
+      #          Core EQ only, gated on stock_market_open == 1.
+      #   Debug: stock:bollinger_20m:price and stock:keltner_20m:price by band. Empty while either band set is
+      #          missing (before 09:35 IST, outside the session).
       - record: stock:ttm_squeeze_20m:bool
         expr: |
           sum without(band) (
@@ -69,6 +152,13 @@ groups:
             * ignoring(band) (stock:bollinger_20m:price{band="lower"} > bool stock:keltner_20m:price{band="lower"})
           )
           and on() stock_market_open == 1
+      # stock:donchian_prior_20m:price {bound=high}
+      #   What:  Highest bar high of the 20 bars before the current one (rupees); a close above it is a 20-minute
+      #          breakout. Intraday 20-minute channel, not 20 sessions.
+      #   How:   max_over_time(stock:bar_1m_high:price[20m] offset 1m) (excludes the current bar), requires 20
+      #          bars in that window, stock_market_open == 1, stock_market_seconds_to_close <= 21300 (20 minutes).
+      #   Debug: count_over_time(stock:bar_1m_high:price[20m] offset 1m). Empty until ~21 bars exist, after a
+      #          missed bar or outside the session.
       - record: stock:donchian_prior_20m:price
         labels: {bound: high}
         expr: |
@@ -76,6 +166,10 @@ groups:
           and count_over_time(stock:bar_1m_high:price[20m] offset 1m) >= 20
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 21300
+      # stock:donchian_prior_20m:price {bound=low}
+      #   What:  Lowest bar low of the previous 20 bars (rupees); a close below it is a 20-minute breakdown.
+      #   How:   min_over_time(stock:bar_1m_low:price[20m] offset 1m), same guards as bound=high.
+      #   Debug: count_over_time(stock:bar_1m_low:price[20m] offset 1m); as for bound=high.
       - record: stock:donchian_prior_20m:price
         labels: {bound: low}
         expr: |
@@ -83,6 +177,15 @@ groups:
           and count_over_time(stock:bar_1m_low:price[20m] offset 1m) >= 20
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 21300
+      # stock:choppiness_14m:index
+      #   What:  Choppiness Index over 14 bars, ~0..100: > 61.8 = sideways/choppy, < 38.2 = trending. Opening gaps
+      #          can push it outside the customary bounds.
+      #   How:   100 * log10(sum_over_time(TR[14m]) / ((HH14 - LL14) > 0)) / log10(14) (1.146128...), TR =
+      #          stock:bar_1m_true_range:points (unsmoothed per-bar true range, nse_trend_strength), HH14/LL14 from
+      #          bar highs/lows. Requires 14 samples of TR, H and L, stock_market_open == 1 and
+      #          stock_market_seconds_to_close <= 21720 (13 minutes after the open).
+      #   Debug: count_over_time of the three inputs over [14m]. Empty before ~14 bars, after a missed bar,
+      #          for a flat 14-bar range (> 0 guard) or outside the session.
       - record: stock:choppiness_14m:index
         expr: |
           100 * log10(
@@ -94,6 +197,13 @@ groups:
           and count_over_time(stock:bar_1m_low:price[14m]) >= 14
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 21720
+      # stock:chandelier_22m:price {side=long}
+      #   What:  Chandelier exit for longs (rupees): 22-bar highest high minus 3 ATR; a close below it suggests the
+      #          uptrend has broken. Raw rolling level, not a ratcheted trade stop; uses ATR14, not ATR22.
+      #   How:   max_over_time(stock:bar_1m_high:price[22m]) - 3 * stock:atr_14m:points, requires 22 high bars,
+      #          stock_market_open == 1 and stock_market_seconds_to_close <= 21180 (22 minutes after the open).
+      #   Debug: count_over_time(stock:bar_1m_high:price[22m]), stock:atr_14m:points. Empty before ~09:37 IST,
+      #          after a missed bar or outside the session.
       - record: stock:chandelier_22m:price
         labels: {side: long}
         expr: |
@@ -101,6 +211,11 @@ groups:
           and count_over_time(stock:bar_1m_high:price[22m]) >= 22
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 21180
+      # stock:chandelier_22m:price {side=short}
+      #   What:  Chandelier exit for shorts (rupees): 22-bar lowest low plus 3 ATR; a close above it suggests the
+      #          downtrend has broken.
+      #   How:   min_over_time(stock:bar_1m_low:price[22m]) + 3 * stock:atr_14m:points, same guards as side=long.
+      #   Debug: count_over_time(stock:bar_1m_low:price[22m]), stock:atr_14m:points.
       - record: stock:chandelier_22m:price
         labels: {side: short}
         expr: |
@@ -108,12 +223,25 @@ groups:
           and count_over_time(stock:bar_1m_low:price[22m]) >= 22
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 21180
+      # stock:regression_slope_20m:price_per_minute
+      #   What:  Least-squares slope of the last 20 one-minute closes in rupees per minute (+ = rising line).
+      #   How:   60 * deriv(stock:bar_1m_close:price[20m]) (deriv is per second), requires 20 bars in the window,
+      #          stock_market_open == 1 and stock_market_seconds_to_close <= 21300 (20 minutes after the open).
+      #   Debug: count_over_time(stock:bar_1m_close:price[20m]). Empty before ~09:35 IST, after a missed bar or
+      #          outside the session.
       - record: stock:regression_slope_20m:price_per_minute
         expr: |
           60 * deriv(stock:bar_1m_close:price{tier="core", instrument_type="EQ"}[20m])
           and count_over_time(stock:bar_1m_close:price[20m]) >= 20
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 21300
+      # stock:regression_20m:price
+      #   What:  Linear regression value (LSMA20, rupees): the fitted 20-bar trend line at the last bar. A trend fit,
+      #          not a forecast; the centre of the regression channel and the WMA20 leg of the Hull MA.
+      #   How:   predict_linear(C[20m], 0) - deriv(C[20m]) * (time() - timestamp(C)): the fit at evaluation time
+      #          shifted back to the last bar's timestamp. C = stock:bar_1m_close:price core EQ; 20-bar count guard,
+      #          stock_market_open == 1, stock_market_seconds_to_close <= 21300.
+      #   Debug: as for stock:regression_slope_20m:price_per_minute.
       - record: stock:regression_20m:price
         expr: |
           (predict_linear(stock:bar_1m_close:price{tier="core", instrument_type="EQ"}[20m], 0)
@@ -121,6 +249,14 @@ groups:
           and count_over_time(stock:bar_1m_close:price[20m]) >= 20
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 21300
+      # stock:regression_error_20m:price
+      #   What:  Residual standard error of the 20-bar linear fit (rupees): typical distance of closes from the
+      #          trend line; small = price hugging the line.
+      #   How:   sqrt(max(0, (stdvar_over_time(C[20m]) - b^2 * 33.25) * 20 / 18)), b = slope per minute,
+      #          33.25 = Var(t) of 20 bars 1 minute apart ((20^2 - 1) / 12); 20/18 converts to n - 2 degrees of
+      #          freedom; clamp_min(0) absorbs rounding. Same 20-bar, session and 20-minute gates.
+      #   Debug: stdvar_over_time(stock:bar_1m_close:price[20m]), stock:regression_slope_20m:price_per_minute.
+      #          Assumes regular 1m bars: a missed bar suppresses it (count guard).
       - record: stock:regression_error_20m:price
         expr: |
           sqrt(clamp_min(
@@ -131,12 +267,28 @@ groups:
           and count_over_time(stock:bar_1m_close:price[20m]) >= 20
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 21300
+      # stock:regression_channel_20m:price {band=upper}
+      #   What:  Upper regression channel (rupees): LSMA20 + 2 residual standard errors. Not a calibrated interval.
+      #   How:   stock:regression_20m:price + 2 * stock:regression_error_20m:price (no own gates).
+      #   Debug: both inputs; empty whenever either is (before ~09:35 IST, missed bar, closed).
       - record: stock:regression_channel_20m:price
         labels: {band: upper}
         expr: stock:regression_20m:price + 2 * stock:regression_error_20m:price
+      # stock:regression_channel_20m:price {band=lower}
+      #   What:  Lower regression channel (rupees): LSMA20 - 2 residual standard errors.
+      #   How:   stock:regression_20m:price - 2 * stock:regression_error_20m:price (no own gates).
+      #   Debug: as for band=upper.
       - record: stock:regression_channel_20m:price
         labels: {band: lower}
         expr: stock:regression_20m:price - 2 * stock:regression_error_20m:price
+      # stock:hma_20m_input:price
+      #   What:  Helper for the Hull MA: 2 * WMA10 - WMA20 of the 1m closes (rupees), a lag-reduced price series.
+      #   How:   WMA_n = (LSMA_n + 2 * SMA_n) / 3. WMA10 is computed inline: LSMA10 = predict_linear(C[10m], 0)
+      #          - deriv(C[10m]) * (time() - timestamp(C)) (fit at the last bar), SMA10 = avg_over_time(C[10m]);
+      #          WMA20 reuses stock:regression_20m:price and avg_over_time(C[20m]). Requires 20 bars in [20m] and
+      #          stock_market_open == 1; the 20-minute gate comes via stock:regression_20m:price.
+      #   Debug: stock:regression_20m:price, count_over_time(stock:bar_1m_close:price[20m]). Empty before
+      #          ~09:35 IST, after a missed bar or outside the session.
       - record: stock:hma_20m_input:price
         expr: |
           2 * (predict_linear(stock:bar_1m_close:price{tier="core", instrument_type="EQ"}[10m], 0)
@@ -145,18 +297,38 @@ groups:
           - (stock:regression_20m:price + 2 * avg_over_time(stock:bar_1m_close:price[20m])) / 3
           and count_over_time(stock:bar_1m_close:price[20m]) >= 20
           and on() stock_market_open == 1
+      # stock:hma_20m:price
+      #   What:  Hull moving average (20) of the 1m close in rupees: a smooth MA with little lag; price crossing it
+      #          or its turning points mark short-term trend changes.
+      #   How:   WMA4 of stock:hma_20m_input:price (floor(sqrt(20)) = 4): (predict_linear(input[4m], 0)
+      #          + 2 * avg_over_time(input[4m])) / 3, requires 4 input samples and stock_market_open == 1.
+      #   Debug: count_over_time(stock:hma_20m_input:price[4m]). First value ~23 minutes after the open; empty
+      #          after a missed evaluation in the last 4 minutes or outside the session.
       - record: stock:hma_20m:price
         expr: |
           (predict_linear(stock:hma_20m_input:price[4m], 0) + 2 * avg_over_time(stock:hma_20m_input:price[4m])) / 3
           and count_over_time(stock:hma_20m_input:price[4m]) >= 4
           and on() stock_market_open == 1
+      # stock:envelope_20m:price {band=upper}
+      #   What:  Upper moving-average envelope (rupees): SMA20 + 2%; price above it is stretched far above the mean.
+      #   How:   stock:sma_20m:price{tier="core", instrument_type="EQ"} * 1.02, gated on stock_market_open == 1.
+      #   Debug: stock:sma_20m:price; empty before 09:35 IST, outside the session or for non-EQ symbols.
       - record: stock:envelope_20m:price
         labels: {band: upper}
         expr: stock:sma_20m:price{tier="core", instrument_type="EQ"} * 1.02 and on() stock_market_open == 1
+      # stock:envelope_20m:price {band=lower}
+      #   What:  Lower moving-average envelope (rupees): SMA20 - 2%.
+      #   How:   stock:sma_20m:price{tier="core", instrument_type="EQ"} * 0.98, gated on stock_market_open == 1.
+      #   Debug: as for band=upper.
       - record: stock:envelope_20m:price
         labels: {band: lower}
         expr: stock:sma_20m:price{tier="core", instrument_type="EQ"} * 0.98 and on() stock_market_open == 1
 
+      # stock:close_change_1m:price
+      #   What:  Helper: one-bar close change C - C[1m ago] in rupees; its absolute values form the KAMA volatility.
+      #   How:   stock:bar_1m_close:price - (same offset 1m), core EQ; current bar < 60 s old, previous < 120 s old;
+      #          stock_market_open == 1 and stock_market_seconds_to_close <= 22440 (1 minute after the open).
+      #   Debug: stock:bar_1m_close:price and its timestamps; empty after a missed bar or when closed.
       - record: stock:close_change_1m:price
         expr: |
           (stock:bar_1m_close:price{tier="core", instrument_type="EQ"} - stock:bar_1m_close:price offset 1m)
@@ -164,6 +336,14 @@ groups:
           and timestamp(stock:bar_1m_close:price offset 1m) > time() - 120
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 22440
+      # stock:kama_efficiency_10m:ratio
+      #   What:  Kaufman efficiency ratio ER10, 0..1: net 10-bar move / sum of absolute bar moves. 1 = straight-line
+      #          move, near 0 = noisy or flat; sets how fast KAMA follows the price.
+      #   How:   |C - C offset 10m| / (sum_over_time(abs(stock:close_change_1m:price)[10m:1m]) > 0); when the
+      #          denominator is 0 (constant price) the `or 0 * C` branch yields 0. Requires 11 closes in [11m] and
+      #          10 close changes in [10m], stock_market_open == 1, stock_market_seconds_to_close <= 21900 (10 min).
+      #   Debug: count_over_time(stock:bar_1m_close:price[11m]), count_over_time(stock:close_change_1m:price[10m]).
+      #          Empty before ~09:26 IST, after any missed bar in the window or outside the session.
       - record: stock:kama_efficiency_10m:ratio
         expr: |
           (
@@ -175,6 +355,15 @@ groups:
           and count_over_time(stock:close_change_1m:price[10m]) >= 10
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 21900
+      # stock:kama_10m:price
+      #   What:  Kaufman adaptive moving average (rupees): follows the price fast in clean trends and barely moves in
+      #          noise. Price above a rising KAMA = uptrend.
+      #   How:   Stateful: KAMA = KAMA[1m] + SC * (C - KAMA[1m]), SC = (ER * (2/3 - 2/31) + 2/31)^2 (fast 2, slow 30),
+      #          ER = stock:kama_efficiency_10m:ratio. The previous value is read with `offset 1m` and used only if
+      #          its timestamp is exactly time() - 60 (previous evaluation); otherwise it is (re)seeded with
+      #          avg_over_time(C[10m]) (SMA10). Requires ER to exist and stock_market_open == 1.
+      #   Debug: stock:kama_efficiency_10m:ratio, timestamp(stock:kama_10m:price offset 1m). Empty whenever ER is
+      #          (before ~09:26 IST, missed bars, closed); a single missed evaluation reseeds from SMA10.
       - record: stock:kama_10m:price
         expr: |
           (
@@ -188,6 +377,12 @@ groups:
           )
           and stock:kama_efficiency_10m:ratio
           and on() stock_market_open == 1
+      # stock:supertrend_basic:price {band=upper}
+      #   What:  Helper: raw Supertrend upper band (rupees) = bar midpoint + 3 ATR, before ratcheting.
+      #   How:   (stock:bar_1m_high:price + stock:bar_1m_low:price) / 2 + 3 * stock:atr_14m:points, core EQ; H and L
+      #          bars < 60 s old; stock_market_open == 1.
+      #   Debug: stock:bar_1m_high:price, stock:bar_1m_low:price, stock:atr_14m:points. Empty before ATR14
+      #          exists (~14 bars), after a missed bar or outside the session.
       - record: stock:supertrend_basic:price
         labels: {band: upper}
         expr: |
@@ -195,6 +390,10 @@ groups:
           and timestamp(stock:bar_1m_high:price) > time() - 60
           and timestamp(stock:bar_1m_low:price) > time() - 60
           and on() stock_market_open == 1
+      # stock:supertrend_basic:price {band=lower}
+      #   What:  Helper: raw Supertrend lower band (rupees) = bar midpoint - 3 ATR.
+      #   How:   (H + L) / 2 - 3 * stock:atr_14m:points, same freshness and session gates as band=upper.
+      #   Debug: as for band=upper.
       - record: stock:supertrend_basic:price
         labels: {band: lower}
         expr: |
@@ -202,6 +401,15 @@ groups:
           and timestamp(stock:bar_1m_high:price) > time() - 60
           and timestamp(stock:bar_1m_low:price) > time() - 60
           and on() stock_market_open == 1
+      # stock:supertrend_band:price {band=upper}
+      #   What:  Helper: final (ratcheted) Supertrend upper band in rupees; it only moves down until the close
+      #          breaks above it.
+      #   How:   Stateful `or` chain, first match wins: (1) basic upper if it is below the previous final upper;
+      #          (2) basic upper if the previous close was above the previous final upper (reset); (3) the previous
+      #          final upper, if it is from exactly the previous evaluation (timestamp == time() - 60); (4) basic upper
+      #          (seed). Previous values via `offset 1m`; ignoring(band) to match the close. stock_market_open == 1.
+      #   Debug: stock:supertrend_basic:price{band="upper"}, stock:supertrend_band:price{band="upper"} offset 1m.
+      #          Empty when the basic band is; restarts from the basic band after a missed evaluation.
       - record: stock:supertrend_band:price
         labels: {band: upper}
         expr: |
@@ -212,6 +420,12 @@ groups:
             or stock:supertrend_basic:price{band="upper"}
           )
           and on() stock_market_open == 1
+      # stock:supertrend_band:price {band=lower}
+      #   What:  Helper: final (ratcheted) Supertrend lower band in rupees; it only moves up until the close breaks
+      #          below it.
+      #   How:   Mirror of band=upper: basic lower if above the previous final lower; or if the previous close was
+      #          below the previous final lower; else the previous final lower (exactly 1m old); else basic lower.
+      #   Debug: as for band=upper with band="lower".
       - record: stock:supertrend_band:price
         labels: {band: lower}
         expr: |
@@ -222,6 +436,14 @@ groups:
             or stock:supertrend_basic:price{band="lower"}
           )
           and on() stock_market_open == 1
+      # stock:supertrend_direction:sign
+      #   What:  Helper: Supertrend direction, +1 = uptrend (trailing the lower band), -1 = downtrend.
+      #   How:   Ordered `or` on the previous direction (offset 1m, no freshness check): from -1 flip to +1 when
+      #          C > final upper; stay +1 while C >= final lower; from +1 flip to -1 when C < final lower; stay -1
+      #          while C <= final upper; with no previous value seed -1 (down). `* 0 +/- 1` turns matches into
+      #          constants. Requires the basic upper band (ignoring(band)) and stock_market_open == 1.
+      #   Debug: stock:bar_1m_close:price vs stock:supertrend_band:price by band, stock:supertrend_direction:sign
+      #          offset 1m. Starts at -1 every session until the close crosses the upper band.
       - record: stock:supertrend_direction:sign
         expr: |
           (
@@ -233,6 +455,13 @@ groups:
           )
           and ignoring(band) stock:supertrend_basic:price{band="upper"}
           and on() stock_market_open == 1
+      # stock:supertrend_14m:price
+      #   What:  Supertrend line (ATR14, multiplier 3) in rupees: the final lower band in an uptrend, the final upper
+      #          band in a downtrend. Price above it = uptrend; a flip of side is the trend-change signal.
+      #   How:   (band{band="lower"} and ignoring(band) direction == 1) or (band{band="upper"} and ignoring(band)
+      #          direction == -1), then sum without(band) drops the band label; stock_market_open == 1.
+      #   Debug: stock:supertrend_direction:sign, stock:supertrend_band:price. Empty before ATR14 exists (~14 bars),
+      #          after a missed bar or outside the session; initialisation (seeded down) affects early values.
       - record: stock:supertrend_14m:price
         expr: |
           sum without(band) (
@@ -241,31 +470,62 @@ groups:
           )
           and on() stock_market_open == 1
 
+      # stock:technical_signal:bool {signal=roc_deceleration, direction=bearish}
+      #   What:  1 while price is still up over 10 minutes but momentum is slowing (rally losing steam); absent
+      #          otherwise. Informational, not an alert.
+      #   How:   (stock:roc_10m:percent > 0 and stock:roc_acceleration_10m:points < 0) * 0 + 1, stock_market_open == 1.
+      #   Debug: stock:roc_10m:percent, stock:roc_acceleration_10m:points; empty until both exist (~11 minutes
+      #          after the open) and outside the session.
       - record: stock:technical_signal:bool
         labels: {signal: roc_deceleration, direction: bearish}
         expr: |
           (stock:roc_10m:percent > 0 and stock:roc_acceleration_10m:points < 0) * 0 + 1
           and on() stock_market_open == 1
+      # stock:technical_signal:bool {signal=roc_deceleration, direction=bullish}
+      #   What:  1 while price is down over 10 minutes but the decline is slowing; absent otherwise.
+      #   How:   (stock:roc_10m:percent < 0 and stock:roc_acceleration_10m:points > 0) * 0 + 1, stock_market_open == 1.
+      #   Debug: as for direction=bearish.
       - record: stock:technical_signal:bool
         labels: {signal: roc_deceleration, direction: bullish}
         expr: |
           (stock:roc_10m:percent < 0 and stock:roc_acceleration_10m:points > 0) * 0 + 1
           and on() stock_market_open == 1
+      # stock:technical_signal:bool {signal=adx_rollover, direction=neutral}
+      #   What:  1 while a strong trend (ADX14 > 25) is weakening (ADX lower than a minute ago), whatever its
+      #          direction; absent otherwise.
+      #   How:   (ADX > 25 and ADX < ADX offset 1m) * 0 + 1, ADX = stock:adx_14m:index{tier="core", instrument_type="EQ"}
+      #          (Wilder, nse_trend_strength); stock_market_open == 1.
+      #   Debug: stock:adx_14m:index now and offset 1m. ADX needs ~28 bars (ATR14 then 14 DX values), so empty
+      #          before ~09:43 IST and outside the session.
       - record: stock:technical_signal:bool
         labels: {signal: adx_rollover, direction: neutral}
         expr: |
           (stock:adx_14m:index{tier="core", instrument_type="EQ"} > 25 and stock:adx_14m:index < stock:adx_14m:index offset 1m) * 0 + 1
           and on() stock_market_open == 1
+      # stock:technical_signal:bool {signal=macd_histogram_fading, direction=bearish}
+      #   What:  1 while the MACD histogram is positive but shrinking (bullish momentum fading); absent otherwise.
+      #   How:   (H > 0 and H < H offset 1m) * 0 + 1, H = stock:macd_histogram:price core EQ; stock_market_open == 1.
+      #   Debug: stock:macd_histogram:price now and offset 1m; empty before ~09:50 IST (histogram warm-up ~34m).
       - record: stock:technical_signal:bool
         labels: {signal: macd_histogram_fading, direction: bearish}
         expr: |
           (stock:macd_histogram:price{tier="core", instrument_type="EQ"} > 0 and stock:macd_histogram:price < stock:macd_histogram:price offset 1m) * 0 + 1
           and on() stock_market_open == 1
+      # stock:technical_signal:bool {signal=macd_histogram_fading, direction=bullish}
+      #   What:  1 while the MACD histogram is negative but rising toward 0 (bearish momentum fading).
+      #   How:   (H < 0 and H > H offset 1m) * 0 + 1, H = stock:macd_histogram:price core EQ; stock_market_open == 1.
+      #   Debug: as for direction=bearish.
       - record: stock:technical_signal:bool
         labels: {signal: macd_histogram_fading, direction: bullish}
         expr: |
           (stock:macd_histogram:price{tier="core", instrument_type="EQ"} < 0 and stock:macd_histogram:price > stock:macd_histogram:price offset 1m) * 0 + 1
           and on() stock_market_open == 1
+      # stock:technical_signal:bool {signal=stochastic_cross, direction=bullish}
+      #   What:  1 in the minute %K crosses above %D while %K < 20 (oversold turn-up); absent otherwise.
+      #   How:   %K > %D now, %K offset 1m <= %D offset 1m, %K < 20; %K = stock:stochastic_k_14m:percent (raw
+      #          samples, 14m) core EQ, %D = stock:stochastic_d_3m:percent; `* 0 + 1`; stock_market_open == 1.
+      #   Debug: stock:stochastic_k_14m:percent, stock:stochastic_d_3m:percent now and offset 1m. Fires for one
+      #          evaluation only; %D needs ~16 minutes of %K.
       - record: stock:technical_signal:bool
         labels: {signal: stochastic_cross, direction: bullish}
         expr: |
@@ -273,6 +533,10 @@ groups:
             and stock:stochastic_k_14m:percent offset 1m <= stock:stochastic_d_3m:percent offset 1m
             and stock:stochastic_k_14m:percent < 20) * 0 + 1
           and on() stock_market_open == 1
+      # stock:technical_signal:bool {signal=stochastic_cross, direction=bearish}
+      #   What:  1 in the minute %K crosses below %D while %K > 80 (overbought turn-down); absent otherwise.
+      #   How:   %K < %D now, %K offset 1m >= %D offset 1m, %K > 80; `* 0 + 1`; stock_market_open == 1.
+      #   Debug: as for direction=bullish.
       - record: stock:technical_signal:bool
         labels: {signal: stochastic_cross, direction: bearish}
         expr: |
@@ -280,46 +544,96 @@ groups:
             and stock:stochastic_k_14m:percent offset 1m >= stock:stochastic_d_3m:percent offset 1m
             and stock:stochastic_k_14m:percent > 80) * 0 + 1
           and on() stock_market_open == 1
+      # stock:technical_signal:bool {signal=donchian_breakout, direction=bullish}
+      #   What:  1 while the 1m close is above the highest high of the previous 20 bars (20-minute breakout).
+      #   How:   stock:bar_1m_close:price > ignoring(bound) stock:donchian_prior_20m:price{bound="high"}, `* 0 + 1`,
+      #          core EQ, stock_market_open == 1.
+      #   Debug: stock:bar_1m_close:price vs stock:donchian_prior_20m:price; empty until the channel exists
+      #          (~21 bars) and outside the session.
       - record: stock:technical_signal:bool
         labels: {signal: donchian_breakout, direction: bullish}
         expr: |
           (stock:bar_1m_close:price{tier="core", instrument_type="EQ"} > ignoring(bound) stock:donchian_prior_20m:price{bound="high"}) * 0 + 1
           and on() stock_market_open == 1
+      # stock:technical_signal:bool {signal=donchian_breakout, direction=bearish}
+      #   What:  1 while the 1m close is below the lowest low of the previous 20 bars (20-minute breakdown).
+      #   How:   C < ignoring(bound) stock:donchian_prior_20m:price{bound="low"}, `* 0 + 1`, stock_market_open == 1.
+      #   Debug: as for direction=bullish.
       - record: stock:technical_signal:bool
         labels: {signal: donchian_breakout, direction: bearish}
         expr: |
           (stock:bar_1m_close:price{tier="core", instrument_type="EQ"} < ignoring(bound) stock:donchian_prior_20m:price{bound="low"}) * 0 + 1
           and on() stock_market_open == 1
+      # stock:technical_signal:bool {signal=ttm_squeeze_release, direction=bullish}
+      #   What:  1 in the minute a squeeze ends (stock:ttm_squeeze_20m:bool 1 -> 0) with the MACD histogram > 0
+      #          (release to the upside). Uses MACD, not the proprietary TTM oscillator.
+      #   How:   (squeeze == 0 and squeeze offset 1m == 1 and stock:macd_histogram:price > 0) * 0 + 1, core EQ;
+      #          stock_market_open == 1.
+      #   Debug: stock:ttm_squeeze_20m:bool now and offset 1m, stock:macd_histogram:price. One evaluation only;
+      #          needs the histogram (~34 minutes after the open).
       - record: stock:technical_signal:bool
         labels: {signal: ttm_squeeze_release, direction: bullish}
         expr: |
           ((stock:ttm_squeeze_20m:bool == 0 and stock:ttm_squeeze_20m:bool offset 1m == 1)
             and stock:macd_histogram:price{tier="core", instrument_type="EQ"} > 0) * 0 + 1
           and on() stock_market_open == 1
+      # stock:technical_signal:bool {signal=ttm_squeeze_release, direction=bearish}
+      #   What:  1 in the minute a squeeze ends with the MACD histogram < 0 (release to the downside).
+      #   How:   (squeeze == 0 and squeeze offset 1m == 1 and stock:macd_histogram:price < 0) * 0 + 1; market open.
+      #   Debug: as for direction=bullish.
       - record: stock:technical_signal:bool
         labels: {signal: ttm_squeeze_release, direction: bearish}
         expr: |
           ((stock:ttm_squeeze_20m:bool == 0 and stock:ttm_squeeze_20m:bool offset 1m == 1)
             and stock:macd_histogram:price{tier="core", instrument_type="EQ"} < 0) * 0 + 1
           and on() stock_market_open == 1
+      # stock:technical_signal:bool {signal=volume_price_divergence, direction=bearish}
+      #   What:  1 while the close is at its 20-bar high but 20-bar OBV change is negative (new high on selling
+      #          volume, weak rally).
+      #   How:   (C >= max_over_time(stock:bar_1m_close:price[20m]) and stock:obv_change_20m:shares < 0) * 0 + 1,
+      #          C = stock:bar_1m_close:price core EQ (window includes the current bar); stock_market_open == 1.
+      #   Debug: stock:obv_change_20m:shares, max_over_time(stock:bar_1m_close:price[20m]); empty until OBV
+      #          exists (~09:36 IST) and outside the session.
       - record: stock:technical_signal:bool
         labels: {signal: volume_price_divergence, direction: bearish}
         expr: |
           (stock:bar_1m_close:price{tier="core", instrument_type="EQ"} >= max_over_time(stock:bar_1m_close:price[20m])
             and stock:obv_change_20m:shares < 0) * 0 + 1
           and on() stock_market_open == 1
+      # stock:technical_signal:bool {signal=volume_price_divergence, direction=bullish}
+      #   What:  1 while the close is at its 20-bar low but 20-bar OBV change is positive (new low on buying
+      #          volume, weak decline).
+      #   How:   (C <= min_over_time(stock:bar_1m_close:price[20m]) and stock:obv_change_20m:shares > 0) * 0 + 1;
+      #          stock_market_open == 1.
+      #   Debug: as for direction=bearish with min_over_time.
       - record: stock:technical_signal:bool
         labels: {signal: volume_price_divergence, direction: bullish}
         expr: |
           (stock:bar_1m_close:price{tier="core", instrument_type="EQ"} <= min_over_time(stock:bar_1m_close:price[20m])
             and stock:obv_change_20m:shares > 0) * 0 + 1
           and on() stock_market_open == 1
+      # stock:ad_change_20m:shares
+      #   What:  Accumulation/distribution change over 20 bars, in shares: > 0 = closes near bar highs on volume
+      #          (accumulation), < 0 = near lows (distribution). Rolling change, not a cumulative A/D line.
+      #   How:   sum_over_time(stock:bar_1m_money_flow_volume:shares[20m]) (MFV = CLV * V from nse_bars, 0 for
+      #          zero-range bars), requires 20 samples, stock_market_open == 1, stock_market_seconds_to_close
+      #          <= 21300 (20 minutes after the open).
+      #   Debug: count_over_time(stock:bar_1m_money_flow_volume:shares[20m]). Empty before ~09:35 IST, after a
+      #          missed bar, outside the session or for non-EQ symbols.
       - record: stock:ad_change_20m:shares
         expr: |
           sum_over_time(stock:bar_1m_money_flow_volume:shares{tier="core", instrument_type="EQ"}[20m])
           and count_over_time(stock:bar_1m_money_flow_volume:shares[20m]) >= 20
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 21300
+      # stock:vwma_20m:price
+      #   What:  Volume-weighted moving average of the last 20 one-minute closes (rupees); heavy-volume bars weigh
+      #          more. Not trade-level VWAP.
+      #   How:   sum_over_time((C * V)[20m:1m]) / (sum_over_time(V[20m]) > 0), C = stock:bar_1m_close:price,
+      #          V = stock:bar_1m_volume:shares, core EQ. Requires 20 points of C*V, 20 closes and 20 volume bars
+      #          (this count guard is the warm-up; no seconds-to-close gate) and stock_market_open == 1.
+      #   Debug: the three count_over_time terms. Empty before ~20 bars, after a missed bar, with zero 20-bar
+      #          volume (> 0 guard) or outside the session.
       - record: stock:vwma_20m:price
         expr: |
           sum_over_time((stock:bar_1m_close:price{tier="core", instrument_type="EQ"} * stock:bar_1m_volume:shares)[20m:1m])

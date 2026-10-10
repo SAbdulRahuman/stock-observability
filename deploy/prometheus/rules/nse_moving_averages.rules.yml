@@ -7,6 +7,17 @@ groups:
   - name: nse_moving_averages
     interval: 1m
     rules:
+      # stock:ema_9m:price
+      #   What:  9-bar exponential moving average of the 1m last price (rupees), core tier, in session only. Reacts
+      #          fastest of the EMAs; price above it = very short-term upward bias.
+      #   How:   EMA = 0.2 * stock_last_price + 0.8 * last_over_time(stock:ema_9m:price[3m]), a = 2/(9+1) = 0.2.
+      #          Stateful: reads its own value from up to 3m back. With no state (start of day or a gap > 3m) it
+      #          is seeded with avg_over_time(stock_last_price[9m:1m]) once stock_market_seconds_to_close <= 21960
+      #          (22500 - 540 s, i.e. 9 minutes after the 09:15 open, 09:24). Whole expr gated on stock_market_open
+      #          == 1, so the state lapses overnight and is reseeded every session.
+      #   Debug: stock_last_price{tier="core"}, stock_market_open, stock_market_seconds_to_close. Empty before
+      #          09:24 IST, outside the session or for non-core symbols; a gap in rule evaluation > 3m reseeds it
+      #          from the SMA (visible as a jump).
       - record: stock:ema_9m:price
         expr: |
           (
@@ -14,6 +25,14 @@ groups:
             or (avg_over_time(stock_last_price{tier="core"}[9m:1m]) and on() stock_market_seconds_to_close <= 21960)
           )
           and on() stock_market_open == 1
+      # stock:ema_20m:price
+      #   What:  20-bar EMA of the 1m last price (rupees), core tier, in session only; the short-term trend
+      #          baseline also used by Keltner channels and stock:ema_distance_20m:percent.
+      #   How:   EMA = 2/21 * stock_last_price + 19/21 * last_over_time(stock:ema_20m:price[3m]). Seeded (no state
+      #          within 3m) with avg_over_time(stock_last_price[20m:1m]) once stock_market_seconds_to_close <= 21300
+      #          (20 minutes after the open, 09:35). Gated on stock_market_open == 1.
+      #   Debug: stock_last_price{tier="core"}, stock_market_seconds_to_close. Empty before 09:35 IST, after the
+      #          close or for non-core symbols; reseeded from the 20-bar SMA after an evaluation gap > 3m.
       - record: stock:ema_20m:price
         expr: |
           (
@@ -21,6 +40,14 @@ groups:
             or (avg_over_time(stock_last_price{tier="core"}[20m:1m]) and on() stock_market_seconds_to_close <= 21300)
           )
           and on() stock_market_open == 1
+      # stock:ema_50m:price
+      #   What:  50-bar EMA of the 1m last price (rupees), core tier, in session only; slower intraday trend
+      #          baseline (price above = intraday uptrend).
+      #   How:   EMA = 2/51 * stock_last_price + 49/51 * last_over_time(stock:ema_50m:price[3m]). Seeded (no state
+      #          within 3m) with avg_over_time(stock_last_price[50m:1m]) once stock_market_seconds_to_close <= 19500
+      #          (50 minutes after the open, 10:05). Gated on stock_market_open == 1.
+      #   Debug: stock_last_price{tier="core"}, stock_market_seconds_to_close. Empty before 10:05 IST, after the
+      #          close or for non-core symbols; reseeded from the 50-bar SMA after an evaluation gap > 3m.
       - record: stock:ema_50m:price
         expr: |
           (
@@ -28,30 +55,87 @@ groups:
             or (avg_over_time(stock_last_price{tier="core"}[50m:1m]) and on() stock_market_seconds_to_close <= 19500)
           )
           and on() stock_market_open == 1
+      # stock:ema_distance_20m:percent
+      #   What:  How far the last price is from its EMA20, in percent. Positive = trading above the short-term
+      #          trend (stretched up), negative = below; intraday values are typically within +/-2%.
+      #   How:   (stock_last_price{tier="core"} - stock:ema_20m:price) / (stock:ema_20m:price > 0) * 100, matched
+      #          one-to-one on all labels. No own session gate: it exists exactly while EMA20 exists.
+      #   Debug: stock:ema_20m:price and stock_last_price for the symbol. Empty before 09:35 IST / outside the
+      #          session (no EMA20); the > 0 guard drops a zero EMA.
       - record: stock:ema_distance_20m:percent
         expr: (stock_last_price{tier="core"} - stock:ema_20m:price) / (stock:ema_20m:price > 0) * 100
 
+      # stock:sma_20m:price
+      #   What:  Simple mean of the last 20 one-minute prices (rupees), core tier; equal-weight 20-minute baseline.
+      #   How:   avg_over_time(stock_last_price{tier="core"}[20m:1m]) (20 subquery points on minute boundaries),
+      #          only while stock_market_open == 1 and stock_market_seconds_to_close <= 21300 (20 minutes after the
+      #          open, so the window holds only session bars).
+      #   Debug: stock_last_price{tier="core"}, stock_market_seconds_to_close. Empty before 09:35 IST, after the
+      #          close or for non-core symbols.
       - record: stock:sma_20m:price
         expr: |
           avg_over_time(stock_last_price{tier="core"}[20m:1m])
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 21300
+      # stock:sma_50m:price
+      #   What:  Simple mean of the last 50 one-minute prices (rupees), core tier; equal-weight 50-minute baseline.
+      #   How:   avg_over_time(stock_last_price{tier="core"}[50m:1m]), gated on stock_market_open == 1 and
+      #          stock_market_seconds_to_close <= 19500 (50 minutes after the open).
+      #   Debug: stock_last_price{tier="core"}, stock_market_seconds_to_close. Empty before 10:05 IST, after the
+      #          close or for non-core symbols.
       - record: stock:sma_50m:price
         expr: |
           avg_over_time(stock_last_price{tier="core"}[50m:1m])
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 19500
+      # stock:sma_200m:price
+      #   What:  Simple mean of the last 200 one-minute prices (rupees), core tier; the long intraday baseline
+      #          (more than half the 375-bar session).
+      #   How:   avg_over_time(stock_last_price{tier="core"}[200m:1m]), gated on stock_market_open == 1 and
+      #          stock_market_seconds_to_close <= 10500 (200 minutes after the open, from 12:35 IST).
+      #   Debug: stock_last_price{tier="core"}, stock_market_seconds_to_close. Empty before 12:35 IST, after the
+      #          close or for non-core symbols; the 200m:1m subquery is the most expensive MA here.
       - record: stock:sma_200m:price
         expr: |
           avg_over_time(stock_last_price{tier="core"}[200m:1m])
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 10500
+      # stock:wma_20m:price
+      #   What:  20-bar linearly weighted moving average (newest bar weight 20, oldest 1) of the 1m price, rupees;
+      #          sits between SMA20 and the price, reacting faster than SMA20.
+      #   How:   WMA20 = sum(i * C_i) / 210 = (LSMA20 + 2 * SMA20) / 3, with LSMA20 =
+      #          predict_linear(stock_last_price{tier="core"}[20m:1m], 0) (least-squares value now) and
+      #          SMA20 = stock:sma_20m:price, which supplies the session/20-minute gates.
+      #   Debug: stock:sma_20m:price and the predict_linear term. Empty while SMA20 is empty (before 09:35 IST,
+      #          closed market). Exact only when the evaluation falls on the bar close; drifts by part of a bar's
+      #          trend otherwise.
       - record: stock:wma_20m:price
         expr: |
           (predict_linear(stock_last_price{tier="core"}[20m:1m], 0) + 2 * stock:sma_20m:price) / 3
+      # stock:sma_distance_20m:percent
+      #   What:  How far the last price is from its SMA20, in percent; positive = above the 20-minute mean.
+      #   How:   (stock_last_price{tier="core"} - stock:sma_20m:price) / (stock:sma_20m:price > 0) * 100, matched
+      #          one-to-one on all labels; inherits SMA20's session and 20-minute gates.
+      #   Debug: stock:sma_20m:price. Empty before 09:35 IST or outside the session; > 0 guard drops a zero SMA.
       - record: stock:sma_distance_20m:percent
         expr: (stock_last_price{tier="core"} - stock:sma_20m:price) / (stock:sma_20m:price > 0) * 100
+      # stock:sma_spread_5_30m:percent
+      #   What:  Spread between the 5-minute and 30-minute moving averages in percent. Positive = short-term mean
+      #          above the longer one (rising price), negative = falling; a sign change is a fast/slow MA cross.
+      #   How:   (stock:sma_5m:price / (stock:sma_30m:price > 0) - 1) * 100, both tier="core". The inputs come from
+      #          stock_recording.rules.yml and average the raw scrape samples (avg_over_time(stock_last_price[5m]/
+      #          [30m])), not 1m bars. No session gate here or in the inputs.
+      #   Debug: stock:sma_5m:price, stock:sma_30m:price. Within 30m of the open the 30m window may still hold
+      #          pre-open/previous-day samples; outside the session it reflects whatever stock_last_price exports
+      #          (spread decays to 0 on a constant price). > 0 guard drops a zero SMA30.
       - record: stock:sma_spread_5_30m:percent
         expr: (stock:sma_5m:price{tier="core"} / (stock:sma_30m:price{tier="core"} > 0) - 1) * 100
+      # stock:sma_20m_slope:percent_per_hour
+      #   What:  Slope of SMA20 as percent per hour: + = the 20-minute mean is rising, - = falling; +/-1 %/h is a
+      #          clear intraday trend.
+      #   How:   (SMA20 - SMA20 offset 10m) / SMA20 * 600, i.e. the 10-minute relative change * 100 (percent) * 6
+      #          (to an hour). SMA20 = stock:sma_20m:price; no explicit zero-denominator guard.
+      #   Debug: stock:sma_20m:price now and `offset 10m`. Needs SMA20 10 minutes ago too, so first value ~09:45
+      #          IST (30m warm-up); empty outside the session.
       - record: stock:sma_20m_slope:percent_per_hour
         expr: (stock:sma_20m:price - stock:sma_20m:price offset 10m) / stock:sma_20m:price * 600

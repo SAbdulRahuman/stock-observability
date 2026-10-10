@@ -9,12 +9,26 @@ groups:
   - name: nse_derivatives_eod
     interval: 30m
     rules:
+      # stock:session_open_interest:contracts
+      #   What:  EOD snapshot of each contract's open interest (contracts), one sample per session; the "previous session
+      #          OI" baseline for stock:oi_change:percent.
+      #   How:   stock_open_interest and on() stock_market_phase{phase="post_close"} == 1; the 30m group runs exactly once
+      #          inside the 15:30-16:00 post_close window. No tier filter (all scraped F&O contracts).
+      #   Debug: stock_open_interest, stock_market_phase. Empty if Prometheus was down during post_close or no derivatives
+      #          are scraped (exporter without --sim.derivatives / no NFO instruments in the watchlist).
       - record: stock:session_open_interest:contracts
         expr: stock_open_interest and on() stock_market_phase{phase="post_close"} == 1
 
   - name: nse_derivatives
     interval: 15s
     rules:
+      # underlying:spot:price
+      #   What:  Spot price (INR / index points) of every F&O underlying, labelled with its NFO underlying name.
+      #   How:   label_replace copies symbol to `underlying` for NSE EQ/INDEX last prices, then maps index names
+      #          (NIFTY 50 -> NIFTY, NIFTY BANK -> BANKNIFTY, NIFTY FIN SERVICE -> FINNIFTY, NIFTY MID SELECT ->
+      #          MIDCPNIFTY); max by (underlying); kept only for underlyings present in stock_instrument_info.
+      #   Debug: count by (underlying) (stock_instrument_info) vs stock_last_price{exchange="NSE"}. Empty for an underlying
+      #          whose spot is not scraped or whose index name lacks a mapping here.
       - record: underlying:spot:price
         expr: |
           max by (underlying) (
@@ -27,20 +41,54 @@ groups:
               "underlying", "MIDCPNIFTY", "symbol", "NIFTY MID SELECT")
           )
           and on(underlying) count by (underlying) (stock_instrument_info)
+      # underlying:pcr_oi:ratio
+      #   What:  Put-call ratio of open interest per underlying and expiry; > 1 more puts open (hedging/put writing),
+      #          < 1 call-heavy. Typical index range ~0.7-1.3.
+      #   How:   sum by (underlying, expiry) OI of PE contracts / sum OI of CE contracts, contract metadata joined via
+      #          * on(exchange, symbol) group_left(underlying, expiry) stock_instrument_info{instrument_type=...};
+      #          `> 0` drops expiries without call OI.
+      #   Debug: stock_open_interest * on(exchange, symbol) group_left(underlying, expiry) stock_instrument_info. Empty
+      #          without option contracts (exporter needs --sim.derivatives or real NFO options) or with zero call OI.
       - record: underlying:pcr_oi:ratio
         expr: |
           sum by (underlying, expiry) (stock_open_interest * on(exchange, symbol) group_left(underlying, expiry) stock_instrument_info{instrument_type="PE"})
           / (sum by (underlying, expiry) (stock_open_interest * on(exchange, symbol) group_left(underlying, expiry) stock_instrument_info{instrument_type="CE"}) > 0)
+      # underlying:pcr_volume:ratio
+      #   What:  Put-call ratio of today's traded volume per underlying and expiry (flow, vs positioning for PCR OI).
+      #   How:   sum by (underlying, expiry) stock_day_volume_shares of PE / of CE, same metadata join; `> 0` guard on
+      #          the call volume.
+      #   Debug: stock_day_volume_shares of NFO options. Empty before the first option trade of the day or without options.
       - record: underlying:pcr_volume:ratio
         expr: |
           sum by (underlying, expiry) (stock_day_volume_shares * on(exchange, symbol) group_left(underlying, expiry) stock_instrument_info{instrument_type="PE"})
           / (sum by (underlying, expiry) (stock_day_volume_shares * on(exchange, symbol) group_left(underlying, expiry) stock_instrument_info{instrument_type="CE"}) > 0)
+      # underlying:futures_price:price
+      #   What:  Last traded price of the future of each underlying and expiry.
+      #   How:   max by (underlying, expiry) (stock_last_price * on(exchange, symbol) group_left(underlying, expiry)
+      #          stock_instrument_info{instrument_type="FUT"}).
+      #   Debug: stock_instrument_info{instrument_type="FUT"}. Empty when no futures are in the watchlist.
       - record: underlying:futures_price:price
         expr: max by (underlying, expiry) (stock_last_price * on(exchange, symbol) group_left(underlying, expiry) stock_instrument_info{instrument_type="FUT"})
+      # underlying:futures_basis:points
+      #   What:  Futures basis F - S in price points per expiry; > 0 contango (normal, cost of carry), < 0 backwardation.
+      #   How:   underlying:futures_price:price - on(underlying) group_left() underlying:spot:price.
+      #   Debug: Both inputs; empty when the spot mapping or the future is missing.
       - record: underlying:futures_basis:points
         expr: underlying:futures_price:price - on(underlying) group_left() underlying:spot:price
+      # underlying:futures_premium:percent
+      #   What:  Futures premium over spot in percent, (F / S - 1) * 100; typically small positive (e.g. 0.3-1% for the
+      #          near month), shrinking to 0 at expiry.
+      #   How:   futures price / on(underlying) group_left() (spot > 0); per expiry.
+      #   Debug: underlying:futures_price:price, underlying:spot:price.
       - record: underlying:futures_premium:percent
         expr: (underlying:futures_price:price / on(underlying) group_left() (underlying:spot:price > 0) - 1) * 100
+      # underlying:cost_of_carry:percent
+      #   What:  Annualised cost of carry implied by the futures premium, in percent per year (normally near the
+      #          risk-free rate, ~6-8%).
+      #   How:   premium * 365 / days to expiry, days = (max by (underlying, expiry) of the FUT's
+      #          stock_instrument_expiry_timestamp_seconds - time()) / 86400, matched on(underlying, expiry); `> 0.5`
+      #          drops the last 12 hours before expiry where annualising explodes.
+      #   Debug: stock_instrument_expiry_timestamp_seconds of the FUT. Empty within 0.5 day of expiry or without futures.
       - record: underlying:cost_of_carry:percent
         expr: |
           underlying:futures_premium:percent * 365
@@ -48,6 +96,14 @@ groups:
               (max by (underlying, expiry) (stock_instrument_expiry_timestamp_seconds * on(exchange, symbol) group_left(underlying, expiry) stock_instrument_info{instrument_type="FUT"}) - time())
               / 86400 > 0.5
             )
+      # stock:oi_change:percent
+      #   What:  Change of a contract's open interest versus the previous session's close, in percent (+ = new positions
+      #          opened, - = positions closed).
+      #   How:   (stock_open_interest / last_over_time(stock:session_open_interest:contracts[7d]) - 1) * 100, `> 0` guard;
+      #          gated on stock_market_phase pre_open|open, so today's own post_close snapshot is never the baseline.
+      #          7d lookback bridges weekends and holidays.
+      #   Debug: last_over_time(stock:session_open_interest:contracts[7d]). Empty on the first session after deploy (no
+      #          snapshot yet), for new contracts, after the close, or without derivatives.
       - record: stock:oi_change:percent
         expr: |
           (stock_open_interest / (last_over_time(stock:session_open_interest:contracts[7d]) > 0) - 1) * 100
@@ -56,6 +112,14 @@ groups:
   - name: nse_derivatives_alerts
     interval: 15s
     rules:
+      # StockOIBuildup
+      #   What:  Fires per F&O contract with class long_buildup / short_buildup / short_covering / long_unwinding (and
+      #          direction bullish/bearish) when OI moved more than 10% vs the previous session and price more than 1%;
+      #          value = OI change in percent.
+      #   How:   stock:oi_change:percent > 10 or < -10, and on(exchange, symbol) stock_change_percent > 1 or < -1 (the
+      #          contract's own change vs previous close), labelled by nested label_replace; market open; for: 5m.
+      #   Debug: stock:oi_change:percent and stock_change_percent for the contract. Silent on the first session (no OI
+      #          baseline), without derivatives, or when the market is closed.
       # Price-OI matrix on the contract: price up + OI up = long build-up, down + up = short build-up,
       # up + down = short covering, down + down = long unwinding.
       - alert: StockOIBuildup
@@ -72,6 +136,11 @@ groups:
         annotations:
           summary: "{{ $labels.symbol }} {{ $labels.class }} (OI {{ $value | printf \"%+.1f\" }}%)"
           description: "Open interest of {{ $labels.exchange }}:{{ $labels.symbol }} changed by more than 10% from the previous session while the price moved more than 1%."
+      # PCRExtreme
+      #   What:  Fires per underlying and expiry when the OI put-call ratio stays above 1.5 (extreme=high) or below 0.5
+      #          (extreme=low); value = PCR. Extremes are often read contrarian.
+      #   How:   label_replace(underlying:pcr_oi:ratio > 1.5, "extreme", "high") or (< 0.5, "low"); market open; for: 15m.
+      #   Debug: underlying:pcr_oi:ratio. Far expiries with thin OI can sit at extremes; silent without options.
       - alert: PCRExtreme
         expr: |
           (
@@ -84,6 +153,13 @@ groups:
         annotations:
           summary: "{{ $labels.underlying }} {{ $labels.expiry }} put-call ratio {{ $value | printf \"%.2f\" }}"
           description: "Put-call open-interest ratio of {{ $labels.underlying }} (expiry {{ $labels.expiry }}) is {{ if eq $labels.extreme \"high\" }}above 1.5 (heavy put writing or hedging){{ else }}below 0.5 (heavy call positioning){{ end }} for 15 minutes."
+      # FuturesBasisAnomaly
+      #   What:  Fires per underlying and expiry when the future trades more than 0.5% below spot (basis=discount) or
+      #          above a 25% annualised cost of carry (basis=rich); value = premium % or carry %.
+      #   How:   label_replace(underlying:futures_premium:percent < -0.5, "basis", "discount") or
+      #          label_replace(underlying:cost_of_carry:percent > 25, "basis", "rich"); market open; for: 15m.
+      #   Debug: underlying:futures_premium:percent, underlying:cost_of_carry:percent. "rich" cannot fire in the last half
+      #          day before expiry (carry guard); a stale future price (illiquid far month) can trigger it.
       - alert: FuturesBasisAnomaly
         expr: |
           (

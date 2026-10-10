@@ -10,8 +10,24 @@ groups:
   - name: nse_effectiveness
     interval: 1m
     rules:
+      # stock:signal_activation:bool
+      #   What:  1 in the first minute a stock:signal_active:bool series appears (signal switches on) for an
+      #          instrument; absent otherwise. Each activation is exactly one sample, so count_over_time counts them.
+      #   How:   stock:signal_active:bool unless stock:signal_active:bool offset 1m (match on all labels: instrument,
+      #          signal, direction). signal_active is only present while the condition holds and the market is open,
+      #          so a signal still on at 09:15 activates again each session, and a one-minute gap re-activates it.
+      #   Debug: query stock:signal_active:bool{symbol="X"} around the time; offset 1m relies on the staleness marker
+      #          written when the signal series disappears.
       - record: stock:signal_activation:bool
         expr: stock:signal_active:bool unless stock:signal_active:bool offset 1m
+      # stock:alert_activation:bool
+      #   What:  1 in the first minute a stock-level condition alert is firing for an instrument; absent otherwise.
+      #   How:   ALERTS{layer="condition", alertstate="firing", symbol!=""} unless the same firing ALERTS series 1m
+      #          ago (all labels), then max by (alertname, exchange, symbol, direction, band, side) to drop alert labels
+      #          like severity. Activation = pending -> firing transition (after `for:`), not the pending start.
+      #          direction/band/side are empty for alerts that do not set them.
+      #   Debug: query ALERTS{layer="condition", symbol="X"}. Market-wide alerts (no symbol label) and non-condition
+      #          layers (incident, quality) are excluded by design.
       - record: stock:alert_activation:bool
         expr: |
           max by (alertname, exchange, symbol, direction, band, side) (
@@ -20,6 +36,16 @@ groups:
           )
 
       # Signals, per horizon: sum of outcomes, directional hits, number of outcomes.
+      # signal:outcome_return_sum:percent {horizon="5m"}
+      #   What:  per (signal, direction), the sum of 5-minute EQ price returns (%) of all signal activations that
+      #          happened exactly 5 minutes ago (i.e. outcomes maturing this minute). Divided by
+      #          signal:outcomes:count over 5 days it gives signal:forward_return_5d:percent.
+      #   How:   r = (stock_last_price{EQ} / (stock_last_price{EQ} offset 5m > 0) - 1) * 100 per instrument;
+      #          r + on(exchange, symbol) group_right() (0 * stock:signal_activation:bool offset 5m) copies r onto each
+      #          activation (signal/direction labels kept, several signals per stock allowed); sum by (signal, direction);
+      #          `and on() stock_market_open == 1` drops outcomes maturing after the close (activations after 15:25).
+      #   Debug: query stock:signal_activation:bool offset 5m. Empty in most minutes (no activation 5m ago);
+      #          index (non-EQ) activations never match a price and drop out.
       - record: signal:outcome_return_sum:percent
         labels: {horizon: 5m}
         expr: |
@@ -28,6 +54,13 @@ groups:
             + on(exchange, symbol) group_right() (0 * stock:signal_activation:bool offset 5m)
           )
           and on() stock_market_open == 1
+      # signal:outcome_hits:count {horizon="5m"}
+      #   What:  per (signal, direction), how many of the 5m outcomes maturing this minute moved in the signal's
+      #          direction (bullish: price up, bearish: price down). Numerator of signal:hit_rate_5d:ratio.
+      #   How:   same 5m return r joined to activations 5m ago, split by direction: bullish -> r > bool 0, bearish ->
+      #          r < bool 0 (1 = hit, 0 = miss; r == 0 is a miss); the two branches are unioned with `or` and summed
+      #          by (signal, direction). Gated on stock_market_open == 1.
+      #   Debug: no series for neutral signals or signals without a direction label (neither branch matches).
       - record: signal:outcome_hits:count
         labels: {horizon: 5m}
         expr: |
@@ -43,6 +76,12 @@ groups:
               ) < bool 0
           )
           and on() stock_market_open == 1
+      # signal:outcomes:count {horizon="5m"}
+      #   What:  per (signal, direction), number of signal activations whose 5m outcome matures this minute;
+      #          denominator for the 5-day forward return and hit rate.
+      #   How:   count by (signal, direction) of the same r + on(exchange, symbol) group_right() (0 * activation offset 5m)
+      #          vector, gated on stock_market_open == 1. Activations without a valid 5m-old EQ price are not counted.
+      #   Debug: compare with count by (signal, direction) (stock:signal_activation:bool offset 5m).
       - record: signal:outcomes:count
         labels: {horizon: 5m}
         expr: |
@@ -52,6 +91,10 @@ groups:
           )
           and on() stock_market_open == 1
 
+      # signal:outcome_return_sum:percent {horizon="15m"}
+      #   What:  sum of 15-minute EQ returns (%) of signal activations 15 minutes ago, per (signal, direction).
+      #   How:   as the 5m variant with offset 15m on both the price and stock:signal_activation:bool; market-open gate.
+      #   Debug: activations after 15:15 never mature inside the session and are dropped.
       - record: signal:outcome_return_sum:percent
         labels: {horizon: 15m}
         expr: |
@@ -60,6 +103,10 @@ groups:
             + on(exchange, symbol) group_right() (0 * stock:signal_activation:bool offset 15m)
           )
           and on() stock_market_open == 1
+      # signal:outcome_hits:count {horizon="15m"}
+      #   What:  15m outcomes maturing this minute that moved in the signal direction, per (signal, direction).
+      #   How:   as the 5m variant with offset 15m: bullish r > bool 0, bearish r < bool 0, summed; market-open gate.
+      #   Debug: absent for neutral/undirected signals; activations after 15:15 are dropped.
       - record: signal:outcome_hits:count
         labels: {horizon: 15m}
         expr: |
@@ -75,6 +122,10 @@ groups:
               ) < bool 0
           )
           and on() stock_market_open == 1
+      # signal:outcomes:count {horizon="15m"}
+      #   What:  number of signal activations whose 15m outcome matures this minute, per (signal, direction).
+      #   How:   count by (signal, direction) of the 15m return joined to activations offset 15m; market-open gate.
+      #   Debug: compare with count by (signal, direction) (stock:signal_activation:bool offset 15m).
       - record: signal:outcomes:count
         labels: {horizon: 15m}
         expr: |
@@ -84,6 +135,10 @@ groups:
           )
           and on() stock_market_open == 1
 
+      # signal:outcome_return_sum:percent {horizon="1h"}
+      #   What:  sum of 1-hour EQ returns (%) of signal activations 1 hour ago, per (signal, direction).
+      #   How:   as the 5m variant with offset 1h on both the price and stock:signal_activation:bool; market-open gate.
+      #   Debug: activations after 14:30 never mature inside the session and are dropped; nothing before 10:15.
       - record: signal:outcome_return_sum:percent
         labels: {horizon: 1h}
         expr: |
@@ -92,6 +147,10 @@ groups:
             + on(exchange, symbol) group_right() (0 * stock:signal_activation:bool offset 1h)
           )
           and on() stock_market_open == 1
+      # signal:outcome_hits:count {horizon="1h"}
+      #   What:  1h outcomes maturing this minute that moved in the signal direction, per (signal, direction).
+      #   How:   as the 5m variant with offset 1h: bullish r > bool 0, bearish r < bool 0, summed; market-open gate.
+      #   Debug: absent for neutral/undirected signals; activations after 14:30 are dropped.
       - record: signal:outcome_hits:count
         labels: {horizon: 1h}
         expr: |
@@ -107,6 +166,10 @@ groups:
               ) < bool 0
           )
           and on() stock_market_open == 1
+      # signal:outcomes:count {horizon="1h"}
+      #   What:  number of signal activations whose 1h outcome matures this minute, per (signal, direction).
+      #   How:   count by (signal, direction) of the 1h return joined to activations offset 1h; market-open gate.
+      #   Debug: compare with count by (signal, direction) (stock:signal_activation:bool offset 1h).
       - record: signal:outcomes:count
         labels: {horizon: 1h}
         expr: |
@@ -117,6 +180,13 @@ groups:
           and on() stock_market_open == 1
 
       # Condition alerts, same per horizon.
+      # alert:outcome_return_sum:percent {horizon="5m"}
+      #   What:  per (alertname, direction, band, side), the sum of 5-minute EQ price returns (%) after condition
+      #          alerts that started firing exactly 5 minutes ago. Feeds alert:forward_return_5d:percent.
+      #   How:   r = (stock_last_price{EQ} / (stock_last_price{EQ} offset 5m > 0) - 1) * 100;
+      #          r + on(exchange, symbol) group_right() (0 * stock:alert_activation:bool offset 5m), summed by
+      #          (alertname, direction, band, side); `and on() stock_market_open == 1` drops post-close maturities.
+      #   Debug: query stock:alert_activation:bool offset 5m; alerts on non-EQ symbols find no price and drop out.
       - record: alert:outcome_return_sum:percent
         labels: {horizon: 5m}
         expr: |
@@ -125,6 +195,11 @@ groups:
             + on(exchange, symbol) group_right() (0 * stock:alert_activation:bool offset 5m)
           )
           and on() stock_market_open == 1
+      # alert:outcome_hits:count {horizon="5m"}
+      #   What:  5m outcomes after condition alerts that moved in the alert's direction (bullish up, bearish down).
+      #   How:   bullish activations: r > bool 0; bearish activations: r < bool 0; `or` of both, summed by
+      #          (alertname, direction, band, side); r == 0 counts as a miss. Market-open gate.
+      #   Debug: absent for alerts without direction="bullish"/"bearish" (undirected alerts have no hit rate).
       - record: alert:outcome_hits:count
         labels: {horizon: 5m}
         expr: |
@@ -140,6 +215,11 @@ groups:
               ) < bool 0
           )
           and on() stock_market_open == 1
+      # alert:outcomes:count {horizon="5m"}
+      #   What:  number of condition-alert activations whose 5m outcome matures this minute.
+      #   How:   count by (alertname, direction, band, side) of r joined to stock:alert_activation:bool offset 5m;
+      #          market-open gate.
+      #   Debug: compare with count by (alertname) (stock:alert_activation:bool offset 5m).
       - record: alert:outcomes:count
         labels: {horizon: 5m}
         expr: |
@@ -149,6 +229,10 @@ groups:
           )
           and on() stock_market_open == 1
 
+      # alert:outcome_return_sum:percent {horizon="15m"}
+      #   What:  sum of 15-minute EQ returns (%) after condition alerts that started firing 15 minutes ago.
+      #   How:   as the 5m variant with offset 15m on price and stock:alert_activation:bool; market-open gate.
+      #   Debug: alerts activating after 15:15 are dropped (outcome would mature after the close).
       - record: alert:outcome_return_sum:percent
         labels: {horizon: 15m}
         expr: |
@@ -157,6 +241,10 @@ groups:
             + on(exchange, symbol) group_right() (0 * stock:alert_activation:bool offset 15m)
           )
           and on() stock_market_open == 1
+      # alert:outcome_hits:count {horizon="15m"}
+      #   What:  15m outcomes after condition alerts that moved in the alert direction.
+      #   How:   as the 5m variant with offset 15m (bullish r > bool 0, bearish r < bool 0, summed); market-open gate.
+      #   Debug: absent for undirected alerts; activations after 15:15 are dropped.
       - record: alert:outcome_hits:count
         labels: {horizon: 15m}
         expr: |
@@ -172,6 +260,10 @@ groups:
               ) < bool 0
           )
           and on() stock_market_open == 1
+      # alert:outcomes:count {horizon="15m"}
+      #   What:  number of condition-alert activations whose 15m outcome matures this minute.
+      #   How:   count by (alertname, direction, band, side) of r joined to activations offset 15m; market-open gate.
+      #   Debug: compare with count by (alertname) (stock:alert_activation:bool offset 15m).
       - record: alert:outcomes:count
         labels: {horizon: 15m}
         expr: |
@@ -181,6 +273,10 @@ groups:
           )
           and on() stock_market_open == 1
 
+      # alert:outcome_return_sum:percent {horizon="1h"}
+      #   What:  sum of 1-hour EQ returns (%) after condition alerts that started firing 1 hour ago.
+      #   How:   as the 5m variant with offset 1h on price and stock:alert_activation:bool; market-open gate.
+      #   Debug: alerts activating after 14:30 are dropped; nothing matures before 10:15.
       - record: alert:outcome_return_sum:percent
         labels: {horizon: 1h}
         expr: |
@@ -189,6 +285,10 @@ groups:
             + on(exchange, symbol) group_right() (0 * stock:alert_activation:bool offset 1h)
           )
           and on() stock_market_open == 1
+      # alert:outcome_hits:count {horizon="1h"}
+      #   What:  1h outcomes after condition alerts that moved in the alert direction.
+      #   How:   as the 5m variant with offset 1h (bullish r > bool 0, bearish r < bool 0, summed); market-open gate.
+      #   Debug: absent for undirected alerts; activations after 14:30 are dropped.
       - record: alert:outcome_hits:count
         labels: {horizon: 1h}
         expr: |
@@ -204,6 +304,10 @@ groups:
               ) < bool 0
           )
           and on() stock_market_open == 1
+      # alert:outcomes:count {horizon="1h"}
+      #   What:  number of condition-alert activations whose 1h outcome matures this minute.
+      #   How:   count by (alertname, direction, band, side) of r joined to activations offset 1h; market-open gate.
+      #   Debug: compare with count by (alertname) (stock:alert_activation:bool offset 1h).
       - record: alert:outcomes:count
         labels: {horizon: 1h}
         expr: |
@@ -216,15 +320,49 @@ groups:
   - name: nse_effectiveness_5d
     interval: 15m
     rules:
+      # signal:occurrences_5d:count
+      #   What:  how many times each (signal, direction) switched on across all instruments in the last 5 calendar
+      #          days (~3-5 sessions). No horizon label.
+      #   How:   sum by (signal, direction) (count_over_time(stock:signal_activation:bool[5d])); each activation is a
+      #          single sample, so count_over_time = number of activations per instrument. Evaluated every 15m.
+      #   Debug: absent for signals that never activated in 5 days; inspect stock:signal_activation:bool directly.
       - record: signal:occurrences_5d:count
         expr: sum by (signal, direction) (count_over_time(stock:signal_activation:bool[5d]))
+      # signal:forward_return_5d:percent
+      #   What:  mean EQ price return (%) h after a signal activated, over the last 5 days, per (signal, direction,
+      #          horizon). Positive after a bullish signal / negative after a bearish one means the signal had an edge.
+      #   How:   sum_over_time(signal:outcome_return_sum:percent[5d]) / (sum_over_time(signal:outcomes:count[5d]) >= 5);
+      #          one-to-one on (signal, direction, horizon). The `>= 5` filter is the minimum-sample guard.
+      #   Debug: empty until a (signal, direction, horizon) has at least 5 matured outcomes in 5 days; check
+      #          sum_over_time(signal:outcomes:count[5d]).
       - record: signal:forward_return_5d:percent
         expr: sum_over_time(signal:outcome_return_sum:percent[5d]) / (sum_over_time(signal:outcomes:count[5d]) >= 5)
+      # signal:hit_rate_5d:ratio
+      #   What:  share (0-1) of a directional signal's outcomes over 5 days in which the price moved its way, per
+      #          (signal, direction, horizon); 0.5 is a coin flip.
+      #   How:   sum_over_time(signal:outcome_hits:count[5d]) / (sum_over_time(signal:outcomes:count[5d]) >= 5).
+      #   Debug: empty with < 5 outcomes, and always for neutral/undirected signals (no hits series exists).
       - record: signal:hit_rate_5d:ratio
         expr: sum_over_time(signal:outcome_hits:count[5d]) / (sum_over_time(signal:outcomes:count[5d]) >= 5)
+      # alert:occurrences_5d:count
+      #   What:  how many times each stock-level condition alert started firing in the last 5 calendar days, per
+      #          (alertname, direction, band, side).
+      #   How:   sum by (alertname, direction, band, side) (count_over_time(stock:alert_activation:bool[5d])).
+      #          Evaluated every 15m.
+      #   Debug: absent for alerts that never fired with a symbol label; check ALERTS{layer="condition"}.
       - record: alert:occurrences_5d:count
         expr: sum by (alertname, direction, band, side) (count_over_time(stock:alert_activation:bool[5d]))
+      # alert:forward_return_5d:percent
+      #   What:  mean EQ price return (%) h after a condition alert started firing, over 5 days, per
+      #          (alertname, direction, band, side, horizon).
+      #   How:   sum_over_time(alert:outcome_return_sum:percent[5d]) / (sum_over_time(alert:outcomes:count[5d]) >= 5).
+      #   Debug: empty until at least 5 matured outcomes exist; check sum_over_time(alert:outcomes:count[5d]).
       - record: alert:forward_return_5d:percent
         expr: sum_over_time(alert:outcome_return_sum:percent[5d]) / (sum_over_time(alert:outcomes:count[5d]) >= 5)
+      # alert:hit_rate_5d:ratio
+      #   What:  share (0-1) of a directional condition alert's outcomes over 5 days in which the price moved its way;
+      #          0.5 is a coin flip.
+      #   How:   sum_over_time(alert:outcome_hits:count[5d]) / (sum_over_time(alert:outcomes:count[5d]) >= 5).
+      #   Debug: empty with < 5 outcomes, and always for alerts without a bullish/bearish direction label.
       - record: alert:hit_rate_5d:ratio
         expr: sum_over_time(alert:outcome_hits:count[5d]) / (sum_over_time(alert:outcomes:count[5d]) >= 5)

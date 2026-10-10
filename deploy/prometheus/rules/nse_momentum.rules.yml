@@ -7,6 +7,14 @@ groups:
   - name: nse_momentum
     interval: 15s
     rules:
+      # stock:rsi_14m:index
+      #   What:  Cutler RSI(14) on 1m closes (0-100): share of up-moves in the last 14 one-minute changes.
+      #          > 70 overbought, < 30 oversold (used by StockMomentumExhaustion).
+      #   How:   RSI = 100 - 100 / (1 + G / L), G = avg_over_time(clamp_min(C - C offset 1m, 0)[14m:1m]),
+      #          L = same for clamp_min(C offset 1m - C, 0); C = stock_last_price{tier="core"}; simple means
+      #          (Cutler), not Wilder smoothing. No division guard or market-open gate.
+      #   Debug: L = 0 gives +Inf -> 100; G = L = 0 (flat 14 bars, after the close) gives NaN. No warm-up guard:
+      #          the first ~15m of the session mix in pre-open samples.
       # avg_loss = 0 -> RSI 100; flat price -> NaN.
       - record: stock:rsi_14m:index
         expr: |
@@ -14,19 +22,39 @@ groups:
               avg_over_time(clamp_min(stock_last_price{tier="core"} - stock_last_price{tier="core"} offset 1m, 0)[14m:1m])
             / avg_over_time(clamp_min(stock_last_price{tier="core"} offset 1m - stock_last_price{tier="core"}, 0)[14m:1m])
           )
+      # stock:stochastic_k_14m:percent
+      #   What:  Fast stochastic %K(14) (0-100): position of the LTP within its 14-minute high-low range.
+      #          > 80 near the high, < 20 near the low.
+      #   How:   (C - LL) / (HH - LL) * 100, HH/LL = max/min_over_time(stock_last_price{tier="core"}[14m]) over
+      #          the raw 1s samples (not 1m bars); `(HH - LL) > 0` guards the division.
+      #   Debug: Absent when the 14-minute range is zero (flat or halted price).
       - record: stock:stochastic_k_14m:percent
         expr: |
           (stock_last_price{tier="core"} - min_over_time(stock_last_price{tier="core"}[14m]))
           / ((max_over_time(stock_last_price{tier="core"}[14m]) - min_over_time(stock_last_price{tier="core"}[14m])) > 0)
           * 100
+      # stock:relative_strength_nifty:percent
+      #   What:  Stock day change minus NIFTY 50 day change, in percentage points; > 0 = outperforming the index.
+      #   How:   stock_change_percent{tier="core", instrument_type="EQ"} - on() group_left()
+      #          stock_change_percent{symbol="NIFTY 50", instrument_type="INDEX"} (change vs previous close).
+      #   Debug: Empty if the NIFTY 50 index series is missing; a duplicate NIFTY 50 series breaks group_left.
       - record: stock:relative_strength_nifty:percent
         expr: |
           stock_change_percent{tier="core", instrument_type="EQ"}
           - on() group_left()
           stock_change_percent{symbol="NIFTY 50", instrument_type="INDEX"}
+      # stock:momentum_10m:points
+      #   What:  10-minute price momentum in points (INR): C - C 10 minutes ago; > 0 = rising.
+      #   How:   stock_last_price{tier="core"} - stock_last_price{tier="core"} offset 10m. Not gated on market open.
+      #   Debug: Needs 10m of LTP history; in the first 10m of the session it compares with pre-open prices.
       # Release 2 (§7.4 #44, #46): momentum C - C[10m ago]; %D = SMA3 of %K at the last three 1m closes.
       - record: stock:momentum_10m:points
         expr: stock_last_price{tier="core"} - stock_last_price{tier="core"} offset 10m
+      # stock:stochastic_d_3m:percent
+      #   What:  Slow stochastic %D (0-100): 3-bar SMA of %K, the signal line for %K crossovers.
+      #   How:   avg_over_time(stock:stochastic_k_14m:percent[3m:1m]) (3 one-minute samples), emitted only when
+      #          count_over_time(...[3m:1m]) >= 3.
+      #   Debug: Absent while %K is missing in any of the last 3 minutes (zero 14m range).
       - record: stock:stochastic_d_3m:percent
         expr: avg_over_time(stock:stochastic_k_14m:percent[3m:1m]) and count_over_time(stock:stochastic_k_14m:percent[3m:1m]) >= 3
 
@@ -37,11 +65,26 @@ groups:
   - name: nse_momentum_bars
     interval: 1m
     rules:
+      # stock:cci_20m:index
+      #   What:  Commodity channel index CCI(20) on 1m typical prices; > +100 strong up-move/overbought,
+      #          < -100 strong down-move/oversold, unbounded.
+      #   How:   CCI = (TP - SMA20(TP)) / (0.015 * MD), TP = stock:bar_1m_typical:price = (H + L + C) / 3,
+      #          SMA20 = avg_over_time(TP[20m]), MD = avg over [20m:1m] of |TP - avg_over_time(TP[20m])| (each
+      #          step uses its own SMA: approximation). 0.015 is Lambert's constant. `MD > 0` guards the
+      #          division; requires count_over_time(TP[20m]) >= 20 bars.
+      #   Debug: First value ~20m after the open (nse_bars is gated on market open); absent for a flat price.
       - record: stock:cci_20m:index
         expr: |
           (stock:bar_1m_typical:price - avg_over_time(stock:bar_1m_typical:price[20m]))
           / (0.015 * avg_over_time(abs(stock:bar_1m_typical:price - avg_over_time(stock:bar_1m_typical:price[20m]))[20m:1m]) > 0)
           and count_over_time(stock:bar_1m_typical:price[20m]) >= 20
+      # stock:mfi_14m:index
+      #   What:  Money flow index MFI(14) on 1m bars (0-100): volume-weighted RSI. > 80 overbought, < 20 oversold.
+      #   How:   MFI = 100 - 100 / (1 + P / N), P = sum over 14 bars ([14m:1m]) of TP * V where TP > TP offset 1m,
+      #          N = same where TP < TP offset 1m; TP = stock:bar_1m_typical:price, V = stock:bar_1m_volume:shares.
+      #          `or 0 * (other side)` turns a missing side into 0 (see the comment below). Requires
+      #          count_over_time(TP[15m]) >= 15 (15 bars for 14 changes).
+      #   Debug: EQ only (bar volume is EQ-only); absent if TP did not change in 14 bars or before ~15m of bars.
       # One-sided flow counts as 0 on the other side: no down-flow -> 100, no up-flow -> 0.
       - record: stock:mfi_14m:index
         expr: |
@@ -56,6 +99,12 @@ groups:
               )
           )
           and count_over_time(stock:bar_1m_typical:price[15m]) >= 15
+      # stock:awesome_oscillator:price
+      #   What:  Bill Williams awesome oscillator on 1m bars, in price: fast minus slow SMA of the bar midpoint.
+      #          > 0 = short-term momentum above the longer trend; zero-line crosses signal turns.
+      #   How:   AO = SMA5((H + L) / 2) - SMA34((H + L) / 2), computed as (avg H + avg L) / 2 over [5m] and [34m]
+      #          of stock:bar_1m_high/low:price; requires count_over_time(bar_1m_high[34m]) >= 34 bars.
+      #   Debug: First value ~34m after the open; check stock:bar_1m_high:price / stock:bar_1m_low:price.
       - record: stock:awesome_oscillator:price
         expr: |
           (
@@ -69,6 +118,13 @@ groups:
   - name: nse_momentum_wilder
     interval: 1m
     rules:
+      # stock:rsi_avg_gain_14m:points
+      #   What:  Wilder-smoothed average 1m gain (points); state series behind stock:rsi_wilder_14m:index.
+      #   How:   Stateful: 1/14 * max(C - C offset 1m, 0) + 13/14 * last_over_time(self[3m]). Seed / re-seed:
+      #          Cutler mean avg_over_time(clamp_min(C - C offset 1m, 0)[14m:1m]) once
+      #          stock_market_seconds_to_close <= 21660 (14 minutes after the open: 22500 - 21660 = 840 s).
+      #          Gated on() stock_market_open == 1, so the state lapses overnight.
+      #   Debug: First value ~09:29 IST; after a gap > 3m it re-seeds from the last 14 bars.
       - record: stock:rsi_avg_gain_14m:points
         expr: |
           (
@@ -80,6 +136,11 @@ groups:
             )
           )
           and on() stock_market_open == 1
+      # stock:rsi_avg_loss_14m:points
+      #   What:  Wilder-smoothed average 1m loss (points, >= 0); state series behind stock:rsi_wilder_14m:index.
+      #   How:   1/14 * max(C offset 1m - C, 0) + 13/14 * last_over_time(self[3m]); seeded like the gain series
+      #          (Cutler mean over [14m:1m] once seconds_to_close <= 21660). Gated on market open.
+      #   Debug: Same warm-up / gap behaviour as stock:rsi_avg_gain_14m:points.
       - record: stock:rsi_avg_loss_14m:points
         expr: |
           (
@@ -91,6 +152,12 @@ groups:
             )
           )
           and on() stock_market_open == 1
+      # stock:rsi_wilder_14m:index
+      #   What:  Wilder RSI(14) on 1m bars (0-100), smoother than the Cutler stock:rsi_14m:index; > 70
+      #          overbought, < 30 oversold. Used by StockRSIDivergence.
+      #   How:   100 - 100 / (1 + avg_gain / avg_loss) from the two state series above; no division guard.
+      #   Debug: Inherits the ~14m warm-up and market-open gate of the state series; avg_loss = 0 -> 100,
+      #          both 0 -> NaN (see the comment below).
       # avg_loss = 0 -> RSI 100; no movement at all -> NaN.
       - record: stock:rsi_wilder_14m:index
         expr: 100 - 100 / (1 + stock:rsi_avg_gain_14m:points / stock:rsi_avg_loss_14m:points)
@@ -98,6 +165,16 @@ groups:
   - name: nse_momentum_alerts
     interval: 15s
     rules:
+      # StockRSIDivergence
+      #   What:  Fires when an equity prints a new 30-minute price extreme but Wilder RSI fails to confirm it:
+      #          direction=bearish at a 30m high with RSI > 60 but >= 10 points below its own 30m max;
+      #          direction=bullish at a 30m low with RSI < 40 but >= 10 above its 30m min. $value = Wilder RSI.
+      #   How:   bearish: stock:rsi_wilder_14m:index{instrument_type="EQ"} > 60 and RSI < max_over_time(RSI[30m]) - 10
+      #          and stock_last_price{tier="core"} >= max_over_time(LTP[30m]) (1s samples); bullish mirrors with
+      #          min_over_time and + 10. label_replace adds `direction`; the two branches are or-ed, then
+      #          and on() stock_market_open == 1; for: 1m.
+      #   Debug: Needs Wilder RSI (~14m after the open) and enough RSI history for the 30m extreme to differ by 10.
+      #          Query stock:rsi_wilder_14m:index and max/min_over_time(...[30m]) side by side.
       # Price at a 30m extreme while Wilder RSI sits 10 points below its own 30m extreme (Release 2).
       - alert: StockRSIDivergence
         expr: |
@@ -122,6 +199,16 @@ groups:
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} made a new 30-minute {{ if eq $labels.direction \"bearish\" }}high{{ else }}low{{ end }} while Wilder RSI(14) stayed more than 10 points from its own 30-minute extreme."
           effectiveness: '{{ with printf `alert:hit_rate_5d:ratio{alertname="StockRSIDivergence",direction=%q,horizon="15m"}` $labels.direction | query }}15m hit rate over the last 5 days: {{ . | first | value | humanizePercentage }}{{ else }}No history yet{{ end }}'
           link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"
+      # StockMomentumExhaustion
+      #   What:  Fires when an equity is stretched and momentum starts to fade: direction=bearish when overbought
+      #          (RSI > 70, %K > 80) with a falling MACD histogram and net selling; direction=bullish mirrors
+      #          (RSI < 30, %K < 20, rising histogram, net buying). $value = Cutler RSI.
+      #   How:   stock:rsi_14m:index{instrument_type="EQ"} and stock:stochastic_k_14m:percent thresholds, and
+      #          stock:macd_histogram:price vs its value offset 2m (two 1m bars), and sign of
+      #          stock:volume_delta_1h:ratio (tick-rule volume delta). label_replace adds `direction`; gated
+      #          and on() stock_market_open == 1; for: 2m.
+      #   Debug: MACD histogram needs ~35m after the open (EMA26 + signal seed); volume delta is core EQ only.
+      #          Check each of the four inputs for the symbol.
       # Overbought/oversold on two oscillators, MACD histogram turning against the move, and
       # tick-rule volume flowing the other way.
       - alert: StockMomentumExhaustion

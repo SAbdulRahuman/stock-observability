@@ -5,17 +5,34 @@ groups:
   - name: nse_events
     interval: 1m
     rules:
+      # stock:event:bool {event=macd_cross, direction=bullish}
+      #   What:  1 in the single 1m evaluation where the MACD histogram turns positive (MACD crosses above its signal).
+      #   How:   (stock:macd_histogram:price{EQ} > 0 and the same series offset 1m <= 0) * 0 + 1, and on()
+      #          stock_market_open == 1. `* 0 + 1` normalises the value to 1; `+` binds tighter than `and`.
+      #   Debug: stock:macd_histogram:price{symbol="X"}[5m]. No event while MACD warms up (nse_trend), when the 1m-ago
+      #          sample is missing (first minute / evaluation gap), or with the market closed.
       - record: stock:event:bool
         labels: {event: macd_cross, direction: bullish}
         expr: |
           (stock:macd_histogram:price{instrument_type="EQ"} > 0 and stock:macd_histogram:price{instrument_type="EQ"} offset 1m <= 0) * 0 + 1
           and on() stock_market_open == 1
+      # stock:event:bool {event=macd_cross, direction=bearish}
+      #   What:  1 in the minute the MACD histogram turns negative (MACD crosses below its signal).
+      #   How:   (histogram < 0 and histogram offset 1m >= 0) * 0 + 1, market open only.
+      #   Debug: as the bullish MACD event.
       - record: stock:event:bool
         labels: {event: macd_cross, direction: bearish}
         expr: |
           (stock:macd_histogram:price{instrument_type="EQ"} < 0 and stock:macd_histogram:price{instrument_type="EQ"} offset 1m >= 0) * 0 + 1
           and on() stock_market_open == 1
 
+      # stock:event:bool {event=pivot_break, direction=bullish}
+      #   What:  1 in the minute the last price first moves above today's R1 or R2 pivot; one series per broken level.
+      #   How:   stock:pivot:price{EQ, level=~"R1|R2"} < ignoring(level) group_left() stock_last_price{core, EQ}
+      #          unless the same comparison held 1m ago (both sides offset 1m); group_left keeps the pivot's `level`
+      #          label; * 0 + 1, market open only.
+      #   Debug: stock:pivot:price{symbol="X"}, stock_last_price{symbol="X"}. No event without pivots (needs the previous
+      #          session's EOD snapshot); if the 1m-ago pivot is missing, a price already above the level counts as a break.
       # Keeps the pivot `level` label (R1/R2 upward, S1/S2 downward).
       - record: stock:event:bool
         labels: {event: pivot_break, direction: bullish}
@@ -25,6 +42,11 @@ groups:
             unless stock:pivot:price{instrument_type="EQ", level=~"R1|R2"} offset 1m < ignoring(level) group_left() stock_last_price{tier="core", instrument_type="EQ"} offset 1m
           ) * 0 + 1
           and on() stock_market_open == 1
+      # stock:event:bool {event=pivot_break, direction=bearish}
+      #   What:  1 in the minute the last price first moves below today's S1 or S2 pivot; one series per broken level.
+      #   How:   stock:pivot:price{EQ, level=~"S1|S2"} > ignoring(level) group_left() stock_last_price{core, EQ} unless
+      #          the same held 1m ago; * 0 + 1, market open only.
+      #   Debug: as the bullish pivot break.
       - record: stock:event:bool
         labels: {event: pivot_break, direction: bearish}
         expr: |
@@ -34,34 +56,63 @@ groups:
           ) * 0 + 1
           and on() stock_market_open == 1
 
+      # stock:event:bool {event=bollinger_breakout, direction=bullish}
+      #   What:  1 in the minute price closes above the upper 20m Bollinger band (%B crosses above 1).
+      #   How:   (stock:bollinger_percent_b_20m:ratio{EQ} > 1 and its offset 1m <= 1) * 0 + 1, market open only.
+      #   Debug: stock:bollinger_percent_b_20m:ratio{symbol="X"}[5m]; no event while %B warms up (nse_volatility) or
+      #          when the 1m-ago sample is missing.
       - record: stock:event:bool
         labels: {event: bollinger_breakout, direction: bullish}
         expr: |
           (stock:bollinger_percent_b_20m:ratio{instrument_type="EQ"} > 1 and stock:bollinger_percent_b_20m:ratio{instrument_type="EQ"} offset 1m <= 1) * 0 + 1
           and on() stock_market_open == 1
+      # stock:event:bool {event=bollinger_breakout, direction=bearish}
+      #   What:  1 in the minute price closes below the lower 20m Bollinger band (%B crosses below 0).
+      #   How:   (%B < 0 and %B offset 1m >= 0) * 0 + 1, market open only.
+      #   Debug: as the bullish Bollinger event.
       - record: stock:event:bool
         labels: {event: bollinger_breakout, direction: bearish}
         expr: |
           (stock:bollinger_percent_b_20m:ratio{instrument_type="EQ"} < 0 and stock:bollinger_percent_b_20m:ratio{instrument_type="EQ"} offset 1m >= 0) * 0 + 1
           and on() stock_market_open == 1
 
+      # stock:event:bool {event=rsi_cross_70, direction=bearish}
+      #   What:  1 in the minute Wilder RSI(14, 1m) rises above 70 (enters overbought), hence direction=bearish.
+      #   How:   (stock:rsi_wilder_14m:index{EQ} > 70 and its offset 1m <= 70) * 0 + 1, market open only.
+      #   Debug: stock:rsi_wilder_14m:index{symbol="X"}[5m]; no event while RSI warms up (nse_momentum, stateful) or
+      #          when the 1m-ago sample is missing.
       - record: stock:event:bool
         labels: {event: rsi_cross_70, direction: bearish}
         expr: |
           (stock:rsi_wilder_14m:index{instrument_type="EQ"} > 70 and stock:rsi_wilder_14m:index{instrument_type="EQ"} offset 1m <= 70) * 0 + 1
           and on() stock_market_open == 1
+      # stock:event:bool {event=rsi_cross_30, direction=bullish}
+      #   What:  1 in the minute Wilder RSI(14, 1m) falls below 30 (enters oversold), hence direction=bullish.
+      #   How:   (RSI < 30 and RSI offset 1m >= 30) * 0 + 1, market open only.
+      #   Debug: as the RSI 70 event.
       - record: stock:event:bool
         labels: {event: rsi_cross_30, direction: bullish}
         expr: |
           (stock:rsi_wilder_14m:index{instrument_type="EQ"} < 30 and stock:rsi_wilder_14m:index{instrument_type="EQ"} offset 1m >= 30) * 0 + 1
           and on() stock_market_open == 1
 
+      # stock:event:bool {event=ma_cross_50_200, direction=bullish}
+      #   What:  1 in the minute the 50-minute SMA crosses above the 200-minute SMA (intraday golden cross).
+      #   How:   (stock:sma_50m:price{EQ} > stock:sma_200m:price and sma_50m offset 1m <= sma_200m offset 1m) * 0 + 1,
+      #          one-to-one label match, market open only.
+      #   Debug: stock:sma_50m:price{symbol="X"}, stock:sma_200m:price{symbol="X"}. SMA200 only exists once 200 min of
+      #          the session have passed (seconds_to_close <= 10500, ~12:35) and its first minute has no 1m-ago sample,
+      #          so events are possible only in the afternoon.
       # Intraday golden / death cross of SMA50 and SMA200 on 1m closes (§7.2 #20-21).
       - record: stock:event:bool
         labels: {event: ma_cross_50_200, direction: bullish}
         expr: |
           (stock:sma_50m:price{instrument_type="EQ"} > stock:sma_200m:price and stock:sma_50m:price{instrument_type="EQ"} offset 1m <= stock:sma_200m:price offset 1m) * 0 + 1
           and on() stock_market_open == 1
+      # stock:event:bool {event=ma_cross_50_200, direction=bearish}
+      #   What:  1 in the minute the 50-minute SMA crosses below the 200-minute SMA (intraday death cross).
+      #   How:   (sma_50m < sma_200m and sma_50m offset 1m >= sma_200m offset 1m) * 0 + 1, market open only.
+      #   Debug: as the bullish MA cross.
       - record: stock:event:bool
         labels: {event: ma_cross_50_200, direction: bearish}
         expr: |

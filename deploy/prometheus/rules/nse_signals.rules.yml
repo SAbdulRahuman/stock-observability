@@ -5,24 +5,70 @@ groups:
   - name: nse_signals
     interval: 1m
     rules:
+      # stock:signal_active:bool {signal=rsi_overbought}
+      #   What:  1 while the 14-minute RSI of a stock is above 70 (overbought, possible pullback -> bearish); the
+      #          series is absent otherwise. All signals in this group evaluate once a minute.
+      #   How:   stock:rsi_14m:index{instrument_type="EQ"} > bool 70 == 1: `bool` maps the comparison to 0/1 and
+      #          `== 1` keeps only true rows, so the value is 1 and __name__ is dropped; input labels (exchange,
+      #          symbol, sector, tier, ...) are kept and {signal, direction} added. `and on() stock_market_open == 1`
+      #          limits it to 09:15-15:30 IST.
+      #   Debug: Query stock:rsi_14m:index (core tier only, nse_momentum). RSI is NaN for a flat price (0/0, never
+      #          signals) and 100 when there were no down-minutes; needs ~15m of prices (14 x 1m diffs + offset 1m).
       - record: stock:signal_active:bool
         labels: {signal: rsi_overbought, direction: bearish}
         expr: stock:rsi_14m:index{instrument_type="EQ"} > bool 70 == 1 and on() stock_market_open == 1
+      # stock:signal_active:bool {signal=rsi_oversold}
+      #   What:  1 while the 14-minute RSI of a stock is below 30 (oversold, possible rebound -> bullish).
+      #   How:   stock:rsi_14m:index{instrument_type="EQ"} < bool 30 == 1 and on() stock_market_open == 1; value 1,
+      #          input labels kept plus {signal, direction}.
+      #   Debug: Query stock:rsi_14m:index. RSI is 0 when there were no up-minutes in the window and NaN for a flat
+      #          price; empty outside market hours and for the first ~15m after the input appears.
       - record: stock:signal_active:bool
         labels: {signal: rsi_oversold, direction: bullish}
         expr: stock:rsi_14m:index{instrument_type="EQ"} < bool 30 == 1 and on() stock_market_open == 1
+      # stock:signal_active:bool {signal=stochastic_overbought}
+      #   What:  1 while stochastic %K(14m) is above 80, i.e. the price sits in the top 20% of its 14-minute range
+      #          (bearish mean-reversion hint).
+      #   How:   stock:stochastic_k_14m:percent{instrument_type="EQ"} > bool 80 == 1 and on() stock_market_open == 1.
+      #          %K = (C - min14) / (max14 - min14) * 100 over raw last-price samples of the last 14m.
+      #   Debug: Query stock:stochastic_k_14m:percent (core only). Absent when the 14m range is 0 (the input's
+      #          `> 0` guard drops flat prices), so illiquid or frozen symbols never signal.
       - record: stock:signal_active:bool
         labels: {signal: stochastic_overbought, direction: bearish}
         expr: stock:stochastic_k_14m:percent{instrument_type="EQ"} > bool 80 == 1 and on() stock_market_open == 1
+      # stock:signal_active:bool {signal=stochastic_oversold}
+      #   What:  1 while stochastic %K(14m) is below 20, i.e. the price sits in the bottom 20% of its 14-minute range
+      #          (bullish mean-reversion hint).
+      #   How:   stock:stochastic_k_14m:percent{instrument_type="EQ"} < bool 20 == 1 and on() stock_market_open == 1.
+      #   Debug: Query stock:stochastic_k_14m:percent; absent for a zero 14m range (division guard) and outside
+      #          market hours.
       - record: stock:signal_active:bool
         labels: {signal: stochastic_oversold, direction: bullish}
         expr: stock:stochastic_k_14m:percent{instrument_type="EQ"} < bool 20 == 1 and on() stock_market_open == 1
+      # stock:signal_active:bool {signal=bollinger_breakout, direction=bullish}
+      #   What:  1 while the last price is above the upper Bollinger band (20 x 1m, 2 sigma), i.e. %B > 1.
+      #   How:   stock:bollinger_percent_b_20m:ratio{instrument_type="EQ"} > bool 1 == 1 and on() stock_market_open == 1.
+      #          %B = (C - (SMA20 - 2s)) / 4s on 1m closes ([20m:1m] subqueries); 0 = lower band, 1 = upper band.
+      #   Debug: Query stock:bollinger_percent_b_20m:ratio (core only, nse_volatility, 30s). Absent when the 20m
+      #          stddev is 0 (flat price, `> 0` guard) and outside market hours.
       - record: stock:signal_active:bool
         labels: {signal: bollinger_breakout, direction: bullish}
         expr: stock:bollinger_percent_b_20m:ratio{instrument_type="EQ"} > bool 1 == 1 and on() stock_market_open == 1
+      # stock:signal_active:bool {signal=bollinger_breakout, direction=bearish}
+      #   What:  1 while the last price is below the lower Bollinger band (20 x 1m, 2 sigma), i.e. %B < 0.
+      #   How:   stock:bollinger_percent_b_20m:ratio{instrument_type="EQ"} < bool 0 == 1 and on() stock_market_open == 1.
+      #   Debug: Same input as the bullish breakout; absent for a flat 20m price (zero stddev) or market closed.
       - record: stock:signal_active:bool
         labels: {signal: bollinger_breakout, direction: bearish}
         expr: stock:bollinger_percent_b_20m:ratio{instrument_type="EQ"} < bool 0 == 1 and on() stock_market_open == 1
+      # stock:signal_active:bool {signal=bollinger_squeeze}
+      #   What:  1 while Bollinger band width is near its 2-hour low and narrow in absolute terms: volatility
+      #          compression that often precedes a breakout (direction unknown -> neutral).
+      #   How:   width <= 1.05 * min_over_time(width[2h]) and width < 0.6, with width =
+      #          stock:bollinger_width_20m:percent{instrument_type="EQ"} (4s / SMA20 * 100). `* 0 + 1` forces the value
+      #          to 1. Gates: market open and stock_market_seconds_to_close < 15300 (elapsed > 7200s, i.e. from 11:15).
+      #   Debug: Query stock:bollinger_width_20m:percent and min_over_time(...[2h]) for the symbol. Nothing before
+      #          11:15 IST by design; wide-ranging stocks (width >= 0.6%) never squeeze.
       # Width within 5% of its 2h low and below 0.6%, from 11:15 (2h of bars available).
       - record: stock:signal_active:bool
         labels: {signal: bollinger_squeeze, direction: neutral}
@@ -33,22 +79,51 @@ groups:
           ) * 0 + 1
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close < 15300
+      # stock:signal_active:bool {signal=rvol_high}
+      #   What:  1 while relative volume is above 3, i.e. the stock has traded more than 3x the volume expected by
+      #          this time of day (unusual interest, direction-neutral).
+      #   How:   stock:relative_volume:ratio > bool 3 == 1 and on() stock_market_open == 1. RVOL = day volume /
+      #          (14-day average session volume * elapsed / 22500s); the input is already core EQ only.
+      #   Debug: Query stock:relative_volume:ratio and count_over_time(stock:session_volume:shares[14d]). The input
+      #          needs >= 5 EOD snapshot samples in 14 days (nse_eod_snapshot, post_close) and starts only at 09:45.
       - record: stock:signal_active:bool
         labels: {signal: rvol_high, direction: neutral}
         expr: stock:relative_volume:ratio > bool 3 == 1 and on() stock_market_open == 1
+      # stock:signal_active:bool {signal=pivot_above_r1}
+      #   What:  1 while the last price trades above the floor-pivot first resistance R1 (bullish strength).
+      #   How:   stock_last_price{tier="core", instrument_type="EQ"} > bool ignoring(level) stock:pivot:price{level="R1"}
+      #          == 1 and on() stock_market_open == 1. R1 = 2P - PL, P = (PH + PL + PC) / 3 from the previous session;
+      #          ignoring(level) lets the pivot match the price series; output keeps the price labels (job, instance).
+      #   Debug: Query stock:pivot:price{level="R1"} (nse_price_levels). Empty until an EOD snapshot of
+      #          stock:session_high/low:price exists within 7 days (needs one completed post_close phase).
       - record: stock:signal_active:bool
         labels: {signal: pivot_above_r1, direction: bullish}
         expr: |
           stock_last_price{tier="core", instrument_type="EQ"} > bool ignoring(level) stock:pivot:price{level="R1"} == 1
           and on() stock_market_open == 1
+      # stock:signal_active:bool {signal=pivot_below_s1}
+      #   What:  1 while the last price trades below the floor-pivot first support S1 (bearish weakness).
+      #   How:   stock_last_price{tier="core", instrument_type="EQ"} < bool ignoring(level) stock:pivot:price{level="S1"}
+      #          == 1 and on() stock_market_open == 1. S1 = 2P - PH.
+      #   Debug: Query stock:pivot:price{level="S1"}; empty without a previous-session EOD snapshot (7d lookback).
       - record: stock:signal_active:bool
         labels: {signal: pivot_below_s1, direction: bearish}
         expr: |
           stock_last_price{tier="core", instrument_type="EQ"} < bool ignoring(level) stock:pivot:price{level="S1"} == 1
           and on() stock_market_open == 1
+      # stock:signal_active:bool {signal=relative_strength_strong}
+      #   What:  1 while the stock's day change beats the NIFTY 50 day change by more than 3 percentage points.
+      #   How:   stock:relative_strength_nifty:percent > bool 3 == 1 and on() stock_market_open == 1, where the input
+      #          = stock_change_percent (core EQ) - on() group_left() stock_change_percent{symbol="NIFTY 50"}.
+      #   Debug: Query stock:relative_strength_nifty:percent and stock_change_percent{symbol="NIFTY 50"}; empty if
+      #          the NIFTY 50 index series is missing from the core watchlist/feed.
       - record: stock:signal_active:bool
         labels: {signal: relative_strength_strong, direction: bullish}
         expr: stock:relative_strength_nifty:percent > bool 3 == 1 and on() stock_market_open == 1
+      # stock:signal_active:bool {signal=relative_strength_weak}
+      #   What:  1 while the stock's day change trails the NIFTY 50 day change by more than 3 percentage points.
+      #   How:   stock:relative_strength_nifty:percent < bool -3 == 1 and on() stock_market_open == 1.
+      #   Debug: Same input as relative_strength_strong; empty without the NIFTY 50 series or outside market hours.
       - record: stock:signal_active:bool
         labels: {signal: relative_strength_weak, direction: bearish}
         expr: stock:relative_strength_nifty:percent < bool -3 == 1 and on() stock_market_open == 1

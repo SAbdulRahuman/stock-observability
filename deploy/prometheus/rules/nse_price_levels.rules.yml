@@ -5,9 +5,24 @@ groups:
   - name: nse_price_levels
     interval: 15s
     rules:
+      # stock:intraday_return:percent
+      #   What:  Move since today's open in %, i.e. the open-to-now return (unlike stock_change_percent, which is vs
+      #          the previous close and includes the opening gap). > 0 = trading above the open.
+      #   How:   (stock_last_price - stock_open_price) / stock_open_price * 100, tier="core", open `> 0` guard. 15s group,
+      #          no market-open gate (the last session's value stays visible until the next open).
+      #   Debug: stock_open_price{symbol="X"}; empty when the open is 0 (before the first trade of the day).
       - record: stock:intraday_return:percent
         expr: (stock_last_price{tier="core"} - stock_open_price{tier="core"}) / (stock_open_price{tier="core"} > 0) * 100
 
+      # stock:pivot:price {level=P}
+      #   What:  Classic floor-trader pivot for today, in INR, from yesterday's high/low/close; price above P is read
+      #          as a bullish day bias, below as bearish. Basis for R1/S1/R2/S2.
+      #   How:   P = (PH + PL + PC) / 3, PH/PL = last_over_time(stock:session_high/low:price[7d]) (latest post-close EOD
+      #          snapshot; 7d spans weekends/holidays), PC = stock_previous_close_price{tier="core"} (Kite ohlc.close).
+      #          Only recorded while stock_market_phase{phase=~"pre_open|open"} == 1. Static label level="P".
+      #   Debug: last_over_time(stock:session_high:price{symbol="X"}[7d]), stock_previous_close_price{symbol="X"},
+      #          stock_market_phase. Empty outside pre-open/open, and until 1 session of EOD snapshots exists (or after
+      #          > 7 days without one). If yesterday's snapshot is missing, an older PH/PL is mixed with today's PC.
       - record: stock:pivot:price
         labels: {level: P}
         expr: |
@@ -17,25 +32,49 @@ groups:
             + stock_previous_close_price{tier="core"}
           ) / 3
           and on() stock_market_phase{phase=~"pre_open|open"} == 1
+      # stock:pivot:price {level=R1}
+      #   What:  First resistance above the pivot (INR): R1 = 2P - PL.
+      #   How:   2 * stock:pivot:price{level="P"} (computed just above in the same group) - ignoring(level)
+      #          last_over_time(stock:session_low:price[7d]); the output gets level="R1".
+      #   Debug: stock:pivot:price{symbol="X"}; empty whenever level="P" is empty (outside pre-open/open, no snapshot).
       - record: stock:pivot:price
         labels: {level: R1}
         expr: |
           2 * stock:pivot:price{level="P"} - ignoring(level) last_over_time(stock:session_low:price[7d])
+      # stock:pivot:price {level=S1}
+      #   What:  First support below the pivot (INR): S1 = 2P - PH.
+      #   How:   2 * stock:pivot:price{level="P"} - ignoring(level) last_over_time(stock:session_high:price[7d]).
+      #   Debug: same inputs and empty causes as level="P".
       - record: stock:pivot:price
         labels: {level: S1}
         expr: |
           2 * stock:pivot:price{level="P"} - ignoring(level) last_over_time(stock:session_high:price[7d])
+      # stock:pivot:price {level=R2}
+      #   What:  Second resistance (INR): R2 = P + (PH - PL), i.e. the pivot plus yesterday's full range.
+      #   How:   stock:pivot:price{level="P"} + ignoring(level) (last PH - last PL) from the 7d EOD snapshots.
+      #   Debug: same inputs and empty causes as level="P".
       - record: stock:pivot:price
         labels: {level: R2}
         expr: |
           stock:pivot:price{level="P"}
           + ignoring(level) (last_over_time(stock:session_high:price[7d]) - last_over_time(stock:session_low:price[7d]))
+      # stock:pivot:price {level=S2}
+      #   What:  Second support (INR): S2 = P - (PH - PL), i.e. the pivot minus yesterday's full range.
+      #   How:   stock:pivot:price{level="P"} - ignoring(level) (last PH - last PL) from the 7d EOD snapshots.
+      #   Debug: same inputs and empty causes as level="P".
       - record: stock:pivot:price
         labels: {level: S2}
         expr: |
           stock:pivot:price{level="P"}
           - ignoring(level) (last_over_time(stock:session_high:price[7d]) - last_over_time(stock:session_low:price[7d]))
 
+      # stock:opening_range:price {bound=high}
+      #   What:  Opening-range high (INR): the day high reached during the first 15 minutes (09:15-09:30).
+      #   How:   stock_high_price{tier="core"} recorded only while stock_market_open == 1 and
+      #          stock_market_seconds_to_close > 21600 (elapsed < 900 s); the last sample (~09:30) is the range high.
+      #          Static label bound="high". Consumers read last_over_time(...[6h15m]) to carry it to 15:30.
+      #   Debug: last_over_time(stock:opening_range:price{symbol="X"}[6h15m]). Raw series is empty after ~09:30 by
+      #          design; missing for the day if the exporter/Prometheus was down between 09:15 and 09:30.
       # Day high/low during the first 15 minutes (09:15-09:30). Read with last_over_time(...[6h15m]).
       - record: stock:opening_range:price
         labels: {bound: high}
@@ -43,6 +82,10 @@ groups:
           stock_high_price{tier="core"}
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close > 21600
+      # stock:opening_range:price {bound=low}
+      #   What:  Opening-range low (INR): the day low reached during 09:15-09:30.
+      #   How:   stock_low_price{tier="core"} with the same open / seconds_to_close > 21600 gates; label bound="low".
+      #   Debug: same as bound="high".
       - record: stock:opening_range:price
         labels: {bound: low}
         expr: |
@@ -53,6 +96,16 @@ groups:
   - name: nse_price_levels_alerts
     interval: 15s
     rules:
+      # StockMultiSessionBreakout
+      #   What:  Fires (info) when a core equity trades above its ~20-session high (direction="bullish") or below its
+      #          ~20-session low ("bearish") on more than 1.5x relative volume. Value = last price.
+      #   How:   bullish: stock_last_price{core, EQ} > max_over_time(stock:session_high:price[28d]) and
+      #          count_over_time(stock:session_high:price[28d]) >= 15 and stock:relative_volume:ratio > 1.5; bearish
+      #          mirrors with min_over_time(stock:session_low:price[28d]) and <. 28 calendar days ~ 20 sessions; today's
+      #          high/low is not in the window until its post-close snapshot. Branches labelled via label_replace
+      #          ("direction"), and on() stock_market_open == 1; `for: 1m`, `keep_firing_for: 30m`.
+      #   Debug: max_over_time(stock:session_high:price{symbol="X"}[28d]), count_over_time(...[28d]) (needs >= 15 EOD
+      #          snapshots), stock:relative_volume:ratio{symbol="X"} (empty before 09:45 or < 5 sessions history).
       # 20-session high/low from the EOD snapshots (28 calendar days), with volume confirmation.
       - alert: StockMultiSessionBreakout
         expr: |
@@ -79,6 +132,17 @@ groups:
           effectiveness: '{{ with printf `alert:hit_rate_5d:ratio{alertname="StockMultiSessionBreakout",direction=%q,horizon="15m"}` $labels.direction | query }}15m hit rate over the last 5 days: {{ . | first | value | humanizePercentage }}{{ else }}No history yet{{ end }}'
           link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"
 
+      # StockOpeningRangeBreakout
+      #   What:  Fires (info) in the minute a core equity first crosses above its 09:15-09:30 opening-range high
+      #          (direction="bullish") or below its low ("bearish") on more than 1.5x relative volume. Value = last price.
+      #   How:   bullish: C > ignoring(bound) last_over_time(stock:opening_range:price{bound="high"}[6h15m]) unless
+      #          the same comparison already held 1m ago (C offset 1m vs OR high offset 1m) - i.e. a fresh cross - and
+      #          stock:relative_volume:ratio > 1.5; bearish mirrors with bound="low". `unless`/`and` evaluate left to
+      #          right. Gated on stock_market_open == 1 and seconds_to_close < 21600 (after 09:30). No `for:`; the
+      #          ~1m crossing signal is held by `keep_firing_for: 15m`.
+      #   Debug: last_over_time(stock:opening_range:price{symbol="X"}[6h15m]), stock:relative_volume:ratio{symbol="X"}.
+      #          A cross between 09:30 and 09:45 never fires (RVOL is empty then and the cross is only fresh for 1m);
+      #          no opening range recorded today (outage 09:15-09:30) means no alert all day.
       # Relative volume only exists from 09:45, so in practice this fires from 09:45.
       - alert: StockOpeningRangeBreakout
         expr: |

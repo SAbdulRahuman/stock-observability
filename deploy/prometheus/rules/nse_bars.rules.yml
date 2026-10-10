@@ -6,12 +6,38 @@ groups:
   - name: nse_bars
     interval: 1m
     rules:
+      # stock:bar_1m_high:price
+      #   What:  High of the last one-minute bar in rupees, built from LTP samples (not an exchange candle); always
+      #          >= stock:bar_1m_low:price and >= the bar close.
+      #   How:   H = max_over_time(stock_last_price{tier="core"}[1m]), i.e. max of the ~1s LTP samples in (t-1m, t].
+      #          No instrument_type filter, so indices (e.g. "NIFTY 50") get bars too. Gated on() stock_market_open == 1.
+      #   Debug: Query stock_last_price{tier="core",symbol="X"}[1m] and stock_market_open. Empty when the market is
+      #          closed, the symbol is not tier="core", or the exporter has not scraped it within the last minute.
       - record: stock:bar_1m_high:price
         expr: max_over_time(stock_last_price{tier="core"}[1m]) and on() stock_market_open == 1
+      # stock:bar_1m_low:price
+      #   What:  Low of the last one-minute bar in rupees, built from LTP samples (not an exchange candle).
+      #   How:   L = min_over_time(stock_last_price{tier="core"}[1m]) over (t-1m, t]; all core instrument types
+      #          including indices. Gated on() stock_market_open == 1.
+      #   Debug: Same inputs as stock:bar_1m_high:price. H == L (flat minute) is normal for illiquid names and makes
+      #          stock:bar_1m_money_flow_volume:shares 0.
       - record: stock:bar_1m_low:price
         expr: min_over_time(stock_last_price{tier="core"}[1m]) and on() stock_market_open == 1
+      # stock:bar_1m_close:price
+      #   What:  Close of the one-minute bar = the LTP at evaluation time, in rupees.
+      #   How:   C = stock_last_price{tier="core"} (instant value, 5m lookback) and on() stock_market_open == 1.
+      #          Downstream 1m-change rules compare it with its own value offset 1m.
+      #   Debug: Query stock_last_price{tier="core",symbol="X"}. Empty when the market is closed or the symbol is
+      #          not tier="core"; a stuck LTP repeats the same close every minute.
       - record: stock:bar_1m_close:price
         expr: stock_last_price{tier="core"} and on() stock_market_open == 1
+      # stock:bar_1m_volume:shares
+      #   What:  Shares traded during the last minute (>= 0); spikes show volume bursts. Equities only.
+      #   How:   V = day_volume - day_volume offset 1m, kept only if >= 0 (stock_day_volume_shares{tier="core",
+      #          instrument_type="EQ"}). If the delta is negative (day-volume reset at the new session) or there is no
+      #          sample 1m ago, `or` falls back to the whole current day volume. Gated on() stock_market_open == 1.
+      #   Debug: Query stock_day_volume_shares{symbol="X"} and its offset 1m. A huge first bar of the day is the
+      #          reset fallback, not a data error. Empty for indices (no EQ volume) and outside market hours.
       - record: stock:bar_1m_volume:shares
         expr: |
           (
@@ -19,8 +45,21 @@ groups:
             or stock_day_volume_shares{tier="core", instrument_type="EQ"}
           )
           and on() stock_market_open == 1
+      # stock:bar_1m_typical:price
+      #   What:  Typical price of the one-minute bar in rupees, the usual input for VWAP/CCI/MFI-style indicators.
+      #   How:   TP = (H + L + C) / 3 from stock:bar_1m_high/low/close:price, one-to-one on identical labels. No own
+      #          market gate; the inputs are already gated on stock_market_open.
+      #   Debug: Check the three bar series for the symbol; empty if any of them is missing at this evaluation.
       - record: stock:bar_1m_typical:price
         expr: (stock:bar_1m_high:price + stock:bar_1m_low:price + stock:bar_1m_close:price) / 3
+      # stock:bar_1m_money_flow_volume:shares
+      #   What:  Chaikin money-flow volume of the minute in shares: +V when the bar closes at its high, -V at its low,
+      #          0 at mid-range or when H = L. Summed it gives accumulation/distribution (stock:session_ad:shares).
+      #   How:   MFV = ((C - L) - (H - C)) / (H - L) * V with H/L/C from the 1m bar rules and V =
+      #          stock:bar_1m_volume:shares. The `(H - L) > 0` guard drops flat bars, and `or 0 * V` re-adds them as 0.
+      #          EQ only, because V exists only for instrument_type="EQ".
+      #   Debug: Check stock:bar_1m_high/low/close:price and stock:bar_1m_volume:shares for the symbol. Empty when V is
+      #          missing (index, market closed); a constant 0 means H == L every minute (no intraminute price movement).
       - record: stock:bar_1m_money_flow_volume:shares
         expr: |
           (

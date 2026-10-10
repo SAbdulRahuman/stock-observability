@@ -10,6 +10,14 @@ groups:
   - name: nse_regimes
     interval: 1m
     rules:
+      # market:breadth_score:index
+      #   What:  Market breadth 0-100: how broad the participation is. ~50 neutral, > 75 broad buying, < 25 broad
+      #          selling.
+      #   How:   100 * mean of three 0-1 terms: adv / (adv + dec) (market:advancers/decliners:count, missing
+      #          counts -> vector(0), `> 0` guards the sum), market:above_vwap:ratio, and
+      #          clamp(1 - (market:trin:ratio - 0.5) / 1.5, 0, 1) (TRIN 0.5 -> 1, 2 -> 0). Joined with on().
+      #   Debug: Absent if TRIN or above-VWAP is absent: TRIN needs both advancers and decliners with volume.
+      #          Universe is all EQ instruments, not only core.
       - record: market:breadth_score:index
         expr: |
           100 * (
@@ -18,12 +26,34 @@ groups:
             + on() market:above_vwap:ratio
             + on() clamp(1 - (market:trin:ratio - 0.5) / 1.5, 0, 1)
           ) / 3
+      # market:momentum_score:index
+      #   What:  Market momentum 0-100 from the NIFTY 50 day change: 50 = flat, 0 = down >= 2%, 100 = up >= 2%.
+      #   How:   50 + 50 * clamp(max(stock_change_percent{symbol="NIFTY 50", instrument_type="INDEX"}) / 2, -1, 1);
+      #          max() drops labels.
+      #   Debug: Empty if the NIFTY 50 index is not in the watchlist.
       - record: market:momentum_score:index
         expr: 50 + 50 * clamp(max(stock_change_percent{symbol="NIFTY 50", instrument_type="INDEX"}) / 2, -1, 1)
+      # market:volatility_score:index
+      #   What:  Market volatility 0-100 from INDIA VIX: VIX <= 10 -> 0, VIX >= 30 -> 100, linear in between.
+      #   How:   100 * clamp((max(stock_last_price{symbol="INDIA VIX"}) - 10) / 20, 0, 1).
+      #   Debug: Empty if INDIA VIX is not scraped; check stock_last_price{symbol="INDIA VIX"}.
       - record: market:volatility_score:index
         expr: 100 * clamp((max(stock_last_price{symbol="INDIA VIX"}) - 10) / 20, 0, 1)
+      # market:liquidity_score:index
+      #   What:  Market liquidity 0-100: median order-book depth vs its own 1h average across equities. 100 =
+      #          depth at or above normal (saturates), 50 = half the usual depth.
+      #   How:   100 * clamp(quantile(0.5, stock:depth_vs_1h:ratio{instrument_type="EQ"}), 0, 1), where depth_vs_1h =
+      #          stock:orderbook_depth:inr / avg_over_time(...[1h]).
+      #   Debug: Needs the depth collector (core tier) and ~1h of depth history for a meaningful ratio.
       - record: market:liquidity_score:index
         expr: 100 * clamp(quantile(0.5, stock:depth_vs_1h:ratio{instrument_type="EQ"}), 0, 1)
+      # market:stress_score:index
+      #   What:  Market stress 0-100: weighted blend of weak breadth, high volatility, thin liquidity and
+      #          lower-circuit hits. > 70 sustained fires MarketStressIncident.
+      #   How:   0.3 (100 - breadth) + 0.3 volatility + 0.2 (100 - liquidity)
+      #          + 0.2 * 100 * clamp(lower circuits / 50, 0, 1), lower circuits = max(market:circuit_hits:count
+      #          {band="lower"}) or vector(0) (50 hits saturate). Weights are uncalibrated heuristics.
+      #   Debug: Absent if any of the breadth, volatility or liquidity scores is absent (check each).
       - record: market:stress_score:index
         expr: |
           (
@@ -32,10 +62,21 @@ groups:
             + 0.2 * (100 - market:liquidity_score:index)
             + 0.2 * 100 * clamp((max(market:circuit_hits:count{band="lower"}) or vector(0)) / 50, 0, 1)
           )
+      # market:risk_score:index
+      #   What:  Overall market risk 0-100: equal blend of the volatility and stress scores.
+      #   How:   0.5 * market:volatility_score:index + 0.5 * market:stress_score:index.
+      #   Debug: Absent whenever the stress score is absent.
       - record: market:risk_score:index
         expr: 0.5 * market:volatility_score:index + 0.5 * market:stress_score:index
 
       # Regime inputs: share of core EQ beyond their 20-session range, spread of sector strength.
+      # market:breakout_share:ratio
+      #   What:  Share (0-1) of core equities trading outside their ~20-session range right now (above the prior
+      #          sessions' highest high or below their lowest low). >= 0.15 triggers BREAKOUT_REGIME.
+      #   How:   count(core EQ with LTP > max_over_time(stock:session_high:price[28d]) or LTP <
+      #          min_over_time(stock:session_low:price[28d]), only where count_over_time(session_high[28d]) >= 15)
+      #          or vector(0), divided by count of all core EQ LTPs. The EOD snapshots exclude today's session.
+      #   Debug: Stays 0 until stocks have 15 post_close snapshots; check stock:session_high:price history.
       - record: market:breakout_share:ratio
         expr: |
           (
@@ -49,9 +90,27 @@ groups:
             or on() vector(0)
           )
           / count(stock_last_price{tier="core", instrument_type="EQ"})
+      # market:sector_rs_dispersion:percent
+      #   What:  How far apart sectors are performing: population stddev (percentage points) of sector relative
+      #          strength vs NIFTY 50. High with neutral breadth = sector rotation (> 1.5 in the regime rule).
+      #   How:   stddev(sector:relative_strength:percent) across sectors (sector avg change% of core EQ - NIFTY 50).
+      #   Debug: 0 with a single sector; empty without the NIFTY 50 index series.
       - record: market:sector_rs_dispersion:percent
         expr: stddev(sector:relative_strength:percent)
 
+      # market:regime:info
+      #   What:  Current market regime as a single series with value 1 and label `regime`: the first matching of
+      #          LIQUIDITY_STRESS > HIGH_VOLATILITY > BROAD_MARKET_SELL_OFF > BROAD_MARKET_RALLY > TRENDING_BEAR >
+      #          TRENDING_BULL > BREAKOUT_REGIME > SECTOR_ROTATION > LOW_VOLATILITY > NORMAL.
+      #   How:   Each branch is label_replace(vector(1) and on() (condition), "regime", ...); `or on()` keeps the
+      #          RHS only when the LHS is empty, giving first-match precedence. Conditions: liquidity < 30;
+      #          volatility > 70; breadth < 25 and momentum < 30; breadth > 75 and momentum > 70; NIFTY 50
+      #          stock:trend_r2_30m:ratio > 0.7 with stock:trend_slope_30m:percent_per_hour < 0 / > 0;
+      #          breakout_share >= 0.15; sector_rs_dispersion > 1.5 with breadth in [40, 60]; volatility < 20
+      #          and market:dispersion:percent below the 28d median of market:session_dispersion:percent
+      #          (>= 10 sessions); else NORMAL. Gated on() stock_market_open == 1.
+      #   Debug: Only exists while the market is open. A branch whose input is absent is skipped silently (e.g.
+      #          no liquidity score without depth data, no trend branches before 09:45 or without NIFTY 50 in core).
       - record: market:regime:info
         expr: |
           (
@@ -73,6 +132,12 @@ groups:
             or on() label_replace(vector(1), "regime", "NORMAL", "", "")
           )
           and on() stock_market_open == 1
+      # market:regime:code
+      #   What:  Same regime as market:regime:info encoded as a number 1-10 (1 = LIQUIDITY_STRESS ... 10 = NORMAL)
+      #          for Grafana state timelines (see the comment below).
+      #   How:   Identical conditions and `or on()` precedence, with vector(n) instead of label_replace; gated
+      #          on() stock_market_open == 1.
+      #   Debug: Must always agree with market:regime:info; if not, the two expressions have drifted.
       # Same precedence as a number for Grafana state timelines (1 = LIQUIDITY_STRESS ... 10 = NORMAL).
       - record: market:regime:code
         expr: |
@@ -96,6 +161,13 @@ groups:
           )
           and on() stock_market_open == 1
 
+      # sector:regime:info
+      #   What:  Per-sector regime (value 1, label `regime`): LEADING when the sector beats NIFTY 50 by > 1 pp,
+      #          LAGGING when it trails by > 1 pp, else NEUTRAL.
+      #   How:   label_replace on sector:relative_strength:percent filtered > 1 / < -1 / unfiltered, combined with
+      #          `or ignoring(regime)` so each sector keeps only its first match; `* 0 + 1` sets the value to 1
+      #          and drops the metric name. Gated on() stock_market_open == 1.
+      #   Debug: Check sector:relative_strength:percent; sectors labelled unknown/Index are excluded upstream.
       # Sector regime from relative strength vs NIFTY 50 (+/- 1 pp).
       - record: sector:regime:info
         expr: |
@@ -114,6 +186,13 @@ groups:
   - name: nse_regimes_stock
     interval: 1m
     rules:
+      # stock:volatility_regime:info
+      #   What:  Per-equity volatility regime (value 1, label `regime`): HIGH when the Bollinger width is > 1.5x
+      #          its 2h average, LOW when < 0.67x, else NORMAL.
+      #   How:   stock:bollinger_width_20m:percent{instrument_type="EQ"} vs avg_over_time(...[2h]); first match via
+      #          `or ignoring(regime)`, `* 0 + 1` sets value 1. Gated on() stock_market_open == 1.
+      #   Debug: In the first 2h of the session the average still covers pre-open / previous-session widths.
+      #          Core EQ only (Bollinger width is core-only).
       - record: stock:volatility_regime:info
         expr: |
           (
@@ -122,6 +201,12 @@ groups:
             or ignoring(regime) label_replace(stock:bollinger_width_20m:percent{instrument_type="EQ"}, "regime", "NORMAL", "", "")
           ) * 0 + 1
           and on() stock_market_open == 1
+      # stock:liquidity_regime:info
+      #   What:  Per-equity liquidity regime (value 1, label `regime`): THIN when book depth is < 0.5x its 1h
+      #          average, DEEP when > 1.5x, else NORMAL.
+      #   How:   stock:depth_vs_1h:ratio{instrument_type="EQ"} thresholds; first match via `or ignoring(regime)`,
+      #          `* 0 + 1`. Gated on() stock_market_open == 1.
+      #   Debug: Needs the depth collector (stock_orderbook_notional, core tier); check stock:orderbook_depth:inr.
       - record: stock:liquidity_regime:info
         expr: |
           (
@@ -130,6 +215,12 @@ groups:
             or ignoring(regime) label_replace(stock:depth_vs_1h:ratio{instrument_type="EQ"}, "regime", "NORMAL", "", "")
           ) * 0 + 1
           and on() stock_market_open == 1
+      # stock:momentum_regime:info
+      #   What:  Per-equity trend regime (value 1, label `regime`): UPTREND / DOWNTREND when ADX > 25 and +DI / -DI
+      #          dominates, RANGE when ADX < 20, else NEUTRAL (ADX 20-25, or > 25 with equal DIs).
+      #   How:   stock:adx_14m:index{instrument_type="EQ"} with stock:di_plus/di_minus_14m:percent (label match);
+      #          first match via `or ignoring(regime)`, `* 0 + 1`. Gated on() stock_market_open == 1.
+      #   Debug: Absent until ADX exists (~28m after the open); check stock:adx_14m:index.
       - record: stock:momentum_regime:info
         expr: |
           (
@@ -139,6 +230,12 @@ groups:
             or ignoring(regime) label_replace(stock:adx_14m:index{instrument_type="EQ"}, "regime", "NEUTRAL", "", "")
           ) * 0 + 1
           and on() stock_market_open == 1
+      # stock:orderflow_regime:info
+      #   What:  Per-equity order-flow regime (value 1, label `regime`): ACCUMULATION when 1h volume delta > 0.3
+      #          and the weighted book imbalance (WOBI) > 0.2, DISTRIBUTION when both < -0.3 / -0.2, else BALANCED.
+      #   How:   stock:volume_delta_1h:ratio{instrument_type="EQ"} and stock:orderbook_weighted_imbalance:ratio
+      #          (label match); first match via `or ignoring(regime)`, `* 0 + 1`. Gated on market open.
+      #   Debug: BALANCED needs only volume delta; ACCUMULATION/DISTRIBUTION also need depth data (WOBI).
       - record: stock:orderflow_regime:info
         expr: |
           (
@@ -151,6 +248,14 @@ groups:
   - name: nse_regimes_alerts
     interval: 1m
     rules:
+      # MarketRegimeChange
+      #   What:  Fires when the market regime differs from the one 15 minutes ago; label `regime` is the new
+      #          regime. Stays active up to 15m (until the offset catches up), then resolves.
+      #   How:   market:regime:info unless market:regime:info offset 15m (matches on all labels incl. regime),
+      #          and on() count(market:regime:info offset 15m) > 0 (a regime existed 15m ago, so not the session
+      #          start), and on() stock_market_seconds_to_close < 21600 (after 09:30 IST). No `for:`.
+      #   Debug: Compare market:regime:info now and offset 15m; never fires before 09:30 or on the first regime
+      #          of the day.
       # A regime that did not exist 15 minutes ago; not in the first 15 minutes of the session.
       - alert: MarketRegimeChange
         expr: |
@@ -161,6 +266,12 @@ groups:
         annotations:
           summary: "Market regime is now {{ $labels.regime }}"
           description: "The NSE market regime changed to {{ $labels.regime }} within the last 15 minutes (precedence-ordered heuristic from breadth, momentum, volatility, liquidity and trend scores)."
+      # MarketStressIncident
+      #   What:  Fires when the market stress score stays above 70 for 5 minutes during the session. $value is
+      #          the stress score.
+      #   How:   market:stress_score:index > 70 and on() stock_market_open == 1; for: 5m.
+      #   Debug: Check the breadth, volatility and liquidity scores and market:circuit_hits:count{band="lower"};
+      #          the stress score is absent (no alert) when any component score is missing.
       - alert: MarketStressIncident
         expr: |
           market:stress_score:index > 70

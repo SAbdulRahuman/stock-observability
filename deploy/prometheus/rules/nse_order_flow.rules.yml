@@ -6,15 +6,41 @@ groups:
   - name: nse_order_flow
     interval: 5s
     rules:
+      # stock:microprice_deviation:bps
+      #   What:  How far the size-weighted microprice sits from the plain bid/ask midpoint, in basis points of mid.
+      #          > 0: level-1 bid queue outweighs the ask (pressure toward the ask); < 0 the reverse; bounded by
+      #          +/- half the spread in bps, so typically well under +/-5 bps for liquid NIFTY 200 names.
+      #   How:   (stock_orderbook_microprice - stock_orderbook_mid_price) / mid * 1e4, tier="core", every 5s.
+      #          microprice = (bid1 * askQty1 + ask1 * bidQty1) / (bidQty1 + askQty1), mid = (bid1 + ask1) / 2, both
+      #          from the exporter's orderbook collector. `mid > 0` guard drops instruments without a two-sided book.
+      #   Debug: stock_orderbook_microprice{symbol="X"}, stock_orderbook_mid_price{symbol="X"}. Empty when the
+      #          orderbook collector is disabled, the Kite ticker is not in `full` mode (no depth), or the book is
+      #          one-sided (mid/microprice not exported).
       - record: stock:microprice_deviation:bps
         expr: |
           (stock_orderbook_microprice{tier="core"} - stock_orderbook_mid_price{tier="core"})
           / (stock_orderbook_mid_price{tier="core"} > 0)
           * 1e4
+      # stock:volume_delta_1h:ratio
+      #   What:  Tick-rule signed volume share over the last hour, in [-1, 1]: +1 = all volume traded on up-minutes,
+      #          -1 = all on down-minutes, 0 = balanced. Proxy for buyer vs seller aggression (Kite has no aggressor side).
+      #   How:   sum_{1h, 1m steps}(V_1m * sgn(r_1m)) / sum_{1h, 1m steps}(V_1m), with V_1m = stock:volume_1m:shares
+      #          (increase of stock_day_volume_shares over 1m) and r_1m = stock:return_1m:percent; tier="core",
+      #          instrument_type="EQ". Flat minutes (sgn = 0) add volume to the denominator only. Subqueries [1h:1m];
+      #          denominator `> 0` guard. No warm-up guard: in the first hour of a session the window also holds
+      #          pre-open/previous-session minutes (zero volume) so it effectively covers fewer bars (catalog warmup 1h).
+      #   Debug: stock:volume_1m:shares{symbol="X"}, stock:return_1m:percent{symbol="X"},
+      #          sum_over_time(stock:volume_1m:shares{symbol="X"}[1h:1m]). Empty when no volume traded in the hour
+      #          (guard) or for non-EQ / non-core instruments.
       - record: stock:volume_delta_1h:ratio
         expr: |
           sum_over_time((stock:volume_1m:shares{tier="core", instrument_type="EQ"} * sgn(stock:return_1m:percent))[1h:1m])
           / (sum_over_time(stock:volume_1m:shares{tier="core", instrument_type="EQ"}[1h:1m]) > 0)
+      # stock:buy_volume_1h:percent
+      #   What:  Share of the last hour's volume attributed to buyers by the tick rule, 0-100 %; 50 = balanced.
+      #   How:   (1 + stock:volume_delta_1h:ratio) / 2 * 100 - a linear rescale of the volume delta, same labels.
+      #          Flat-minute volume is effectively split 50/50.
+      #   Debug: stock:volume_delta_1h:ratio{symbol="X"}; empty exactly when the volume delta is empty.
       - record: stock:buy_volume_1h:percent
         expr: (1 + stock:volume_delta_1h:ratio) / 2 * 100
 
@@ -24,6 +50,15 @@ groups:
   - name: nse_order_flow_depth
     interval: 15s
     rules:
+      # stock:orderbook_weighted_imbalance:ratio
+      #   What:  Weighted order-book imbalance (WOBI) over the top 5 levels, in [-1, 1]: +1 = only bids, -1 = only asks.
+      #          Levels near the touch count more, so it reacts faster than the unweighted stock_orderbook_imbalance_ratio.
+      #   How:   sum_{side,level} w(level) * s(side) * qty / sum_{side,level} w(level) * qty, qty = stock_depth_quantity
+      #          {tier="core"}, w = 1, 0.8, 0.6, 0.4, 0.2 for level 1..5, s = +1 bid / -1 ask. The weights and signs are
+      #          constant vectors built with label_replace(vector(..)) and joined with `* on(level|side) group_left()`;
+      #          `sum without (level, side)` collapses to one series per instrument. Denominator `> 0` guard. 15s group.
+      #   Debug: stock_depth_quantity{symbol="X"} (expect 10 series: 2 sides x 5 levels). Empty when the depth
+      #          collector is disabled, the ticker is not in `full` mode, or all quantities are 0.
       - record: stock:orderbook_weighted_imbalance:ratio
         expr: |
           sum without (level, side) (
@@ -45,6 +80,15 @@ groups:
                 )
             ) > 0
           )
+      # stock:depth_wall:ratio
+      #   What:  For every side/level of the top-5 book, its quantity relative to the mean quantity of the OTHER levels
+      #          on the same side. 1 = ordinary level, > 5 = a "wall" (used by StockOrderBookWall).
+      #   How:   qty(side, level) / ((sum_levels qty(side) - qty(side, level)) / (count_levels(side) - 1)), from
+      #          stock_depth_quantity{tier="core"}. `ignoring(level) group_right()` broadcasts the per-side sum to each
+      #          level so the side and level labels survive; `count - 1 > 0` and the outer `> 0` guards drop sides with a
+      #          single level or where all other levels are empty. Output labels: side, level. 15s group.
+      #   Debug: stock_depth_quantity{symbol="X", side="bid"}. Empty when depth collection is off/not `full` mode, or
+      #          when only one level is populated or the other levels hold 0 quantity.
       - record: stock:depth_wall:ratio
         expr: |
           stock_depth_quantity{tier="core"}
@@ -53,10 +97,23 @@ groups:
               / ignoring(level) group_left() (count without (level) (stock_depth_quantity{tier="core"}) - 1 > 0)
               > 0
             )
+      # stock:depth_bid_ask:ratio
+      #   What:  Top-5 bid quantity divided by top-5 ask quantity. > 1 = more resting buy interest, < 1 = more sell
+      #          interest; unbounded above (1 = balanced; e.g. 3 means bids hold three times the ask size).
+      #   How:   stock_orderbook_quantity{side="bid"} / stock_orderbook_quantity{side="ask"}, tier="core"; `sum without
+      #          (side)` only strips the side label so the two series match one-to-one. Ask `> 0` guard. 15s group.
+      #   Debug: stock_orderbook_quantity{symbol="X"}. Empty with no depth data or an empty ask side (e.g. upper circuit).
       - record: stock:depth_bid_ask:ratio
         expr: |
           sum without (side) (stock_orderbook_quantity{tier="core", side="bid"})
           / (sum without (side) (stock_orderbook_quantity{tier="core", side="ask"}) > 0)
+      # stock:avg_trade_size_5m:shares
+      #   What:  Approximate average trade size over the last 5 minutes, in shares; higher = larger (institutional) prints.
+      #   How:   avg_over_time(stock_last_traded_quantity{tier="core"}[5m]) - a time-weighted average of the scraped
+      #          last-trade quantity (~300 samples at 1s), not a per-trade mean: a print that stays "last" longer weighs
+      #          more, and trades between scrapes are never seen.
+      #   Debug: stock_last_traded_quantity{symbol="X"}. No market-open gate, so it is also recorded outside the
+      #          session from whatever is still exported; empty only when the instrument has no samples in 5m.
       # Proxy: Kite ticks carry no trade count, so this averages the last traded quantity.
       - record: stock:avg_trade_size_5m:shares
         expr: avg_over_time(stock_last_traded_quantity{tier="core"}[5m])
@@ -69,6 +126,15 @@ groups:
   - name: nse_order_flow_1m
     interval: 1m
     rules:
+      # stock:pending_flow_imbalance_1m:ratio
+      #   What:  Net change of pending (resting, whole-book) buy minus sell quantity over the last minute, relative to
+      #          the current total pending quantity. > 0 = buy interest added / sell interest withdrawn; usually within
+      #          +/-0.1, large values mean a big order was placed or pulled.
+      #   How:   ((BuyQty - BuyQty[1m ago]) - (SellQty - SellQty[1m ago])) / (BuyQty + SellQty), with
+      #          stock_total_buy_quantity / stock_total_sell_quantity{tier="core"} (Kite totals for the whole book,
+      #          not just top 5), `offset 1m`, denominator `> 0` guard. Evaluated every 1m.
+      #   Debug: stock_total_buy_quantity{symbol="X"}, stock_total_sell_quantity{symbol="X"} and their offset 1m.
+      #          Empty in the first minute of a series (no 1m-ago sample) or when both totals are 0.
       - record: stock:pending_flow_imbalance_1m:ratio
         expr: |
           (
@@ -76,6 +142,17 @@ groups:
             - (stock_total_sell_quantity{tier="core"} - stock_total_sell_quantity{tier="core"} offset 1m)
           )
           / ((stock_total_buy_quantity{tier="core"} + stock_total_sell_quantity{tier="core"}) > 0)
+      # stock:ofi_cont_1m:shares
+      #   What:  Cont-Kukanov-Stoikov order-flow imbalance at the touch, summed over the last minute, in shares.
+      #          > 0 = net buying pressure at level 1 (bids added / asks consumed), < 0 = net selling pressure.
+      #   How:   per 1s step e = qb*1{pb >= pb'} - qb'*1{pb <= pb'} - (qa*1{pa <= pa'} - qa'*1{pa >= pa'}), with
+      #          pb/qb, pa/qa = level-1 stock_depth_price/stock_depth_quantity (side=bid/ask, level="1", tier="core")
+      #          and ' = `offset 1s`. Each indicator term is `(qty and price-condition) or 0 * qty` so a false condition
+      #          contributes 0 instead of dropping the series; the ask term is joined `ignoring(side)` and
+      #          `sum without (side, level)` yields one series per instrument. OFI = sum_over_time(e[1m:1s]).
+      #   Debug: stock_depth_price{symbol="X", level="1"}, stock_depth_quantity{symbol="X", level="1"}. Needs 1s
+      #          core scrapes (slower scrapes repeat samples and under-count) and the depth collector with `full` ticks;
+      #          empty without level-1 depth on both sides.
       - record: stock:ofi_cont_1m:shares
         expr: |
           sum_over_time(
@@ -90,10 +167,28 @@ groups:
                 )
             )[1m:1s]
           )
+      # stock:tick_imbalance_1m:ratio
+      #   What:  Balance of up-ticks vs down-ticks of the last traded price over the last minute, in [-1, 1].
+      #          +1 = every price change was up, -1 = every change was down; ignores flat seconds.
+      #   How:   sum_over_time(sgn(C - C[1s ago])[1m:1s]) / sum_over_time(|sgn(C - C[1s ago])|[1m:1s]), C =
+      #          stock_last_price{tier="core"}; denominator (= number of changing 1s steps) `> 0` guard. 1m group.
+      #   Debug: changes(stock_last_price{symbol="X"}[1m]). Empty when the price did not change during the minute
+      #          (illiquid name, market closed) or with scrapes slower than 1s (fewer distinct steps).
       - record: stock:tick_imbalance_1m:ratio
         expr: |
           sum_over_time(sgn(stock_last_price{tier="core"} - stock_last_price{tier="core"} offset 1s)[1m:1s])
           / (sum_over_time(abs(sgn(stock_last_price{tier="core"} - stock_last_price{tier="core"} offset 1s))[1m:1s]) > 0)
+      # stock:ofi_price_impact_60m:bps_per_share
+      #   What:  OLS slope of the 1m mid-price change (bps) on the PREVIOUS minute's OFI over the last 60 one-minute bars:
+      #          bps of mid move per share of net order-flow imbalance. Positive = buy OFI is followed by price rises;
+      #          larger magnitude = thinner, more impact-prone book. Values are tiny (often 1e-5..1e-3).
+      #   How:   dmid_t = (mid - mid[1m ago]) / mid[1m ago] * 1e4 (stock_orderbook_mid_price, `> 0` guard),
+      #          x_t = stock:ofi_cont_1m:shares offset 1m. slope = (mean(dmid*x) - mean(dmid)*mean(x)) / Var(x), all
+      #          means as avg_over_time over [60m:1m] subqueries, Var = stdvar_over_time (population) `> 0` guard.
+      #          Gated by count_over_time(lagged OFI[60m:1m]) >= 30 (catalog warmup 31m). 1m group.
+      #   Debug: stock:ofi_cont_1m:shares{symbol="X"}, stock_orderbook_mid_price{symbol="X"},
+      #          count_over_time(stock:ofi_cont_1m:shares{symbol="X"}[60m:1m] offset 1m). Empty for the first ~31 min
+      #          after OFI starts, when OFI is constant (zero variance) or when depth/orderbook collectors are off.
       - record: stock:ofi_price_impact_60m:bps_per_share
         expr: |
           (
@@ -114,6 +209,15 @@ groups:
   - name: nse_order_flow_alerts
     interval: 5s
     rules:
+      # StockOrderBookWall
+      #   What:  Fires per instrument/side/level when one top-5 level holds more than 5x the mean quantity of the other
+      #          levels on its side AND at least INR 50 lakh notional, for 1 minute during the session (info).
+      #   How:   stock:depth_wall:ratio{instrument_type="EQ"} > 5 and stock_depth_price * stock_depth_quantity
+      #          {tier="core"} >= 5e6 (notional of that same side/level) and on() stock_market_open == 1; `for: 1m`.
+      #          Alert value = wall ratio; labels side and level come from the depth series.
+      #   Debug: stock:depth_wall:ratio{symbol="X"} > 5, stock_depth_price{symbol="X"} * stock_depth_quantity{symbol="X"}.
+      #          Often pending but not firing because the wall shifts level (e.g. level 2 -> 1 as price moves), which
+      #          is a new alert series and restarts `for:`; never fires with depth collection off or market closed.
       # A single level holding 5x the other levels on its side and at least INR 50 lakh (Release 2).
       - alert: StockOrderBookWall
         expr: |
@@ -127,6 +231,15 @@ groups:
           description: "Level {{ $labels.level }} on the {{ $labels.side }} side of {{ $labels.exchange }}:{{ $labels.symbol }} has held at least 5 times the average quantity of the other levels and INR 50 lakh for 1 minute."
           effectiveness: '{{ with printf `alert:forward_return_5d:percent{alertname="StockOrderBookWall",side=%q,horizon="15m"}` $labels.side | query }}Mean 15m return after this alert over the last 5 days: {{ . | first | value | printf "%.2f" }}%{{ else }}No history yet{{ end }}'
           link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"
+      # StockOrderFlowPressure
+      #   What:  Fires when traded flow, the touch and the top-5 book all lean the same way for 2 minutes in session:
+      #          direction="bullish" (buyers dominant) or "bearish" (sellers dominant). Value = 1h volume delta.
+      #   How:   bullish: stock:volume_delta_1h:ratio > 0.6 and stock:microprice_deviation:bps > 0 and
+      #          stock_orderbook_imbalance_ratio (top-5 (bid - ask) / (bid + ask)) > 0.3; bearish: < -0.6, < 0, < -0.3.
+      #          Each branch is wrapped in label_replace(..., "direction", ...) and the two are or-ed; core/EQ scope is
+      #          inherited from the volume delta; and on() stock_market_open == 1; `for: 2m`.
+      #   Debug: query the three inputs for the symbol. Most common blocker: the 5s microprice deviation flips sign
+      #          and resets `for: 2m`; also no firing in the first hour if volume is light, or without orderbook data.
       - alert: StockOrderFlowPressure
         expr: |
           (

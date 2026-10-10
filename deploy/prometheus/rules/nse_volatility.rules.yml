@@ -6,13 +6,37 @@ groups:
   - name: nse_volatility
     interval: 30s
     rules:
+      # stock:realized_vol_annualised:percent
+      #   What:  Intraday realized volatility of the last 15 minutes expressed as an annual %, comparable to
+      #          INDIA VIX / option IV. ~10-40 is normal for large caps; > 60 is a very turbulent tape.
+      #   How:   RV = stock:volatility_15m:percent * 307.4085, where volatility_15m = stddev_over_time of
+      #          stock:return_1m:percent (rolling 1m % returns recorded every 5s) over 15m, and
+      #          307.4085 = sqrt(375 one-minute bars * 252 sessions) scales a 1m stddev to one year. tier="core".
+      #   Debug: Check stock:volatility_15m:percent and stock:return_1m:percent. Needs ~16m of LTP (1m offset +
+      #          15m window); a flat LTP (halt, after the close) drives it to 0.
       - record: stock:realized_vol_annualised:percent
         expr: stock:volatility_15m:percent{tier="core"} * 307.40852297878797
+      # stock:bollinger_width_20m:percent
+      #   What:  Bollinger(20, 2) bandwidth: distance between the upper and lower band as % of the middle band.
+      #          Low values (e.g. < 0.3%) mark a squeeze, rising values a volatility expansion.
+      #   How:   width% = 4 * s / SMA * 100, SMA = avg_over_time and s = population stddev_over_time of
+      #          stock_last_price{tier="core"}[20m:1m] (the subquery samples 20 one-minute closes).
+      #          `> 0` on the SMA guards the division. No warm-up guard: early in the session the window
+      #          still holds pre-open / previous-session samples.
+      #   Debug: Query avg_over_time / stddev_over_time(stock_last_price{symbol="X"}[20m:1m]). 0 means a flat price
+      #          over 20 bars; absent only when the instrument is not tier="core" or has no LTP.
       - record: stock:bollinger_width_20m:percent
         expr: |
           4 * stddev_over_time(stock_last_price{tier="core"}[20m:1m])
           / (avg_over_time(stock_last_price{tier="core"}[20m:1m]) > 0)
           * 100
+      # stock:bollinger_percent_b_20m:ratio
+      #   What:  Bollinger %B: where the LTP sits inside the 20-bar bands. 0 = lower band, 0.5 = SMA, 1 = upper
+      #          band; < 0 or > 1 means the price is outside the bands.
+      #   How:   %B = (C - (SMA - 2s)) / (4s), C = stock_last_price, SMA/s = mean/population stddev of
+      #          stock_last_price{tier="core"}[20m:1m] (20 one-minute closes). `4s > 0` guards the division.
+      #   Debug: Absent when the 20-bar stddev is 0 (flat price, halted stock). Equals
+      #          (stock:price_zscore_20m:sigma + 2) / 4; compare with stock:bollinger_20m:price bands.
       - record: stock:bollinger_percent_b_20m:ratio
         expr: |
           (
@@ -21,10 +45,25 @@ groups:
             + 2 * stddev_over_time(stock_last_price{tier="core"}[20m:1m])
           )
           / (4 * stddev_over_time(stock_last_price{tier="core"}[20m:1m]) > 0)
+      # stock:atr_14d:points
+      #   What:  Daily ATR(14) in price points (INR): the typical full-day true range of the stock over the
+      #          last ~14 sessions. Used as the yardstick for today's range (range_expansion, atr_14d:percent).
+      #   How:   ATR = avg_over_time(stock:session_true_range:points[20d]), a simple mean (not Wilder) of the
+      #          EOD true-range snapshots, TR = max(H, PC) - min(L, PC); 20 calendar days ~ 14 sessions.
+      #          Emitted only when count_over_time(...[20d]) >= 10 sessions. Re-evaluated every 30s though the
+      #          input changes once per day.
+      #   Debug: count_over_time(stock:session_true_range:points{symbol="X"}[20d]); empty until 10 post_close
+      #          snapshots exist (Prometheus must be up during 15:30-16:00 IST). No corporate-action adjustment.
       - record: stock:atr_14d:points
         expr: |
           avg_over_time(stock:session_true_range:points[20d])
           and count_over_time(stock:session_true_range:points[20d]) >= 10
+      # stock:range_expansion:ratio
+      #   What:  Today's high-low range so far in ATR(14) units. ~1 is a normal full day; > 2 is a wide-range
+      #          day (feeds StockRangeExpansion). Small early in the session because the range is still building.
+      #   How:   (stock_high_price - stock_low_price){tier="core"} / stock:atr_14d:points, one-to-one on all
+      #          labels; `ATR > 0` guards the division. Uses the day H/L, not the true range (gaps ignored).
+      #   Debug: Inherits the 10-session warm-up of stock:atr_14d:points; check stock_high_price/stock_low_price.
       - record: stock:range_expansion:ratio
         expr: (stock_high_price{tier="core"} - stock_low_price{tier="core"}) / (stock:atr_14d:points > 0)
 
@@ -35,41 +74,100 @@ groups:
   - name: nse_volatility_r2
     interval: 30s
     rules:
+      # stock:true_range:points
+      #   What:  Today's true range so far in price points: the day range extended to the previous close when
+      #          the stock gapped. Live counterpart of the EOD stock:session_true_range:points.
+      #   How:   TR = max(H, PC) - min(L, PC) with H/L/PC = stock_high/low/previous_close_price{tier="core"};
+      #          `(H > PC) or PC` picks H when above PC, else PC (same trick for the min).
+      #   Debug: Check the three inputs; absent only when stock_previous_close_price is missing.
       - record: stock:true_range:points
         expr: |
           (
               ((stock_high_price{tier="core"} > stock_previous_close_price{tier="core"}) or stock_previous_close_price{tier="core"})
             - ((stock_low_price{tier="core"} < stock_previous_close_price{tier="core"}) or stock_previous_close_price{tier="core"})
           )
+      # stock:bollinger_20m:price {band=upper}
+      #   What:  Upper Bollinger(20, 2) band in price: SMA20 + 2 stddev of the last 20 one-minute closes.
+      #   How:   avg_over_time + 2 * stddev_over_time of stock_last_price{tier="core"}[20m:1m] (population stddev).
+      #   Debug: Equals the SMA when the price was flat; no warm-up guard (see bollinger_width_20m).
       - record: stock:bollinger_20m:price
         labels: {band: upper}
         expr: |
           avg_over_time(stock_last_price{tier="core"}[20m:1m]) + 2 * stddev_over_time(stock_last_price{tier="core"}[20m:1m])
+      # stock:bollinger_20m:price {band=lower}
+      #   What:  Lower Bollinger(20, 2) band in price: SMA20 - 2 stddev of the last 20 one-minute closes.
+      #   How:   avg_over_time - 2 * stddev_over_time of stock_last_price{tier="core"}[20m:1m].
+      #   Debug: Same inputs as the upper band; the two differ by 4s = width% * SMA / 100.
       - record: stock:bollinger_20m:price
         labels: {band: lower}
         expr: |
           avg_over_time(stock_last_price{tier="core"}[20m:1m]) - 2 * stddev_over_time(stock_last_price{tier="core"}[20m:1m])
+      # stock:price_zscore_20m:sigma
+      #   What:  How many 20-bar standard deviations the LTP is above (+) or below (-) its 20-minute SMA;
+      #          |z| > 2 means outside the Bollinger bands (mean-reversion signal).
+      #   How:   z = (C - SMA) / s, SMA/s from stock_last_price{tier="core"}[20m:1m]; `s > 0` guards the
+      #          division. Identity: z = 4 * %B - 2.
+      #   Debug: Absent when the price was flat for 20 bars (s = 0).
       - record: stock:price_zscore_20m:sigma
         expr: |
           (stock_last_price{tier="core"} - avg_over_time(stock_last_price{tier="core"}[20m:1m]))
           / (stddev_over_time(stock_last_price{tier="core"}[20m:1m]) > 0)
+      # stock:atr_14d:percent
+      #   What:  Daily ATR(14) as % of the current price, so volatility is comparable across stocks
+      #          (typically 1-4% for NIFTY 200 names).
+      #   How:   stock:atr_14d:points / stock_last_price{tier="core"} * 100; `LTP > 0` guards the division.
+      #   Debug: Empty until stock:atr_14d:points has its 10 EOD sessions.
       - record: stock:atr_14d:percent
         expr: stock:atr_14d:points / (stock_last_price{tier="core"} > 0) * 100
+      # stock:volatility_change_15m:percent
+      #   What:  % change of the 15-minute realized volatility versus 15 minutes earlier; positive = volatility
+      #          expanding, -50 = halved.
+      #   How:   (vol15m / vol15m offset 15m - 1) * 100 with vol15m = stock:volatility_15m:percent{tier="core"}
+      #          (two non-overlapping 15m windows); `offset value > 0` guards the division.
+      #   Debug: Needs ~30m of LTP; absent when the price was flat 15m ago (previous vol = 0).
       - record: stock:volatility_change_15m:percent
         expr: (stock:volatility_15m:percent{tier="core"} / (stock:volatility_15m:percent{tier="core"} offset 15m > 0) - 1) * 100
+      # market:nifty_vol_risk_premium:points
+      #   What:  INDIA VIX minus NIFTY 50 annualised 15m realized volatility, in vol points. Positive = options
+      #          price more risk than is being realized; negative = realized exceeds implied (see comment below).
+      #   How:   max(stock_last_price{symbol="INDIA VIX"}) - on() max(stock:realized_vol_annualised:percent
+      #          {symbol="NIFTY 50"}); max() collapses labels to one series, on() joins the two scalars.
+      #   Debug: Needs INDIA VIX in the watchlist and NIFTY 50 in tier="core" (realized vol is core-only).
+      #          VIX is 30-day implied while realized is a 15m window, so expect noise.
       # Implied minus realized; negative means realized volatility exceeds what INDIA VIX prices in.
       - record: market:nifty_vol_risk_premium:points
         expr: |
           max(stock_last_price{symbol="INDIA VIX"})
           - on() max(stock:realized_vol_annualised:percent{symbol="NIFTY 50"})
+      # stock:historical_vol_20d:percent
+      #   What:  Close-to-close historical volatility (HV20) annualised, in %; comparable with option IV.
+      #   How:   HV = stddev_over_time(stock:session_log_return:ratio[28d]) * 15.8745 * 100, where the input is
+      #          the EOD snapshot ln(C / PC), 28 calendar days ~ 20 sessions, 15.8745 = sqrt(252) sessions/year,
+      #          population stddev. Emitted only with count_over_time(...[28d]) >= 10 sessions.
+      #   Debug: count_over_time(stock:session_log_return:ratio{symbol="X"}[28d]); empty until 10 post_close
+      #          snapshots. Unadjusted splits/bonuses show up as huge returns.
       - record: stock:historical_vol_20d:percent
         expr: |
           stddev_over_time(stock:session_log_return:ratio[28d]) * 15.874507866387544 * 100
           and count_over_time(stock:session_log_return:ratio[28d]) >= 10
+      # stock:parkinson_vol_20d:percent
+      #   What:  Parkinson high-low volatility over ~20 sessions, annualised %. Uses the intraday range, so it is
+      #          more efficient than HV20 but ignores overnight gaps; Parkinson >> HV20 hints at intraday reversals.
+      #   How:   sqrt(mean(ln(H/L)^2) / (4 ln 2)) * sqrt(252) * 100, mean = avg_over_time of the EOD snapshot
+      #          stock:session_log_range_sq:ratio[28d]; 2.7726 = 4 ln 2, 15.8745 = sqrt(252).
+      #          Requires count_over_time(...[28d]) >= 10 sessions.
+      #   Debug: Check stock:session_log_range_sq:ratio snapshots (one per post_close); empty before 10 sessions.
       - record: stock:parkinson_vol_20d:percent
         expr: |
           sqrt(avg_over_time(stock:session_log_range_sq:ratio[28d]) / 2.772588722239781) * 15.874507866387544 * 100
           and count_over_time(stock:session_log_range_sq:ratio[28d]) >= 10
+      # stock:atr_ratio_5_20d:ratio
+      #   What:  Short-over-long ATR: mean daily true range of the last ~5 sessions over the last ~20. > 1 means
+      #          daily ranges are expanding, < 1 contracting.
+      #   How:   avg_over_time(stock:session_true_range:points[7d]) / avg_over_time(...[28d]) (7 / 28 calendar days
+      #          ~ 5 / 20 sessions); `> 0` guards the denominator. Requires >= 3 snapshots in 7d and >= 15 in 28d.
+      #   Debug: count_over_time(stock:session_true_range:points{symbol="X"}[7d] / [28d]); a holiday week can drop
+      #          the 7d count below 3.
       - record: stock:atr_ratio_5_20d:ratio
         expr: |
           avg_over_time(stock:session_true_range:points[7d]) / (avg_over_time(stock:session_true_range:points[28d]) > 0)
@@ -79,6 +177,13 @@ groups:
   - name: nse_volatility_alerts
     interval: 30s
     rules:
+      # StockRangeExpansion
+      #   What:  Fires for an equity having a wide-range day: today's range is > 2x its ATR(14) while it trades
+      #          > 2x its usual volume for this time of day. $value is the range/ATR ratio.
+      #   How:   stock:range_expansion:ratio{instrument_type="EQ"} > 2 and stock:relative_volume:ratio > 2 (label
+      #          match) and on() stock_market_open == 1; for: 1m.
+      #   Debug: Inherits the warm-ups of both inputs: ATR needs 10 EOD sessions, relative volume needs >= 5
+      #          session volumes in 14d and only exists after 09:45 IST (seconds_to_close < 20700), core EQ only.
       - alert: StockRangeExpansion
         expr: |
           stock:range_expansion:ratio{instrument_type="EQ"} > 2

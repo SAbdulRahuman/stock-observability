@@ -1,39 +1,137 @@
 # Recording rules for stock observability.
 # Per-instrument series keep all labels; market-wide aggregates drop job/instance.
+# Groups: stock_fast (5s, returns/levels/flow/breadth from raw exporter gauges), stock_slow (15s, rolling
+# windows over core-tier series), portfolio (15s, Kite account aggregates; empty unless the portfolio collector runs).
 groups:
   - name: stock_fast
     interval: 5s
     rules:
+      # stock:return_1m:percent
+      #   What:  Simple price return over the last minute, in percent (+0.5 = up 0.5%). Large caps usually stay
+      #          within +-1; exactly 0 outside market hours because the last price is frozen.
+      #   How:   (stock_last_price / stock_last_price offset 1m - 1) * 100, evaluated every 5s for every tier and
+      #          instrument_type (core EQ, broad EQ, indices). No denominator guard: a zero price 1m ago gives +Inf.
+      #   Debug: Compare stock_last_price with stock_last_price offset 1m. Empty during the first minute of a new
+      #          series (nothing 1m back) or when the price is older than the 5m lookback. Feeds StockPriceSpikeUp
+      #          and stock:volatility_15m:percent.
       - record: stock:return_1m:percent
         expr: (stock_last_price / (stock_last_price offset 1m) - 1) * 100
+      # stock:return_5m:percent
+      #   What:  Simple price return over the last 5 minutes, in percent; negative = price fell.
+      #   How:   (stock_last_price / stock_last_price offset 5m - 1) * 100, every 5s, all tiers and instrument types.
+      #          No denominator guard.
+      #   Debug: Compare stock_last_price with stock_last_price offset 5m. Empty for the first 5m of a new series.
+      #          Feeds StockPriceSharpDrop (EQ, core) and IndexSharpFall (NIFTY 50 / NIFTY BANK / SENSEX).
       - record: stock:return_5m:percent
         expr: (stock_last_price / (stock_last_price offset 5m) - 1) * 100
+      # stock:return_15m:percent
+      #   What:  Simple price return over the last 15 minutes, in percent.
+      #   How:   (stock_last_price / stock_last_price offset 15m - 1) * 100, every 5s, all tiers and instrument types.
+      #          No denominator guard.
+      #   Debug: Compare stock_last_price with stock_last_price offset 15m. Empty for the first 15m of a new series.
+      #          Feeds IndiaVIXSpike (reason="change", symbol="INDIA VIX").
       - record: stock:return_15m:percent
         expr: (stock_last_price / (stock_last_price offset 15m) - 1) * 100
+      # stock:intraday_drawdown:percent
+      #   What:  How far the last price is below today's high, in percent. Always <= 0; 0 = trading at the day high,
+      #          -5 = 5% below it.
+      #   How:   (stock_last_price - stock_high_price) / (stock_high_price > 0) * 100, every 5s, all tiers/types.
+      #          stock_high_price is the exchange day high (Kite ohlc.high), not a Prometheus max_over_time.
+      #   Debug: Check stock_high_price and stock_last_price. Empty while stock_high_price is 0 (division guard),
+      #          e.g. before the first trade of the day. Feeds StockIntradayDrawdown.
       - record: stock:intraday_drawdown:percent
         expr: (stock_last_price - stock_high_price) / (stock_high_price > 0) * 100
+      # stock:gap_open:percent
+      #   What:  Opening gap: today's open versus the previous close, in percent; positive = gap up. Constant for
+      #          the whole session once the open price is set.
+      #   How:   (stock_open_price - stock_previous_close_price) / (stock_previous_close_price > 0) * 100, every 5s,
+      #          all tiers/types.
+      #   Debug: Check stock_open_price and stock_previous_close_price. Empty when the previous close is 0 (guard);
+      #          misleading before the open if stock_open_price is still 0 or stale. Feeds StockGapOpen.
       - record: stock:gap_open:percent
         expr: (stock_open_price - stock_previous_close_price) / (stock_previous_close_price > 0) * 100
+      # stock:vwap_deviation:percent
+      #   What:  Distance of the last price from today's VWAP, in percent; positive = trading above VWAP.
+      #   How:   (stock_last_price - stock_average_traded_price) / (stock_average_traded_price > 0) * 100, every 5s.
+      #          stock_average_traded_price is the exchange day VWAP (Kite average_price).
+      #   Debug: Check stock_average_traded_price. Indices have no VWAP (0) and drop out via the > 0 guard, as do
+      #          stocks before their first trade. Feeds StockVWAPDeviation.
       - record: stock:vwap_deviation:percent
         expr: (stock_last_price - stock_average_traded_price) / (stock_average_traded_price > 0) * 100
+      # stock:order_imbalance:ratio
+      #   What:  Pending buy quantity divided by pending sell quantity in the whole order book. 1 = balanced,
+      #          > 1 = more buyers waiting, < 1 = more sellers; range 0..inf.
+      #   How:   stock_total_buy_quantity / (stock_total_sell_quantity > 0), every 5s, all tiers/types
+      #          (Kite total_buy_quantity / total_sell_quantity, not limited to the top 5 levels).
+      #   Debug: Check stock_total_buy_quantity and stock_total_sell_quantity. Empty when sell quantity is 0 (guard),
+      #          e.g. indices, a stock locked at upper circuit, or outside market hours. Feeds StockOrderImbalance.
       - record: stock:order_imbalance:ratio
         expr: stock_total_buy_quantity / (stock_total_sell_quantity > 0)
+      # stock:upper_circuit_distance:percent
+      #   What:  Room left before the upper circuit (price band), in percent of the last price. 0 = at the band,
+      #          negative = above the band (band data stale).
+      #   How:   (stock_circuit_upper_limit_price - stock_last_price) / stock_last_price * 100, every 5s, every tier
+      #          that exports circuit limits. No guard on the last price (0 gives +Inf).
+      #   Debug: Check stock_circuit_upper_limit_price (circuit collector, Kite REST; stale if KiteAPIErrors fires).
+      #          Empty for instruments without circuit limits, e.g. indices. Feeds StockNearUpperCircuit.
       - record: stock:upper_circuit_distance:percent
         expr: (stock_circuit_upper_limit_price - stock_last_price) / stock_last_price * 100
+      # stock:lower_circuit_distance:percent
+      #   What:  Room left before the lower circuit, in percent of the last price. 0 = at the band, negative = below
+      #          the band (band data stale).
+      #   How:   (stock_last_price - stock_circuit_lower_limit_price) / stock_last_price * 100, every 5s, every tier
+      #          that exports circuit limits. No guard on the last price.
+      #   Debug: Check stock_circuit_lower_limit_price. Empty for instruments without circuit limits (indices).
+      #          Feeds StockNearLowerCircuit.
       - record: stock:lower_circuit_distance:percent
         expr: (stock_last_price - stock_circuit_lower_limit_price) / stock_last_price * 100
+      # stock:volume_1m:shares
+      #   What:  Shares traded in the last minute (rolling, not aligned to bar boundaries). ~0 outside market hours.
+      #   How:   increase(stock_day_volume_shares[1m]) on the cumulative day-volume gauge, every 5s, all tiers.
+      #          increase() extrapolates to the window edges, so values can be fractional.
+      #   Debug: Check stock_day_volume_shares and its resolution (core 1s, broad 5s scrape). The session reset of the
+      #          gauge is handled as a counter reset (see below). Feeds stock:volume_1m_avg_1h:shares, StockVolumeSurge.
       # Day volume resets every session; increase() treats the reset like a counter reset.
       - record: stock:volume_1m:shares
         expr: increase(stock_day_volume_shares[1m])
 
+      # market:advancers:count
+      #   What:  Number of equities trading above their previous close (one series, no labels).
+      #   How:   count(stock_change_percent{instrument_type="EQ"} > 0), every 5s, core and broad tiers together.
+      #          Unchanged stocks (0%) are neither advancers nor decliners.
+      #   Debug: count() of an empty set returns nothing, not 0, so the series is absent when no stock is up.
+      #          Keeps the last session's value after close because stock_change_percent stays exported.
       - record: market:advancers:count
         expr: count(stock_change_percent{instrument_type="EQ"} > 0)
+      # market:decliners:count
+      #   What:  Number of equities trading below their previous close (one series, no labels).
+      #   How:   count(stock_change_percent{instrument_type="EQ"} < 0), every 5s, core and broad tiers together.
+      #   Debug: Absent (not 0) when no stock is down, which also makes market:advance_decline:ratio absent.
       - record: market:decliners:count
         expr: count(stock_change_percent{instrument_type="EQ"} < 0)
+      # market:advance_decline:ratio
+      #   What:  Advancers per decliner across all tracked equities. 1 = balanced, > 1 = broad rally,
+      #          < 0.5 = more than two decliners per advancer (weak breadth).
+      #   How:   market:advancers:count / market:decliners:count, every 5s; both sides are label-less so they match.
+      #   Debug: Query both counts. Empty if either count is absent (no advancers or no decliners). Rule order in
+      #          the group means it uses the counts from the same evaluation. Feeds MarketBreadthWeak.
       - record: market:advance_decline:ratio
         expr: market:advancers:count / market:decliners:count
+      # sector:change_percent:avg
+      #   What:  Equal-weighted average day change (vs previous close) of NIFTY 200 stocks per sector, in percent.
+      #   How:   avg by (sector) (stock_change_percent{instrument_type="EQ", tier="core"}), every 5s; keeps only the
+      #          sector label.
+      #   Debug: Check stock_change_percent{tier="core", instrument_type="EQ"} by sector; stocks without a watchlist
+      #          sector show as sector="unknown". Feeds SectorSelloff (which excludes unknown|Index).
       - record: sector:change_percent:avg
         expr: avg by (sector) (stock_change_percent{instrument_type="EQ", tier="core"})
+      # market:stale_core_instruments:ratio
+      #   What:  Share of core-tier instruments (NIFTY 200 + indices) without a tick for more than 60s; 0..1.
+      #          Near 1 outside market hours, should be ~0 while the market is open.
+      #   How:   count(stock_tick_age_seconds{tier="core"} > 60) / count(stock_tick_age_seconds{tier="core"}),
+      #          every 5s; `or on() vector(0)` turns an empty numerator (nothing stale) into 0.
+      #   Debug: Query stock_tick_age_seconds{tier="core"} > 60 to list stale symbols. Also reads 0 when the core
+      #          series are missing entirely (exporter down; StockExporterDown covers that). Feeds MarketDataStale.
       - record: market:stale_core_instruments:ratio
         expr: |
           count(stock_tick_age_seconds{tier="core"} > 60) / count(stock_tick_age_seconds{tier="core"})
@@ -42,29 +140,92 @@ groups:
   - name: stock_slow
     interval: 15s
     rules:
+      # stock:volatility_15m:percent
+      #   What:  Short-term volatility: standard deviation of the rolling 1-minute return over 15 minutes, in
+      #          percentage points. Liquid large caps ~0.05-0.2; > 0.5 is unusually volatile.
+      #   How:   stddev_over_time(stock:return_1m:percent{tier="core"}[15m]), every 15s. The input is sampled every
+      #          5s, so the window holds ~180 overlapping 1m returns (not 15 independent bar returns).
+      #   Debug: Check stock:return_1m:percent for the symbol. Understated in the first 15 minutes of the session
+      #          (window still holds flat pre-open zeros). Feeds StockHighVolatility and
+      #          stock:realized_vol_annualised:percent.
       - record: stock:volatility_15m:percent
         expr: stddev_over_time(stock:return_1m:percent{tier="core"}[15m])
+      # stock:volume_1m_avg_1h:shares
+      #   What:  Baseline volume: average of the rolling 1-minute volume over the last hour, in shares.
+      #   How:   avg_over_time(stock:volume_1m:shares{tier="core"}[1h]), every 15s (~720 samples of the 5s series).
+      #   Debug: Check stock:volume_1m:shares. During the first hour of the session the window includes ~0 pre-open
+      #          samples, so the baseline is low and StockVolumeSurge triggers more easily; 0 overnight.
       - record: stock:volume_1m_avg_1h:shares
         expr: avg_over_time(stock:volume_1m:shares{tier="core"}[1h])
+      # stock:sma_5m:price
+      #   What:  5-minute simple moving average of the last price, in INR (index points for indices).
+      #   How:   avg_over_time(stock_last_price{tier="core"}[5m]) over raw 1s scrape samples, every 15s; core tier
+      #          includes indices.
+      #   Debug: Check stock_last_price{tier="core"}. Right after the open the window still contains pre-open/closed
+      #          prices. Feeds StockMACrossover together with stock:sma_30m:price.
       - record: stock:sma_5m:price
         expr: avg_over_time(stock_last_price{tier="core"}[5m])
+      # stock:sma_30m:price
+      #   What:  30-minute simple moving average of the last price, in INR (index points for indices).
+      #   How:   avg_over_time(stock_last_price{tier="core"}[30m]) over raw 1s scrape samples, every 15s.
+      #   Debug: Until 09:45 the window includes pre-open/closed prices, so early crossovers against stock:sma_5m:price
+      #          are partly artefacts. Feeds StockMACrossover.
       - record: stock:sma_30m:price
         expr: avg_over_time(stock_last_price{tier="core"}[30m])
+      # stock:orderbook_spread_5m_avg:bps
+      #   What:  5-minute average bid-ask spread in basis points of the mid price (10 bps = 0.1%). Liquid large caps
+      #          are a few bps; > 50 bps means thin liquidity.
+      #   How:   avg_over_time(stock_orderbook_spread_bps{tier="core"}[5m]), every 15s. The exporter computes
+      #          (best ask - best bid) / mid * 1e4 from level-1 depth.
+      #   Debug: Check stock_orderbook_spread_bps. Absent without market depth (Kite ticker mode not "full", indices)
+      #          or when either best level is empty. Feeds StockWideSpread.
       - record: stock:orderbook_spread_5m_avg:bps
         expr: avg_over_time(stock_orderbook_spread_bps{tier="core"}[5m])
+      # stock:orderbook_imbalance_1m_avg:ratio
+      #   What:  1-minute average top-5 depth imbalance, -1 (all quantity on the ask side) to +1 (all on the bid);
+      #          0 = balanced.
+      #   How:   avg_over_time(stock_orderbook_imbalance_ratio{tier="core"}[1m]), every 15s. The exporter computes
+      #          (bid qty - ask qty) / (bid qty + ask qty) over the top 5 levels per side.
+      #   Debug: Check stock_orderbook_imbalance_ratio and stock_orderbook_quantity{side=...}. Absent without market
+      #          depth or when both sides are empty. Feeds StockOrderBookImbalance.
       - record: stock:orderbook_imbalance_1m_avg:ratio
         expr: avg_over_time(stock_orderbook_imbalance_ratio{tier="core"}[1m])
 
   - name: portfolio
     interval: 15s
     rules:
+      # portfolio:holding_value:sum
+      #   What:  Market value of all demat holdings in INR (one series, no labels).
+      #   How:   sum(stock_portfolio_holding_quantity * stock_portfolio_holding_last_price); the product matches on
+      #          the full holding label set, then sum() drops all labels. Every 15s.
+      #   Debug: Empty unless the portfolio collector is enabled (off by default) with a valid Kite session; check
+      #          stock_portfolio_holding_quantity. Denominator of PortfolioDailyLoss.
       - record: portfolio:holding_value:sum
         expr: sum(stock_portfolio_holding_quantity * stock_portfolio_holding_last_price)
+      # portfolio:day_change:sum
+      #   What:  Change in value of all holdings today, in INR; negative = loss today.
+      #   How:   sum(stock_portfolio_holding_day_change), every 15s, no labels.
+      #   Debug: Empty unless the portfolio collector runs. Numerator of PortfolioDailyLoss.
       - record: portfolio:day_change:sum
         expr: sum(stock_portfolio_holding_day_change)
+      # portfolio:holding_pnl:sum
+      #   What:  Total unrealised profit and loss of all holdings versus their average buy price, in INR.
+      #   How:   sum(stock_portfolio_holding_pnl), every 15s, no labels.
+      #   Debug: Empty unless the portfolio collector runs; check stock_portfolio_holding_pnl per symbol.
       - record: portfolio:holding_pnl:sum
         expr: sum(stock_portfolio_holding_pnl)
+      # portfolio:position_pnl:sum
+      #   What:  Total profit and loss of today's open/closed positions (intraday and F&O), in INR.
+      #   How:   sum(stock_portfolio_position_pnl), every 15s, no labels.
+      #   Debug: Empty unless the portfolio collector runs and Kite reports positions; per-position values feed
+      #          PositionStopLossBreach directly.
       - record: portfolio:position_pnl:sum
         expr: sum(stock_portfolio_position_pnl)
+      # portfolio:margin_utilisation:ratio
+      #   What:  Fraction of the account margin in use per segment, 0..1 (0.8 = 80% used); can exceed 1 on a
+      #          margin shortfall.
+      #   How:   stock_portfolio_margin_utilised / (stock_portfolio_margin_total > 0), every 15s, keeps the segment label.
+      #   Debug: Check stock_portfolio_margin_total{segment=...}; segments with zero total margin drop out (guard).
+      #          Empty unless the portfolio collector runs. Feeds MarginUtilisationHigh.
       - record: portfolio:margin_utilisation:ratio
         expr: stock_portfolio_margin_utilised / (stock_portfolio_margin_total > 0)

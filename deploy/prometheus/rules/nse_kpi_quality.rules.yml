@@ -7,62 +7,129 @@ groups:
   - name: nse_kpi_quality
     interval: 1m
     rules:
+      # kpi:fresh_core_instruments:ratio
+      #   What:  share (0-1) of core-tier (NIFTY 200 + indices) instruments that received a tick in the last 60 s;
+      #          1 = the whole core feed is live, 0 = feed stalled (normal outside market hours).
+      #   How:   (count(stock_tick_age_seconds{tier="core"} < 60) or on() vector(0)) / count(stock_tick_age_seconds{tier="core"}).
+      #          `or on() vector(0)` turns "no fresh instrument" into 0 instead of an empty result. Single series,
+      #          no labels. Used as the multiplier for the market/sector coverage rules below.
+      #   Debug: query stock_tick_age_seconds{tier="core"} > 60 to list stale symbols. Empty only if the exporter
+      #          exposes no core instruments (scrape down / tier label missing).
       - record: kpi:fresh_core_instruments:ratio
         expr: |
           (count(stock_tick_age_seconds{tier="core"} < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core"})
 
       # --- core tier, every instrument type ------------------------------------------------
+      # kpi:coverage:ratio {kpi="stock:return_1m:percent"}
+      #   What:  share (0-1) of all core instruments that have a 1-minute return AND a tick in the last 60 s;
+      #          < 0.9 for 5m during the session fires KPIDataQualityDegraded.
+      #   How:   (count(stock:return_1m:percent{tier="core"} and on(exchange, symbol) stock_tick_age_seconds < 60)
+      #          or on() vector(0)) / count(stock_tick_age_seconds{tier="core"}). The tick-age join is what exposes a
+      #          stale feed (exporter keeps the last value when ticks stop). Same pattern for all per-stock KPIs below.
+      #   Debug: compare count(stock:return_1m:percent{tier="core"}) with count(stock_tick_age_seconds{tier="core"} < 60).
+      #          The return itself exists whenever the exporter is scraped, so coverage here mostly tracks tick
+      #          freshness: it drops to 0 after the close (and pre-open) when ticks stop.
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:return_1m:percent"}
         expr: |
           (count(stock:return_1m:percent{tier="core"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core"})
+      # kpi:coverage:ratio {kpi="stock:return_5m:percent"}
+      #   What:  share (0-1) of core instruments with a fresh 5-minute return.
+      #   How:   count(stock:return_5m:percent{tier="core"} with tick age < 60 s) / count(core instruments); 0 if none.
+      #   Debug: the return is computed from the 5m-old exporter price and is rarely missing; 0 when ticks are stale.
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:return_5m:percent"}
         expr: |
           (count(stock:return_5m:percent{tier="core"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core"})
+      # kpi:coverage:ratio {kpi="stock:return_15m:percent"}
+      #   What:  share (0-1) of core instruments with a fresh 15-minute return.
+      #   How:   count(stock:return_15m:percent{tier="core"} with tick age < 60 s) / count(core instruments); 0 if none.
+      #   Debug: the return is computed from the 15m-old exporter price and is rarely missing; 0 when ticks are stale.
+      #          Note: the first 15 minutes after the open compare against the pre-open/previous-session price.
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:return_15m:percent"}
         expr: |
           (count(stock:return_15m:percent{tier="core"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core"})
+      # kpi:coverage:ratio {kpi="stock:gap_open:percent"}
+      #   What:  share (0-1) of core instruments with a fresh opening-gap value (open vs previous close).
+      #   How:   count(stock:gap_open:percent{tier="core"} with tick age < 60 s) / count(core instruments); 0 if none.
+      #   Debug: missing gap values mean stock_previous_close_price is 0/absent (the `> 0` division guard drops it).
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:gap_open:percent"}
         expr: |
           (count(stock:gap_open:percent{tier="core"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core"})
+      # kpi:coverage:ratio {kpi="stock:intraday_return:percent"}
+      #   What:  share (0-1) of core instruments with a fresh intraday return (last price vs today's open).
+      #   How:   count(stock:intraday_return:percent with tick age < 60 s) / count(core instruments); the numerator has
+      #          no tier filter, so it relies on the KPI being recorded for core only (otherwise the ratio can exceed 1).
+      #   Debug: if > 1, check count by (tier) (stock:intraday_return:percent); if low, check stock_open_price > 0.
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:intraday_return:percent"}
         expr: |
           (count(stock:intraday_return:percent and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core"})
+      # kpi:coverage:ratio {kpi="stock:rsi_14m:index"}
+      #   What:  share (0-1) of core instruments with a fresh 14-minute RSI.
+      #   How:   count(stock:rsi_14m:index with tick age < 60 s) / count(core instruments); numerator not tier-filtered
+      #          (relies on the RSI being recorded for core only).
+      #   Debug: no warm-up guard and a flat price yields NaN (still counted), so this mostly tracks tick freshness;
+      #          non-core symbols never have an RSI.
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:rsi_14m:index"}
         expr: |
           (count(stock:rsi_14m:index and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core"})
+      # kpi:coverage:ratio {kpi="stock:stochastic_k_14m:percent"}
+      #   What:  share (0-1) of core instruments with a fresh 14-minute stochastic %K.
+      #   How:   count(stock:stochastic_k_14m:percent with tick age < 60 s) / count(core instruments); numerator not
+      #          tier-filtered.
+      #   Debug: the `(HH14 - LL14) > 0` guard drops symbols with a flat 14m price, so illiquid names lower coverage.
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:stochastic_k_14m:percent"}
         expr: |
           (count(stock:stochastic_k_14m:percent and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core"})
+      # kpi:coverage:ratio {kpi="stock:macd_12_26m:price"}
+      #   What:  share (0-1) of core instruments with a fresh 12/26-minute MACD line.
+      #   How:   count(stock:macd_12_26m:price with tick age < 60 s) / count(core instruments); numerator not tier-filtered.
+      #   Debug: low before 09:41 (the EMA26 is seeded 26 minutes after the open); 0 when ticks are stale.
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:macd_12_26m:price"}
         expr: |
           (count(stock:macd_12_26m:price and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core"})
+      # kpi:coverage:ratio {kpi="stock:realized_vol_annualised:percent"}
+      #   What:  share (0-1) of core instruments with a fresh annualised realised volatility.
+      #   How:   count(stock:realized_vol_annualised:percent with tick age < 60 s) / count(core instruments); numerator
+      #          not tier-filtered.
+      #   Debug: built from stock:volatility_15m:percent (stddev of 1m returns over 15m); a flat price gives 0, not
+      #          a gap, so this mostly tracks tick freshness.
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:realized_vol_annualised:percent"}
         expr: |
           (count(stock:realized_vol_annualised:percent and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core"})
+      # kpi:coverage:ratio {kpi="stock:bollinger_width_20m:percent"}
+      #   What:  share (0-1) of core instruments with a fresh 20-minute Bollinger band width.
+      #   How:   count(stock:bollinger_width_20m:percent with tick age < 60 s) / count(core instruments); numerator not
+      #          tier-filtered.
+      #   Debug: no warm-up guard (window holds pre-open samples early on) and a flat price gives 0, not a gap, so
+      #          this mostly tracks tick freshness.
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:bollinger_width_20m:percent"}
         expr: |
           (count(stock:bollinger_width_20m:percent and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core"})
+      # kpi:coverage:ratio {kpi="stock:bollinger_percent_b_20m:ratio"}
+      #   What:  share (0-1) of core instruments with a fresh 20-minute Bollinger %B.
+      #   How:   count(stock:bollinger_percent_b_20m:ratio with tick age < 60 s) / count(core instruments); numerator
+      #          not tier-filtered.
+      #   Debug: the `4s > 0` guard drops symbols whose price was flat for 20 bars (halted/illiquid).
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:bollinger_percent_b_20m:ratio"}
         expr: |
@@ -70,41 +137,79 @@ groups:
           / count(stock_tick_age_seconds{tier="core"})
 
       # --- core tier equities -----------------------------------------------------------
+      # kpi:coverage:ratio {kpi="stock:vwap_deviation:percent"}
+      #   What:  share (0-1) of core equities (instrument_type="EQ") with a fresh deviation from VWAP.
+      #   How:   count(stock:vwap_deviation:percent{tier="core"} with tick age < 60 s)
+      #          / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"}); indices excluded (no VWAP).
+      #   Debug: missing values mean stock_average_traded_price is 0/absent (the `> 0` division guard drops it).
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:vwap_deviation:percent"}
         expr: |
           (count(stock:vwap_deviation:percent{tier="core"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"})
+      # kpi:coverage:ratio {kpi="stock_orderbook_spread_bps"}
+      #   What:  share (0-1) of core equities with a fresh order-book bid/ask spread from the exporter.
+      #   How:   count(stock_orderbook_spread_bps{tier="core"} with tick age < 60 s) / count(core EQ instruments).
+      #   Debug: raw exporter metric; low coverage means the feed is not delivering market depth for those symbols.
       - record: kpi:coverage:ratio
         labels: {kpi: "stock_orderbook_spread_bps"}
         expr: |
           (count(stock_orderbook_spread_bps{tier="core"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"})
+      # kpi:coverage:ratio {kpi="stock_orderbook_imbalance_ratio"}
+      #   What:  share (0-1) of core equities with a fresh order-book imbalance from the exporter.
+      #   How:   count(stock_orderbook_imbalance_ratio{tier="core"} with tick age < 60 s) / count(core EQ instruments).
+      #   Debug: raw exporter metric; low coverage means missing depth data (same cause as the spread coverage).
       - record: kpi:coverage:ratio
         labels: {kpi: "stock_orderbook_imbalance_ratio"}
         expr: |
           (count(stock_orderbook_imbalance_ratio{tier="core"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"})
+      # kpi:coverage:ratio {kpi="stock:relative_strength_nifty:percent"}
+      #   What:  share (0-1) of core equities with a fresh relative strength vs NIFTY 50.
+      #   How:   count(stock:relative_strength_nifty:percent with tick age < 60 s) / count(core EQ instruments);
+      #          numerator not tier-filtered.
+      #   Debug: drops to 0 for every stock if the NIFTY 50 index series is missing, since every value joins on it.
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:relative_strength_nifty:percent"}
         expr: |
           (count(stock:relative_strength_nifty:percent and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"})
+      # kpi:coverage:ratio {kpi="stock:orderbook_depth:inr"}
+      #   What:  share (0-1) of core equities with a fresh order-book depth in INR.
+      #   How:   count(stock:orderbook_depth:inr with tick age < 60 s) / count(core EQ instruments); numerator not
+      #          tier-filtered.
+      #   Debug: sums stock_orderbook_notional over sides; empty without depth data (check spread coverage first).
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:orderbook_depth:inr"}
         expr: |
           (count(stock:orderbook_depth:inr and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"})
+      # kpi:coverage:ratio {kpi="stock:depth_vs_1h:ratio"}
+      #   What:  share (0-1) of core equities with a fresh depth-vs-1h-average ratio.
+      #   How:   count(stock:depth_vs_1h:ratio with tick age < 60 s) / count(core EQ instruments); numerator not
+      #          tier-filtered.
+      #   Debug: no warm-up guard; empty without depth data or when the 1h average depth is 0 (`> 0` guard).
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:depth_vs_1h:ratio"}
         expr: |
           (count(stock:depth_vs_1h:ratio and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"})
+      # kpi:coverage:ratio {kpi="stock:microprice_deviation:bps"}
+      #   What:  share (0-1) of core equities with a fresh microprice deviation (bps).
+      #   How:   count(stock:microprice_deviation:bps with tick age < 60 s) / count(core EQ instruments); numerator not
+      #          tier-filtered.
+      #   Debug: needs best bid/ask prices and quantities; missing depth data empties it.
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:microprice_deviation:bps"}
         expr: |
           (count(stock:microprice_deviation:bps and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"})
+      # kpi:coverage:ratio {kpi="stock:volume_delta_1h:ratio"}
+      #   What:  share (0-1) of core equities with a fresh 1-hour volume delta.
+      #   How:   count(stock:volume_delta_1h:ratio with tick age < 60 s) / count(core EQ instruments); numerator not
+      #          tier-filtered.
+      #   Debug: no warm-up guard; a zero 1h volume sum (no trades) drops the symbol via the denominator guard.
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:volume_delta_1h:ratio"}
         expr: |
@@ -112,16 +217,30 @@ groups:
           / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"})
 
       # --- equities in both tiers ---------------------------------------------------------
+      # kpi:coverage:ratio {kpi="stock:turnover:inr"}
+      #   What:  share (0-1) of ALL equities (core and non-core tiers) with a fresh turnover in INR.
+      #   How:   count(stock:turnover:inr with tick age < 60 s) / count(stock_tick_age_seconds{instrument_type="EQ"}).
+      #   Debug: turnover needs volume and average traded price; check stock_average_traded_price > 0 for gaps.
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:turnover:inr"}
         expr: |
           (count(stock:turnover:inr and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{instrument_type="EQ"})
+      # kpi:coverage:ratio {kpi="stock:upper_circuit_distance:percent"}
+      #   What:  share (0-1) of all equities (both tiers) with a fresh distance to the upper circuit limit.
+      #   How:   count(stock:upper_circuit_distance:percent{instrument_type="EQ"} with tick age < 60 s)
+      #          / count(stock_tick_age_seconds{instrument_type="EQ"}).
+      #   Debug: gaps mean stock_circuit_upper_limit_price is not exported for those symbols.
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:upper_circuit_distance:percent"}
         expr: |
           (count(stock:upper_circuit_distance:percent{instrument_type="EQ"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(stock_tick_age_seconds{instrument_type="EQ"})
+      # kpi:coverage:ratio {kpi="stock:lower_circuit_distance:percent"}
+      #   What:  share (0-1) of all equities (both tiers) with a fresh distance to the lower circuit limit.
+      #   How:   count(stock:lower_circuit_distance:percent{instrument_type="EQ"} with tick age < 60 s)
+      #          / count(stock_tick_age_seconds{instrument_type="EQ"}).
+      #   Debug: gaps mean stock_circuit_lower_limit_price is not exported for those symbols.
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:lower_circuit_distance:percent"}
         expr: |
@@ -129,21 +248,46 @@ groups:
           / count(stock_tick_age_seconds{instrument_type="EQ"})
 
       # --- multi-session KPIs: denominator = instruments past their warm-up ----------------
+      # kpi:coverage:ratio {kpi="stock:pivot:price"}
+      #   What:  share (0-1) of instruments that have a previous-session EOD high snapshot and also have a fresh
+      #          classic pivot point P.
+      #   How:   numerator: count(stock:pivot:price{level="P"} with tick age < 60 s); denominator:
+      #          count(last_over_time(stock:session_high:price[7d])), i.e. core instruments with an EOD snapshot in the
+      #          last 7 days. Only level="P" is counted; S1/R1/S2/R2 derive from the same inputs.
+      #   Debug: empty (no series, cannot alert) until the first post-close snapshot exists, and again after a
+      #          >7-day gap in snapshots. Check last_over_time(stock:session_high:price[7d]).
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:pivot:price"}
         expr: |
           (count(stock:pivot:price{level="P"} and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(last_over_time(stock:session_high:price[7d]))
+      # kpi:coverage:ratio {kpi="stock:atr_14d:points"}
+      #   What:  share (0-1) of warmed-up instruments with a fresh 14-session ATR.
+      #   How:   numerator: count(stock:atr_14d:points with tick age < 60 s); denominator:
+      #          count(count_over_time(stock:session_true_range:points[20d]) >= 10), i.e. instruments with at least
+      #          10 EOD true-range snapshots in 20 days (the ATR rule's own warm-up guard).
+      #   Debug: empty until 10 sessions of EOD snapshots exist. Check count_over_time(stock:session_true_range:points[20d]).
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:atr_14d:points"}
         expr: |
           (count(stock:atr_14d:points and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(count_over_time(stock:session_true_range:points[20d]) >= 10)
+      # kpi:coverage:ratio {kpi="stock:range_expansion:ratio"}
+      #   What:  share (0-1) of warmed-up instruments with a fresh range-expansion ratio.
+      #   How:   count(stock:range_expansion:ratio with tick age < 60 s)
+      #          / count(count_over_time(stock:session_true_range:points[20d]) >= 10) (same denominator as ATR).
+      #   Debug: empty until 10 sessions of true-range snapshots exist; the numerator also needs a valid ATR (> 0).
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:range_expansion:ratio"}
         expr: |
           (count(stock:range_expansion:ratio and on(exchange, symbol) stock_tick_age_seconds < 60) or on() vector(0))
           / count(count_over_time(stock:session_true_range:points[20d]) >= 10)
+      # kpi:coverage:ratio {kpi="stock:relative_volume:ratio"}
+      #   What:  share (0-1) of warmed-up equities with a fresh relative volume (today vs average session volume).
+      #   How:   count(stock:relative_volume:ratio with tick age < 60 s)
+      #          / count(count_over_time(stock:session_volume:shares[14d]) >= 5), i.e. core EQ with at least 5 EOD
+      #          volume snapshots in 14 days. The KPI itself is gated to market open and >= 09:45.
+      #   Debug: empty until 5 sessions of stock:session_volume:shares exist; 0 before 09:45 (KPI gated, alert too).
       - record: kpi:coverage:ratio
         labels: {kpi: "stock:relative_volume:ratio"}
         expr: |
@@ -151,21 +295,53 @@ groups:
           / count(count_over_time(stock:session_volume:shares[14d]) >= 5)
 
       # --- market and sector KPIs: present x share of fresh core instruments ---------------
+      # kpi:coverage:ratio {kpi="market:advance_decline:ratio"}
+      #   What:  quality of the market-wide advance/decline ratio: 0 if the series is missing, else the fraction of
+      #          fresh core instruments it is built from.
+      #   How:   (count(market:advance_decline:ratio) or on() vector(0)) * on() kpi:fresh_core_instruments:ratio.
+      #          count() is 0 or 1 for a single market series. Same pattern for the market KPIs below.
+      #   Debug: 0 with fresh ticks means market:advancers:count or market:decliners:count is empty (one-sided
+      #          market or no EQ stock_change_percent), so the A/D division returned nothing.
       - record: kpi:coverage:ratio
         labels: {kpi: "market:advance_decline:ratio"}
         expr: (count(market:advance_decline:ratio) or on() vector(0)) * on() kpi:fresh_core_instruments:ratio
+      # kpi:coverage:ratio {kpi="market:above_vwap:ratio"}
+      #   What:  quality of the % of equities above VWAP: 0 if missing, else kpi:fresh_core_instruments:ratio.
+      #   How:   (count(market:above_vwap:ratio) or on() vector(0)) * on() kpi:fresh_core_instruments:ratio.
+      #   Debug: market:above_vwap:ratio is empty when no equity has stock_average_traded_price > 0 (e.g. pre-open).
       - record: kpi:coverage:ratio
         labels: {kpi: "market:above_vwap:ratio"}
         expr: (count(market:above_vwap:ratio) or on() vector(0)) * on() kpi:fresh_core_instruments:ratio
+      # kpi:coverage:ratio {kpi="market:trin:ratio"}
+      #   What:  quality of the TRIN (Arms index): 0 if missing, else kpi:fresh_core_instruments:ratio.
+      #   How:   (count(market:trin:ratio) or on() vector(0)) * on() kpi:fresh_core_instruments:ratio.
+      #   Debug: TRIN is empty when there are no decliners or decliner volume is 0 (one-sided market), giving 0 here.
       - record: kpi:coverage:ratio
         labels: {kpi: "market:trin:ratio"}
         expr: (count(market:trin:ratio) or on() vector(0)) * on() kpi:fresh_core_instruments:ratio
+      # kpi:coverage:ratio {kpi="market:dispersion:percent"}
+      #   What:  quality of the cross-sectional dispersion of core EQ change%: 0 if missing, else fresh-core share.
+      #   How:   (count(market:dispersion:percent) or on() vector(0)) * on() kpi:fresh_core_instruments:ratio.
+      #   Debug: dispersion is empty only if no core EQ stock_change_percent series exist.
       - record: kpi:coverage:ratio
         labels: {kpi: "market:dispersion:percent"}
         expr: (count(market:dispersion:percent) or on() vector(0)) * on() kpi:fresh_core_instruments:ratio
+      # kpi:coverage:ratio {kpi="market:circuit_hits:count"}
+      #   What:  quality of the circuit-hit counter: 0 if missing, else kpi:fresh_core_instruments:ratio.
+      #   How:   (count(market:circuit_hits:count{band="upper"}) or on() vector(0)) * on() kpi:fresh_core_instruments:ratio;
+      #          only band="upper" is checked (the lower band comes from the same rule group).
+      #   Debug: the counter itself always exists (it uses or vector(0)), so this effectively tracks feed freshness.
       - record: kpi:coverage:ratio
         labels: {kpi: "market:circuit_hits:count"}
         expr: (count(market:circuit_hits:count{band="upper"}) or on() vector(0)) * on() kpi:fresh_core_instruments:ratio
+      # kpi:coverage:ratio {kpi="sector:relative_strength:percent"}
+      #   What:  share (0-1) of sectors that have a relative-strength value, scaled by the share of fresh core
+      #          instruments.
+      #   How:   (count(sector:relative_strength:percent) or on() vector(0))
+      #          / count(count by (sector) (stock_tick_age_seconds{tier="core", instrument_type="EQ", sector!~"unknown|Index"}))
+      #          * on() kpi:fresh_core_instruments:ratio. Denominator = number of distinct known sectors in core EQ.
+      #   Debug: 0 if the NIFTY 50 change% is missing (every sector value subtracts it). Instruments with
+      #          sector="unknown" are excluded from both sides.
       - record: kpi:coverage:ratio
         labels: {kpi: "sector:relative_strength:percent"}
         expr: |
@@ -176,6 +352,16 @@ groups:
   - name: nse_kpi_quality_alerts
     interval: 1m
     rules:
+      # KPIDataQualityDegraded
+      #   What:  warning that a KPI has a fresh value for fewer than 90% of the instruments in its scope for 5 minutes
+      #          during the session; one alert per kpi label. Dashboards/alerts built on that KPI are incomplete.
+      #   How:   kpi:coverage:ratio < 0.9 and on() stock_market_open == 1 and on() stock_market_seconds_to_close < 20700.
+      #          20700 s = 22500 - 1800, so it only evaluates from 09:45 (30 minutes of warm-up after the open);
+      #          for: 5m, so the earliest firing is about 09:50. Keeps the kpi label; adds severity=warning,
+      #          category=quality, layer=incident, incident=kpi_data_quality.
+      #   Debug: query kpi:coverage:ratio < 0.9 to see which KPIs are low, then the KPI's own inputs. Never fires
+      #          for multi-session KPIs before warm-up (their coverage series is absent), nor before 09:45 or after
+      #          the close.
       # From 09:45 (30 minutes of warm-up after the open).
       - alert: KPIDataQualityDegraded
         expr: |

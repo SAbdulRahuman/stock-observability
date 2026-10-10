@@ -6,10 +6,30 @@ groups:
   - name: nse_eod_snapshot
     interval: 30m
     rules:
+      # stock:session_high:price
+      #   What:  the session's high price (INR) per core instrument, one sample per trading day; previous-session H
+      #          for pivots (last_over_time[7d]) and the 20-session high for breakouts (max_over_time[28d]).
+      #   How:   stock_high_price{tier="core"} and on() stock_market_phase{phase="post_close"} == 1. The group runs every
+      #          30m, so exactly one evaluation lands in the 15:30-16:00 post_close window. Keeps all exporter labels.
+      #   Debug: count_over_time(stock:session_high:price{symbol="X"}[7d]) should be ~5. A missing day means
+      #          Prometheus/exporter was down during 15:30-16:00 or stock_market_phase never reported post_close
+      #          (holidays produce no sample, by design).
       - record: stock:session_high:price
         expr: stock_high_price{tier="core"} and on() stock_market_phase{phase="post_close"} == 1
+      # stock:session_low:price
+      #   What:  the session's low price (INR) per core instrument, one sample per trading day; previous-session L for
+      #          pivots and the 20-session low for breakdowns.
+      #   How:   stock_low_price{tier="core"} and on() stock_market_phase{phase="post_close"} == 1 (once per day).
+      #   Debug: same as stock:session_high:price; a 0 low (no trades) would make ln(H/L) rules drop the day.
       - record: stock:session_low:price
         expr: stock_low_price{tier="core"} and on() stock_market_phase{phase="post_close"} == 1
+      # stock:session_true_range:points
+      #   What:  the session's true range in price points (INR): the full day range including any gap from the
+      #          previous close. Input to ATR(14) (avg over 20d, >= 10 samples) and the 7d/28d range ratio.
+      #   How:   TR = max(H, PC) - min(L, PC), written as ((H > PC) or PC) - ((L < PC) or PC) on core instruments
+      #          (H = stock_high_price, L = stock_low_price, PC = stock_previous_close_price; same labels so `or`
+      #          picks H/L when they exceed PC, else PC). Post-close gate, once per day.
+      #   Debug: absent for an instrument with no stock_previous_close_price (e.g. new listing): both `or` sides empty.
       # TR = max(H, PC) - min(L, PC)
       - record: stock:session_true_range:points
         expr: |
@@ -18,38 +38,100 @@ groups:
             - ((stock_low_price{tier="core"} < stock_previous_close_price{tier="core"}) or stock_previous_close_price{tier="core"})
           )
           and on() stock_market_phase{phase="post_close"} == 1
+      # stock:session_volume:shares
+      #   What:  total shares traded in the session per core equity, one sample per day; baseline for relative
+      #          volume (avg over 14d, >= 5 sessions).
+      #   How:   stock_day_volume_shares{tier="core", instrument_type="EQ"} and on() post_close phase == 1.
+      #   Debug: indices are excluded (no volume). Check stock_day_volume_shares at 15:30 if a day is 0.
       - record: stock:session_volume:shares
         expr: stock_day_volume_shares{tier="core", instrument_type="EQ"} and on() stock_market_phase{phase="post_close"} == 1
       # Release 2 additions (§7.0): ln(C / PC), V * VWAP, ln(H / L)^2 and the closing dispersion.
+      # stock:session_log_return:ratio
+      #   What:  daily log return ln(C / PC) per core instrument (0.01 ~ +1%); input to HV20, VaR/CVaR, beta,
+      #          12-1 momentum and Sharpe-type risk rules.
+      #   How:   ln(stock_last_price{tier="core"} / (stock_previous_close_price{tier="core"} > 0)), post_close gate.
+      #          C is the last traded price at snapshot time, which can differ slightly from NSE's official close
+      #          (VWAP of the last 30 minutes), while PC is the official previous close.
+      #   Debug: dropped for instruments with PC = 0/absent (division guard). NIFTY 50 is included (tier="core")
+      #          and is the market leg for beta.
       - record: stock:session_log_return:ratio
         expr: |
           ln(stock_last_price{tier="core"} / (stock_previous_close_price{tier="core"} > 0))
           and on() stock_market_phase{phase="post_close"} == 1
+      # stock:session_turnover:inr
+      #   What:  traded value of the session in INR per core equity (V x VWAP); baseline for liquidity KPIs
+      #          (avg over 28d, >= 10 sessions).
+      #   How:   stock_day_volume_shares * stock_average_traded_price, both {tier="core", instrument_type="EQ"},
+      #          one-to-one on all labels, post_close gate.
+      #   Debug: absent if stock_average_traded_price is not exported for the symbol; 0 on a no-trade day.
       - record: stock:session_turnover:inr
         expr: |
           stock_day_volume_shares{tier="core", instrument_type="EQ"} * stock_average_traded_price{tier="core", instrument_type="EQ"}
           and on() stock_market_phase{phase="post_close"} == 1
+      # stock:session_log_range_sq:ratio
+      #   What:  squared log high/low range ln(H / L)^2 of the session per core instrument; Parkinson volatility
+      #          input (sqrt(mean / (4 ln 2)) * sqrt(252) * 100 over 28d).
+      #   How:   ln(stock_high_price{tier="core"} / (stock_low_price{tier="core"} > 0)) ^ 2, post_close gate.
+      #   Debug: dropped when L = 0 (no trades); 0 when H = L (flat day).
       - record: stock:session_log_range_sq:ratio
         expr: |
           ln(stock_high_price{tier="core"} / (stock_low_price{tier="core"} > 0)) ^ 2
           and on() stock_market_phase{phase="post_close"} == 1
+      # market:session_dispersion:percent
+      #   What:  closing cross-sectional dispersion (stddev of change% across core EQ, in % points), one sample per
+      #          day; its 28d median is the low-dispersion threshold for regime rules.
+      #   How:   market:dispersion:percent and on() stock_market_phase{phase="post_close"} == 1. Single series.
+      #   Debug: needs market:dispersion:percent (nse_market_breadth, 15s) to be present at the post-close evaluation.
       - record: market:session_dispersion:percent
         expr: market:dispersion:percent and on() stock_market_phase{phase="post_close"} == 1
       # Release 3 additions (§7.0): close, ln(C/PC) x ln(NIFTY C/PC), drawdown from the 90-day peak close
       # (reads the close recorded just above), portfolio return and its downside square.
+      # stock:session_close:price
+      #   What:  the session close (last traded price at the post-close snapshot, INR) per core instrument;
+      #          previous close for patterns, 200-session SMA, and the input to stock:session_drawdown:percent.
+      #   How:   stock_last_price{tier="core"} and on() stock_market_phase{phase="post_close"} == 1.
+      #   Debug: may differ slightly from NSE's official close (30-minute VWAP). Same missing-day causes as the
+      #          other snapshots.
       - record: stock:session_close:price
         expr: stock_last_price{tier="core"} and on() stock_market_phase{phase="post_close"} == 1
+      # stock:session_return_x_nifty:ratio
+      #   What:  product of the stock's and NIFTY 50's daily log returns per core equity; its 28d average minus the
+      #          product of means is the covariance used for beta in nse_risk.
+      #   How:   ln(C / (PC > 0)){tier="core", EQ} * on() group_left() ln(max(NIFTY C) / max(NIFTY PC > 0)), where
+      #          NIFTY = stock_*{symbol="NIFTY 50"} collapsed to one label-less series by max(); post_close gate.
+      #   Debug: empty for every stock if the NIFTY 50 series is missing or its previous close is 0.
       - record: stock:session_return_x_nifty:ratio
         expr: |
           ln(stock_last_price{tier="core", instrument_type="EQ"} / (stock_previous_close_price{tier="core", instrument_type="EQ"} > 0))
           * on() group_left()
             ln(max(stock_last_price{symbol="NIFTY 50"}) / max(stock_previous_close_price{symbol="NIFTY 50"} > 0))
           and on() stock_market_phase{phase="post_close"} == 1
+      # stock:session_drawdown:percent
+      #   What:  today's close vs the highest snapshot close of the last 90 calendar days (~62 sessions), in %;
+      #          always <= 0 (0 = at the 90-day closing high, -20 = 20% below it). Max drawdown = min over 90d.
+      #   How:   (stock:session_close:price / max_over_time(stock:session_close:price[90d]) - 1) * 100. No explicit
+      #          phase gate: it only produces a value when stock:session_close:price, evaluated just above in the
+      #          same group, exists (the post-close evaluation); the range includes today's close.
+      #   Debug: no count_over_time warm-up guard, so with little history the peak is short-lived and values sit
+      #          near 0. Check count_over_time(stock:session_close:price[90d]).
       - record: stock:session_drawdown:percent
         expr: (stock:session_close:price / max_over_time(stock:session_close:price[90d]) - 1) * 100
+      # portfolio:session_return:ratio
+      #   What:  the portfolio's daily return as a fraction (0.01 = +1%), one sample per trading day; input to
+      #          portfolio volatility, Sharpe, Sortino and VaR.
+      #   How:   portfolio:day_change:sum / ((portfolio:holding_value:sum - portfolio:day_change:sum) > 0), i.e. today's
+      #          P&L over yesterday's holding value; post_close gate. Single label-less series.
+      #   Debug: empty when no broker holdings are exported (stock_portfolio_holding_*), or the prior value is <= 0.
+      #          Intraday trades/position P&L are not included (holdings only).
       - record: portfolio:session_return:ratio
         expr: |
           portfolio:day_change:sum / ((portfolio:holding_value:sum - portfolio:day_change:sum) > 0)
           and on() stock_market_phase{phase="post_close"} == 1
+      # portfolio:session_downside_sq:ratio
+      #   What:  squared negative part of the portfolio's daily return (0 on up days); its mean over 90d is the
+      #          downside variance for the Sortino ratio.
+      #   How:   clamp_max(portfolio:session_return:ratio, 0) ^ 2. No phase gate: exists only in the evaluation where
+      #          portfolio:session_return:ratio (just above, same group) was written.
+      #   Debug: empty whenever portfolio:session_return:ratio is empty.
       - record: portfolio:session_downside_sq:ratio
         expr: clamp_max(portfolio:session_return:ratio, 0) ^ 2

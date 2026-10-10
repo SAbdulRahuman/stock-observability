@@ -7,9 +7,23 @@ groups:
   - name: nse_volume_liquidity
     interval: 15s
     rules:
+      # stock:turnover:inr
+      #   What:  Traded value so far today in INR (all tiers, equities only); resets with the session volume.
+      #   How:   stock_day_volume_shares * stock_average_traded_price (Kite ATP = day VWAP), instrument_type="EQ".
+      #          Exact for V * VWAP by definition; no market-open gate, so the last session's value persists after close.
+      #   Debug: stock_day_volume_shares{symbol="X"}, stock_average_traded_price{symbol="X"}. 0 before the first trade.
       - record: stock:turnover:inr
         expr: stock_day_volume_shares{instrument_type="EQ"} * stock_average_traded_price{instrument_type="EQ"}
 
+      # stock:relative_volume:ratio
+      #   What:  Relative volume (RVOL): today's volume vs the volume a typical session would have traded by now.
+      #          1 = normal pace, > 1.5 = unusually active (used by breakout alerts), < 0.5 = quiet.
+      #   How:   V_day / (avg_over_time(stock:session_volume:shares[14d]) * elapsed / 22500), elapsed = 22500 -
+      #          stock_market_seconds_to_close (seconds since 09:15), joined with on() group_left(); expected-volume
+      #          `> 0` guard. Gates: >= 5 EOD session-volume snapshots in 14d, stock_market_open == 1 and
+      #          seconds_to_close < 20700 (i.e. from 09:45). tier="core", instrument_type="EQ". 15s group.
+      #   Debug: count_over_time(stock:session_volume:shares{symbol="X"}[14d]) (needs 5 sessions of EOD snapshots from
+      #          nse_eod_snapshot), stock_market_seconds_to_close. Empty before 09:45, after close, and for new symbols.
       # Assumes linear intraday volume (NSE volume is U-shaped), hence the 09:45 gate.
       - record: stock:relative_volume:ratio
         expr: |
@@ -25,8 +39,20 @@ groups:
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close < 20700
 
+      # stock:orderbook_depth:inr
+      #   What:  Visible top-5 order-book liquidity in INR (bid plus ask notional); higher = deeper book.
+      #   How:   sum without (side) of stock_orderbook_notional{tier="core"} (per side: sum of price * qty over levels
+      #          1-5, computed by the exporter's orderbook collector). 15s group.
+      #   Debug: stock_orderbook_notional{symbol="X"}. Empty when the orderbook collector is off or ticks lack depth.
       - record: stock:orderbook_depth:inr
         expr: sum without (side) (stock_orderbook_notional{tier="core"})
+      # stock:depth_vs_1h:ratio
+      #   What:  Current top-5 depth relative to its own 1h average. 1 = normal; < 0.25 = liquidity drained
+      #          (StockLiquidityDrain); > 2 = unusually deep book.
+      #   How:   stock:orderbook_depth:inr / avg_over_time(stock:orderbook_depth:inr[1h]) (~240 samples of the 15s
+      #          recording), denominator `> 0` guard. No warm-up or market-open gate: right after start/open the 1h
+      #          mean uses fewer or pre-open samples.
+      #   Debug: stock:orderbook_depth:inr{symbol="X"} and its avg_over_time[1h]; empty when depth is empty.
       - record: stock:depth_vs_1h:ratio
         expr: stock:orderbook_depth:inr / (avg_over_time(stock:orderbook_depth:inr[1h]) > 0)
 
@@ -36,24 +62,61 @@ groups:
   - name: nse_volume_bars
     interval: 1m
     rules:
+      # stock:volume_change_15m:percent
+      #   What:  Volume of the last 15 one-minute bars vs the 15 bars before them, in %. +100 = volume doubled,
+      #          -50 = halved, 0 = unchanged.
+      #   How:   (sum_over_time(V_bar[15m]) / sum_over_time(V_bar[15m] offset 15m) - 1) * 100, V_bar =
+      #          stock:bar_1m_volume:shares (core EQ, in session); previous-window `> 0` guard; gated by
+      #          count_over_time(V_bar[30m]) >= 30 so both windows are full. 1m group.
+      #   Debug: count_over_time(stock:bar_1m_volume:shares{symbol="X"}[30m]). Empty for the first 30 min of the session
+      #          (bars only exist while open) and when the previous 15m had no volume.
       - record: stock:volume_change_15m:percent
         expr: |
           (sum_over_time(stock:bar_1m_volume:shares[15m]) / (sum_over_time(stock:bar_1m_volume:shares[15m] offset 15m) > 0) - 1) * 100
           and count_over_time(stock:bar_1m_volume:shares[30m]) >= 30
+      # stock:cmf_20m:ratio
+      #   What:  Chaikin Money Flow over 20 one-minute bars, in [-1, 1]: > 0 = closes near bar highs on volume
+      #          (accumulation), < 0 = closes near lows (distribution); |CMF| > 0.25 is strong.
+      #   How:   sum_over_time(stock:bar_1m_money_flow_volume:shares[20m]) / sum_over_time(stock:bar_1m_volume:shares[20m]),
+      #          MFV = ((C - L) - (H - C)) / (H - L) * V per bar (0 when H = L, see nse_bars); denominator `> 0` guard;
+      #          count_over_time(V_bar[20m]) >= 20 warm-up. Bars use 1s LTP highs/lows, not exchange candles.
+      #   Debug: stock:bar_1m_money_flow_volume:shares{symbol="X"}, stock:bar_1m_volume:shares{symbol="X"}. Empty in
+      #          the first 20 min of the session or with zero volume in 20m.
       - record: stock:cmf_20m:ratio
         expr: |
           sum_over_time(stock:bar_1m_money_flow_volume:shares[20m]) / (sum_over_time(stock:bar_1m_volume:shares[20m]) > 0)
           and count_over_time(stock:bar_1m_volume:shares[20m]) >= 20
+      # stock:volume_zscore_1h:sigma
+      #   What:  How unusual the latest 1m bar volume is vs the last hour, in standard deviations; > 3 = volume spike.
+      #   How:   (V_bar - avg_over_time(V_bar[1h])) / stddev_over_time(V_bar[1h]) (population stddev, includes the
+      #          current bar), V_bar = stock:bar_1m_volume:shares; stddev `> 0` guard; >= 30 bars in 1h warm-up.
+      #   Debug: count_over_time(stock:bar_1m_volume:shares{symbol="X"}[1h]). Empty for the first 30 min of the session
+      #          or when every bar in the hour had identical volume (e.g. all 0).
       - record: stock:volume_zscore_1h:sigma
         expr: |
           (stock:bar_1m_volume:shares - avg_over_time(stock:bar_1m_volume:shares[1h]))
           / (stddev_over_time(stock:bar_1m_volume:shares[1h]) > 0)
           and count_over_time(stock:bar_1m_volume:shares[1h]) >= 30
+      # stock:price_impact_15m:bps_per_crore
+      #   What:  Amihud-style illiquidity: absolute 15m price move (bps) per INR 1 crore traded in those 15 min.
+      #          Lower = more liquid (large value moves the price little); compare within a symbol over time.
+      #   How:   |stock:return_15m:percent| * 100 / (sum_over_time(V_bar[15m]) * stock_average_traded_price / 1e7),
+      #          tier="core", EQ; the traded value uses the day VWAP (ATP) as price proxy; denominator `> 0` guard;
+      #          >= 15 bars in 15m warm-up.
+      #   Debug: stock:return_15m:percent{symbol="X"}, sum_over_time(stock:bar_1m_volume:shares{symbol="X"}[15m]).
+      #          Empty in the first 15 min of the session or when no volume traded in 15m; 0 when the price is unchanged.
       - record: stock:price_impact_15m:bps_per_crore
         expr: |
           abs(stock:return_15m:percent{tier="core", instrument_type="EQ"}) * 100
           / (sum_over_time(stock:bar_1m_volume:shares[15m]) * stock_average_traded_price{tier="core"} / 1e7 > 0)
           and count_over_time(stock:bar_1m_volume:shares[15m]) >= 15
+      # stock:avg_turnover_20d:inr
+      #   What:  Average daily traded value (INR) over roughly the last 20 sessions; a liquidity / tradability size.
+      #   How:   avg_over_time(stock:session_turnover:inr[28d]) - 28 calendar days ~ 20 NSE sessions of EOD snapshots
+      #          (V_day * ATP, nse_eod_snapshot); gated by count_over_time(...[28d]) >= 10 sessions. Evaluated every 1m
+      #          but only changes after each post-close snapshot.
+      #   Debug: count_over_time(stock:session_turnover:inr{symbol="X"}[28d]). Empty until 10 sessions of EOD snapshots
+      #          exist (core EQ only).
       - record: stock:avg_turnover_20d:inr
         expr: |
           avg_over_time(stock:session_turnover:inr[28d])
@@ -65,6 +128,15 @@ groups:
   - name: nse_volume_stateful
     interval: 1m
     rules:
+      # stock:obv_session:shares
+      #   What:  Session On-Balance Volume: running sum of 1m volume, added on up-minutes and subtracted on down-minutes.
+      #          Rising = volume flows in on up-moves; compare its slope with price (divergences). Starts at 0 each session.
+      #   How:   stateful: OBV_t = last_over_time(OBV[3m]) + sgn(C - C[1m ago]) * dV, C = stock_last_price{core, EQ},
+      #          dV = stock_day_volume_shares - offset 1m when >= 0, else the whole day volume (session reset).
+      #          `or 0 * stock_last_price` seeds 0 when there is no previous state (first minute after open, since the
+      #          previous session's last value is older than 3m) or when the increment is missing. Only while open.
+      #   Debug: stock:obv_session:shares{symbol="X"}[10m], stock_day_volume_shares{symbol="X"}. Resets to 0 after a
+      #          rule-evaluation or scrape gap > 3m, or when C/V lack a 1m-ago sample; empty when market closed.
       - record: stock:obv_session:shares
         expr: |
           (
@@ -74,6 +146,13 @@ groups:
             or 0 * stock_last_price{tier="core", instrument_type="EQ"}
           )
           and on() stock_market_open == 1
+      # stock:vpt_session:shares
+      #   What:  Session Volume-Price Trend: running sum of 1m volume weighted by the 1m relative price change, in shares.
+      #          Like OBV but proportional to the move size; starts at 0 each session.
+      #   How:   stateful: VPT_t = last_over_time(VPT[3m]) + dV * (C - C[1m ago]) / C[1m ago] (`> 0` guard), C =
+      #          stock_last_price{core, EQ}, dV as in OBV (day-volume delta, whole volume after session reset);
+      #          `or 0 * stock_last_price` seeds/reset to 0; gated on stock_market_open == 1.
+      #   Debug: stock:vpt_session:shares{symbol="X"}[10m]. Same reset/empty causes as stock:obv_session:shares.
       - record: stock:vpt_session:shares
         expr: |
           (
@@ -84,6 +163,14 @@ groups:
             or 0 * stock_last_price{tier="core", instrument_type="EQ"}
           )
           and on() stock_market_open == 1
+      # stock:ad_line_session:shares
+      #   What:  Session Accumulation/Distribution line: running sum of 1m volume weighted by where the price closes in
+      #          the minute's range (+V at the high, -V at the low). Rising = accumulation; starts at 0 each session.
+      #   How:   stateful: AD_t = last_over_time(AD[3m]) + CLV * dV, CLV = (2C - L - H) / (H - L) with H/L =
+      #          max/min_over_time(stock_last_price{core, EQ}[1m]) of raw 1s samples; (H - L) `> 0` guard and
+      #          `or 0 * stock_day_volume_shares` make flat minutes add 0; dV as in OBV; `or 0 * stock_last_price`
+      #          seeds/reset to 0; gated on stock_market_open == 1.
+      #   Debug: stock:ad_line_session:shares{symbol="X"}[10m]; same reset/empty causes as stock:obv_session:shares.
       - record: stock:ad_line_session:shares
         expr: |
           (
@@ -103,6 +190,14 @@ groups:
   - name: nse_volume_liquidity_alerts
     interval: 15s
     rules:
+      # StockLiquidityDrain
+      #   What:  Fires (warning) when an equity's top-5 depth falls below 25% of its 1h average while its spread is more
+      #          than twice its 1h mean, for 2 minutes in session. Value = depth ratio (shown as %).
+      #   How:   stock:depth_vs_1h:ratio{instrument_type="EQ"} < 0.25 and stock_orderbook_spread_bps >
+      #          2 * avg_over_time(stock:orderbook_spread_5m_avg:bps[1h]) and on() stock_market_open == 1; `for: 2m`.
+      #   Debug: stock:depth_vs_1h:ratio{symbol="X"}, stock_orderbook_spread_bps{symbol="X"},
+      #          avg_over_time(stock:orderbook_spread_5m_avg:bps{symbol="X"}[1h]). Never fires without orderbook data;
+      #          a briefly recovering spread or depth resets `for:`.
       # The 1h spread mean uses the 15s-recorded 5m average to avoid reading 1s samples.
       - alert: StockLiquidityDrain
         expr: |

@@ -9,6 +9,14 @@ groups:
   - name: nse_trend
     interval: 1m
     rules:
+      # stock:ema_12m:price
+      #   What:  12-bar EMA of the 1m last price (rupees), core tier, in session only; fast leg of MACD and PPO.
+      #   How:   EMA = 2/13 * stock_last_price + 11/13 * last_over_time(stock:ema_12m:price[3m]). With no state
+      #          within 3m it is seeded with avg_over_time(stock_last_price[12m:1m]) once
+      #          stock_market_seconds_to_close <= 21780 (12 minutes after the open, 09:27). Gated on
+      #          stock_market_open == 1, so the state lapses overnight.
+      #   Debug: stock_last_price{tier="core"}, stock_market_open, stock_market_seconds_to_close. Empty before
+      #          09:27 IST, after the close or for non-core symbols; reseeds from the SMA after a gap > 3m.
       - record: stock:ema_12m:price
         expr: |
           (
@@ -16,6 +24,13 @@ groups:
             or (avg_over_time(stock_last_price{tier="core"}[12m:1m]) and on() stock_market_seconds_to_close <= 21780)
           )
           and on() stock_market_open == 1
+      # stock:ema_26m:price
+      #   What:  26-bar EMA of the 1m last price (rupees), core tier, in session only; slow leg of MACD and PPO.
+      #   How:   EMA = 2/27 * stock_last_price + 25/27 * last_over_time(stock:ema_26m:price[3m]). Seeded (no state
+      #          within 3m) with avg_over_time(stock_last_price[26m:1m]) once stock_market_seconds_to_close <= 20940
+      #          (26 minutes after the open, 09:41). Gated on stock_market_open == 1.
+      #   Debug: stock_last_price{tier="core"}, stock_market_seconds_to_close. Empty before 09:41 IST, after the
+      #          close or for non-core symbols; reseeds from the SMA after a gap > 3m.
       - record: stock:ema_26m:price
         expr: |
           (
@@ -23,12 +38,32 @@ groups:
             or (avg_over_time(stock_last_price{tier="core"}[26m:1m]) and on() stock_market_seconds_to_close <= 20940)
           )
           and on() stock_market_open == 1
+      # stock:macd_12_26m:price
+      #   What:  MACD line in rupees: EMA12 - EMA26 of 1m prices. Positive = short-term average above the longer
+      #          one (upward momentum); magnitude scales with the share price (use PPO to compare symbols).
+      #   How:   stock:ema_12m:price - stock:ema_26m:price, one-to-one on all labels; no own gate, exists while both
+      #          EMAs exist (i.e. from 26 minutes after the open, in session).
+      #   Debug: stock:ema_12m:price, stock:ema_26m:price. Empty before 09:41 IST / outside the session or if
+      #          either EMA is missing for the symbol.
       - record: stock:macd_12_26m:price
         expr: stock:ema_12m:price - stock:ema_26m:price
+      # stock:macd_signal_9m:price
+      #   What:  MACD signal line (rupees): 9-bar EMA of the MACD line; MACD crossing it marks momentum turns.
+      #   How:   signal = 0.2 * MACD + 0.8 * last_over_time(stock:macd_signal_9m:price[3m]) (a = 2/10). With no state
+      #          within 3m it is seeded with avg_over_time(MACD[9m]) once count_over_time(MACD[9m]) >= 9 (nine 1m
+      #          MACD values). No market gate of its own: it stops when MACD stops at the close.
+      #   Debug: stock:macd_12_26m:price and count_over_time(stock:macd_12_26m:price[9m]). First value ~34 minutes
+      #          after the open (26m for MACD + 9 values), i.e. ~09:49 IST; empty outside the session.
       - record: stock:macd_signal_9m:price
         expr: |
           0.2 * stock:macd_12_26m:price + 0.8 * last_over_time(stock:macd_signal_9m:price[3m])
           or (avg_over_time(stock:macd_12_26m:price[9m]) and count_over_time(stock:macd_12_26m:price[9m]) >= 9)
+      # stock:macd_histogram:price
+      #   What:  MACD histogram (rupees) = MACD - signal. > 0 = MACD above its signal (bullish momentum), < 0 =
+      #          bearish; a shrinking magnitude means momentum fading (see stock:technical_signal:bool).
+      #   How:   stock:macd_12_26m:price - stock:macd_signal_9m:price, one-to-one on all labels; no own gate.
+      #   Debug: both inputs. Empty until the signal line exists (~34 minutes after the open) and outside the
+      #          session.
       - record: stock:macd_histogram:price
         expr: stock:macd_12_26m:price - stock:macd_signal_9m:price
 
@@ -38,11 +73,28 @@ groups:
   - name: nse_trend_regression
     interval: 1m
     rules:
+      # stock:trend_slope_30m:percent_per_hour
+      #   What:  Least-squares slope of the last 30 one-minute prices, as percent of the current price per hour;
+      #          + = uptrend, - = downtrend, |value| > ~1 %/h is a strong intraday trend.
+      #   How:   deriv(stock_last_price{tier="core"}[30m:1m]) (rupees per second over 30 subquery points)
+      #          * 3600 / (stock_last_price > 0) * 100. Gated on stock_market_open == 1 and
+      #          stock_market_seconds_to_close <= 20700 (30 minutes after the open, 09:45).
+      #   Debug: deriv(stock_last_price{tier="core",symbol="X"}[30m:1m]). Empty before 09:45 IST, after the
+      #          close, for non-core symbols; > 0 guard drops a zero price.
       - record: stock:trend_slope_30m:percent_per_hour
         expr: |
           deriv(stock_last_price{tier="core"}[30m:1m]) * 3600 / (stock_last_price{tier="core"} > 0) * 100
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 20700
+      # stock:trend_r2_30m:ratio
+      #   What:  R^2 (0..1) of the 30-bar linear trend: how much of the price variance the straight line explains.
+      #          Near 1 = clean steady trend, near 0 = sideways/noisy. Use for ranking, not significance.
+      #   How:   clamp_max(deriv(C[30m:1m])^2 * 269700 / (stdvar_over_time(C[30m:1m]) > 0), 1), C =
+      #          stock_last_price{tier="core"}; 269700 s^2 = Var(t) of 30 points 60 s apart (60^2 * (30^2-1) / 12),
+      #          so b^2 Var(t) / Var(C) = R^2. clamp_max absorbs rounding above 1. Same gates as the slope (in
+      #          session, from 30 minutes after the open).
+      #   Debug: stdvar_over_time(stock_last_price{symbol="X"}[30m:1m]). Empty before 09:45 IST, after the close,
+      #          or for a flat price (zero variance dropped by the > 0 guard).
       - record: stock:trend_r2_30m:ratio
         expr: |
           clamp_max(
@@ -51,6 +103,13 @@ groups:
             1)
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 20700
+      # stock:trend_tstat_30m:ratio
+      #   What:  Signed t-statistic of the 30-bar slope; |t| > ~2 suggests a trend beyond noise, sign = direction.
+      #          Overstates significance because 1m residuals are autocorrelated.
+      #   How:   sgn(deriv(stock_last_price{tier="core"}[30m:1m])) * sqrt(R^2 * 28 / ((1 - R^2) > 0)), R^2 =
+      #          stock:trend_r2_30m:ratio, 28 = 30 points - 2 fitted parameters. Gates come from R^2.
+      #   Debug: stock:trend_r2_30m:ratio. Empty when R^2 is empty (before 09:45 IST, closed, flat price) or
+      #          R^2 = 1 (the > 0 guard drops 1 - R^2 = 0, see the next comment).
       # A perfect fit (R^2 = 1) has no finite t-statistic and is left out.
       - record: stock:trend_tstat_30m:ratio
         expr: |
@@ -60,6 +119,21 @@ groups:
   - name: nse_trend_alerts
     interval: 15s
     rules:
+      # StockProjectedCircuitHit
+      #   What:  Warning when an EQ symbol (any tier) is within 5% of its upper/lower circuit (price band) and its
+      #          10-minute linear trend projects it to reach that band within 15 minutes. Label band=upper|lower.
+      #   How:   upper: predict_linear(stock_last_price{instrument_type="EQ"}[10m], 900) >= upper limit and
+      #          (upper - price) < 0.05 * price; lower mirrors it with <= lower limit and (price - lower) < 5%.
+      #          Each leg gets band via label_replace; the `or` merges them. Then: unless the price is already
+      #          at/beyond either limit (already hit, ignoring(band)); and stock_last_price offset 9m exists (the
+      #          10m window is nearly full, e.g. not right after a Prometheus restart); and stock_market_open == 1.
+      #          Raw scrape samples (not 1m bars); evaluated every 15s; must hold for 1m (for: 1m). Static labels
+      #          severity=warning, category=circuit; the effectiveness annotation reads
+      #          alert:forward_return_5d:percent{alertname=...,band=...,horizon="15m"} (mean 15m return after it).
+      #   Debug: predict_linear(stock_last_price{symbol="X"}[10m], 900) vs stock_circuit_upper_limit_price /
+      #          stock_circuit_lower_limit_price; ALERTS{alertname="StockProjectedCircuitHit"}. Not firing: no
+      #          circuit limit series for the symbol (stock_circuit_*_limit_price), price > 5% from the band, already
+      #          at the limit, < 9m of samples, market closed, or the condition broke within the 1m pending period.
       # Least-squares projection of the last 10 minutes, 15 minutes ahead; all EQ tiers, within 5% of the band.
       # The offset 9m guard requires a (nearly) full window, e.g. after a Prometheus restart.
       - alert: StockProjectedCircuitHit

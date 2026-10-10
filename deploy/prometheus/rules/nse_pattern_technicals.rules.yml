@@ -2,29 +2,67 @@ groups:
   - name: nse_pattern_technicals
     interval: 1m
     rules:
+      # stock:daily_body:price
+      #   What:  Size of today's (still forming) daily candle body in rupees, |LTP - open|; 0 = doji-like, large =
+      #          decisive move from the open. Provisional until the close.
+      #   How:   abs(stock_last_price{tier="core",instrument_type="EQ"} - stock_open_price), one-to-one on symbol
+      #          labels, and on() stock_market_open == 1.
+      #   Debug: Query stock_last_price and stock_open_price for the symbol. Empty when the market is closed, for
+      #          non-EQ/non-core instruments, or before the exporter publishes today's open.
       - record: stock:daily_body:price
         expr: |
           abs(stock_last_price{tier="core", instrument_type="EQ"} - stock_open_price)
           and on() stock_market_open == 1
+      # stock:daily_range:price
+      #   What:  Today's high-low range so far in rupees (>= 0); the denominator for doji and the NR7 comparison.
+      #   How:   stock_high_price{tier="core",instrument_type="EQ"} - stock_low_price, kept only if >= 0 (drops
+      #          inconsistent H < L scrapes), and on() stock_market_open == 1.
+      #   Debug: Query stock_high_price and stock_low_price. Empty when closed, for non-core/non-EQ, or if H < L.
       - record: stock:daily_range:price
         expr: |
           (stock_high_price{tier="core", instrument_type="EQ"} - stock_low_price >= 0)
           and on() stock_market_open == 1
+      # stock:daily_upper_wick:price
+      #   What:  Upper shadow of today's candle in rupees: distance from the high down to the top of the body.
+      #          Long upper wick = rejection of higher prices (shooting-star shape).
+      #   How:   H - max(LTP, open); max is written as `(stock_last_price > stock_open_price) or stock_open_price`
+      #          (LTP if above the open, else the open). H from stock_high_price{tier="core",instrument_type="EQ"},
+      #          which also restricts the result to core EQ. and on() stock_market_open == 1.
+      #   Debug: Query stock_high_price, stock_last_price, stock_open_price. Empty when closed or any input missing.
       - record: stock:daily_upper_wick:price
         expr: |
           stock_high_price{tier="core", instrument_type="EQ"}
           - ((stock_last_price > stock_open_price) or stock_open_price)
           and on() stock_market_open == 1
+      # stock:daily_lower_wick:price
+      #   What:  Lower shadow of today's candle in rupees: distance from the bottom of the body down to the low.
+      #          Long lower wick = rejection of lower prices (hammer shape).
+      #   How:   min(LTP, open) - L; min is written as `(stock_last_price < stock_open_price) or stock_open_price`
+      #          (both sides tier="core",instrument_type="EQ"), minus stock_low_price. and on() stock_market_open == 1.
+      #   Debug: Query stock_low_price, stock_last_price, stock_open_price. Empty when closed or any input missing.
       - record: stock:daily_lower_wick:price
         expr: |
           ((stock_last_price{tier="core", instrument_type="EQ"} < stock_open_price) or stock_open_price{tier="core", instrument_type="EQ"})
           - stock_low_price
           and on() stock_market_open == 1
+      # stock:daily_pattern:bool {pattern=doji}
+      #   What:  1 while today's candle is a doji (body tiny relative to range = indecision); series absent otherwise.
+      #          Provisional during the session - it can appear and disappear as LTP moves.
+      #   How:   body <= 0.1 * range and range > 0 (stock:daily_body:price, stock:daily_range:price); the matching
+      #          sample is turned into 1 by `* 0 + 1`. and on() stock_market_open == 1.
+      #   Debug: Compare stock:daily_body:price with 0.1 * stock:daily_range:price. Absent when range is 0 (no trades
+      #          yet / flat), when closed, or for non-core/non-EQ symbols.
       - record: stock:daily_pattern:bool
         labels: {pattern: doji, direction: neutral}
         expr: |
           (stock:daily_body:price <= 0.1 * stock:daily_range:price and stock:daily_range:price > 0) * 0 + 1
           and on() stock_market_open == 1
+      # stock:daily_pattern:bool {pattern=hammer_shape}
+      #   What:  1 while today's candle has a hammer shape (long lower wick, small upper wick); absent otherwise.
+      #          Shape only - prior downtrend is NOT checked, hence direction=neutral. Provisional intraday.
+      #   How:   lower_wick >= 2 * body and upper_wick <= body and body > 0, from stock:daily_lower_wick/
+      #          upper_wick/body:price; `* 0 + 1` makes the value 1. and on() stock_market_open == 1.
+      #   Debug: Inspect the three wick/body series for the symbol. body == 0 (LTP == open) never qualifies.
       - record: stock:daily_pattern:bool
         labels: {pattern: hammer_shape, direction: neutral}
         expr: |
@@ -32,6 +70,12 @@ groups:
             and stock:daily_upper_wick:price <= stock:daily_body:price
             and stock:daily_body:price > 0) * 0 + 1
           and on() stock_market_open == 1
+      # stock:daily_pattern:bool {pattern=shooting_star_shape}
+      #   What:  1 while today's candle has a shooting-star shape (long upper wick, small lower wick); absent otherwise.
+      #          Shape only - prior uptrend is NOT checked (direction=neutral). Provisional intraday.
+      #   How:   upper_wick >= 2 * body and lower_wick <= body and body > 0; `* 0 + 1` makes the value 1.
+      #          and on() stock_market_open == 1.
+      #   Debug: Inspect stock:daily_upper_wick/lower_wick/body:price. body == 0 never qualifies.
       - record: stock:daily_pattern:bool
         labels: {pattern: shooting_star_shape, direction: neutral}
         expr: |
@@ -39,18 +83,49 @@ groups:
             and stock:daily_lower_wick:price <= stock:daily_body:price
             and stock:daily_body:price > 0) * 0 + 1
           and on() stock_market_open == 1
+      # stock:previous_session:price {field=open}
+      #   What:  Open of the last completed session in rupees, exposed during market hours for pattern/pivot rules.
+      #   How:   last_over_time(stock:session_open:price{tier="core",instrument_type="EQ"}[7d]); the EOD snapshot is
+      #          written once per session at post_close, so during the session it still holds yesterday's value.
+      #          7d lookback bridges weekends/holidays. and on() stock_market_open == 1.
+      #   Debug: Query stock:session_open:price[7d]. Empty if no post_close snapshot in the last 7 days (new install,
+      #          Prometheus down during 15:30-16:00) or the market is closed.
       - record: stock:previous_session:price
         labels: {field: open}
         expr: last_over_time(stock:session_open:price{tier="core", instrument_type="EQ"}[7d]) and on() stock_market_open == 1
+      # stock:previous_session:price {field=close}
+      #   What:  Close of the last completed session in rupees (during market hours).
+      #   How:   last_over_time(stock:session_close:price{tier="core",instrument_type="EQ"}[7d]) (EOD snapshot from
+      #          nse_eod_snapshot) and on() stock_market_open == 1.
+      #   Debug: Query stock:session_close:price[7d]; empty if no post_close snapshot in 7 days or market closed.
       - record: stock:previous_session:price
         labels: {field: close}
         expr: last_over_time(stock:session_close:price{tier="core", instrument_type="EQ"}[7d]) and on() stock_market_open == 1
+      # stock:previous_session:price {field=high}
+      #   What:  High of the last completed session in rupees (during market hours).
+      #   How:   last_over_time(stock:session_high:price{tier="core",instrument_type="EQ"}[7d]) (EOD snapshot from
+      #          nse_eod_snapshot) and on() stock_market_open == 1.
+      #   Debug: Query stock:session_high:price[7d]; empty if no post_close snapshot in 7 days or market closed.
       - record: stock:previous_session:price
         labels: {field: high}
         expr: last_over_time(stock:session_high:price{tier="core", instrument_type="EQ"}[7d]) and on() stock_market_open == 1
+      # stock:previous_session:price {field=low}
+      #   What:  Low of the last completed session in rupees (during market hours).
+      #   How:   last_over_time(stock:session_low:price{tier="core",instrument_type="EQ"}[7d]) (EOD snapshot from
+      #          nse_eod_snapshot) and on() stock_market_open == 1.
+      #   Debug: Query stock:session_low:price[7d]; empty if no post_close snapshot in 7 days or market closed.
       - record: stock:previous_session:price
         labels: {field: low}
         expr: last_over_time(stock:session_low:price{tier="core", instrument_type="EQ"}[7d]) and on() stock_market_open == 1
+      # stock:daily_pattern:bool {pattern=engulfing, direction=bullish}
+      #   What:  1 while today's green body engulfs yesterday's red body (potential bullish reversal); absent
+      #          otherwise. Provisional until the close.
+      #   How:   LTP > open (today green) and prev_close < prev_open (yesterday red) and open <= prev_close and
+      #          LTP >= prev_open, using stock:previous_session:price{field=...}. `ignoring(field)` matches the field
+      #          series against each other and drops `field` from the result so it can `and`-match the core EQ price
+      #          series. `* 0 + 1` makes the value 1. and on() stock_market_open == 1.
+      #   Debug: Query stock_open_price, stock_last_price and stock:previous_session:price{symbol="X"}. Absent if any
+      #          previous_session field is missing (no EOD snapshot in 7 days) or the market is closed.
       - record: stock:daily_pattern:bool
         labels: {pattern: engulfing, direction: bullish}
         expr: |
@@ -59,6 +134,12 @@ groups:
             and stock_open_price <= ignoring(field) stock:previous_session:price{field="close"}
             and stock_last_price >= ignoring(field) stock:previous_session:price{field="open"}) * 0 + 1
           and on() stock_market_open == 1
+      # stock:daily_pattern:bool {pattern=engulfing, direction=bearish}
+      #   What:  1 while today's red body engulfs yesterday's green body (potential bearish reversal); absent
+      #          otherwise. Provisional until the close.
+      #   How:   LTP < open and prev_close > prev_open and open >= prev_close and LTP <= prev_open; same
+      #          ignoring(field) matching and `* 0 + 1` as the bullish rule. and on() stock_market_open == 1.
+      #   Debug: Same inputs as the bullish rule; absent without previous-session snapshots or when closed.
       - record: stock:daily_pattern:bool
         labels: {pattern: engulfing, direction: bearish}
         expr: |
@@ -67,57 +148,129 @@ groups:
             and stock_open_price >= ignoring(field) stock:previous_session:price{field="close"}
             and stock_last_price <= ignoring(field) stock:previous_session:price{field="open"}) * 0 + 1
           and on() stock_market_open == 1
+      # stock:daily_pattern:bool {pattern=inside_day}
+      #   What:  1 while today's range is strictly inside yesterday's (H < prev H and L > prev L) = contraction /
+      #          consolidation; absent otherwise. Can only switch off during the day as the range widens.
+      #   How:   stock_high_price{tier="core",instrument_type="EQ"} < ignoring(field) previous_session{field="high"}
+      #          and stock_low_price > ignoring(field) previous_session{field="low"}; `* 0 + 1`; market-open gate.
+      #   Debug: Compare stock_high_price/stock_low_price with stock:previous_session:price{field=~"high|low"}.
       - record: stock:daily_pattern:bool
         labels: {pattern: inside_day, direction: neutral}
         expr: |
           (stock_high_price{tier="core", instrument_type="EQ"} < ignoring(field) stock:previous_session:price{field="high"}
             and stock_low_price > ignoring(field) stock:previous_session:price{field="low"}) * 0 + 1
           and on() stock_market_open == 1
+      # stock:daily_pattern:bool {pattern=nr7}
+      #   What:  1 while today's range is narrower than each of the previous six sessions' ranges (NR7 = narrowest of 7,
+      #          volatility contraction often preceding a breakout); absent otherwise. Provisional intraday.
+      #   How:   stock:daily_range:price < min without(lag) last_over_time(stock:session_range_history:price[7d]) over
+      #          lag="0".."5" (six prior session ranges), and count without(lag) (...) == 6. `* 0 + 1`; market-open gate.
+      #   Debug: Query last_over_time(stock:session_range_history:price{symbol="X"}[7d]); needs 6 completed post_close
+      #          snapshots (6 sessions after deploy) and no >7-day gap, otherwise the count guard keeps it absent.
       - record: stock:daily_pattern:bool
         labels: {pattern: nr7, direction: neutral}
         expr: |
           (stock:daily_range:price < min without(lag) (last_over_time(stock:session_range_history:price[7d]))
             and count without(lag) (last_over_time(stock:session_range_history:price[7d])) == 6) * 0 + 1
           and on() stock_market_open == 1
+      # stock:fibonacci_pivot:price {level=P}
+      #   What:  Classic floor pivot of the previous session in rupees, P = (H + L + C) / 3; price above P is read as
+      #          bullish bias, below as bearish. Constant for the whole session.
+      #   How:   sum without(field) of stock:previous_session:price{field=~"high|low|close"} / 3, only if count
+      #          without(field) == 3 (all three fields present). Market-open gating comes from previous_session.
+      #   Debug: Query stock:previous_session:price{symbol="X"}; empty when a field is missing or the market is closed.
       - record: stock:fibonacci_pivot:price
         labels: {level: P}
         expr: |
           sum without(field) (stock:previous_session:price{field=~"high|low|close"}) / 3
           and count without(field) (stock:previous_session:price{field=~"high|low|close"}) == 3
+      # stock:previous_range:price
+      #   What:  Previous session's high-low range in rupees; the scale for Fibonacci and Camarilla pivot levels.
+      #   How:   sum without(field) (previous_session{field="high"}) - sum without(field) (previous_session{field="low"});
+      #          the sums only strip the `field` label so the two sides match. Gated via previous_session.
+      #   Debug: Query stock:previous_session:price{field=~"high|low"}; empty when either is missing or market closed.
       - record: stock:previous_range:price
         expr: |
           sum without(field) (stock:previous_session:price{field="high"})
           - sum without(field) (stock:previous_session:price{field="low"})
+      # stock:fibonacci_pivot:price {level=R1}
+      #   What:  First Fibonacci resistance in rupees: R1 = P + 0.382 * previous range.
+      #   How:   sum without(level) (fibonacci_pivot{level="P"}) + 0.382 * stock:previous_range:price.
+      #   Debug: Needs both the P level and stock:previous_range:price for the symbol (same session inputs).
       - record: stock:fibonacci_pivot:price
         labels: {level: R1}
         expr: sum without(level) (stock:fibonacci_pivot:price{level="P"}) + 0.382 * stock:previous_range:price
+      # stock:fibonacci_pivot:price {level=R2}
+      #   What:  Second Fibonacci resistance in rupees: R2 = P + 0.618 * previous range.
+      #   How:   sum without(level) (fibonacci_pivot{level="P"}) + 0.618 * stock:previous_range:price.
+      #   Debug: Needs the P level and stock:previous_range:price.
       - record: stock:fibonacci_pivot:price
         labels: {level: R2}
         expr: sum without(level) (stock:fibonacci_pivot:price{level="P"}) + 0.618 * stock:previous_range:price
+      # stock:fibonacci_pivot:price {level=R3}
+      #   What:  Third Fibonacci resistance in rupees: R3 = P + 1.0 * previous range.
+      #   How:   sum without(level) (fibonacci_pivot{level="P"}) + stock:previous_range:price.
+      #   Debug: Needs the P level and stock:previous_range:price.
       - record: stock:fibonacci_pivot:price
         labels: {level: R3}
         expr: sum without(level) (stock:fibonacci_pivot:price{level="P"}) + stock:previous_range:price
+      # stock:fibonacci_pivot:price {level=S1}
+      #   What:  First Fibonacci support in rupees: S1 = P - 0.382 * previous range.
+      #   How:   sum without(level) (fibonacci_pivot{level="P"}) - 0.382 * stock:previous_range:price.
+      #   Debug: Needs the P level and stock:previous_range:price.
       - record: stock:fibonacci_pivot:price
         labels: {level: S1}
         expr: sum without(level) (stock:fibonacci_pivot:price{level="P"}) - 0.382 * stock:previous_range:price
+      # stock:fibonacci_pivot:price {level=S2}
+      #   What:  Second Fibonacci support in rupees: S2 = P - 0.618 * previous range.
+      #   How:   sum without(level) (fibonacci_pivot{level="P"}) - 0.618 * stock:previous_range:price.
+      #   Debug: Needs the P level and stock:previous_range:price.
       - record: stock:fibonacci_pivot:price
         labels: {level: S2}
         expr: sum without(level) (stock:fibonacci_pivot:price{level="P"}) - 0.618 * stock:previous_range:price
+      # stock:fibonacci_pivot:price {level=S3}
+      #   What:  Third Fibonacci support in rupees: S3 = P - 1.0 * previous range.
+      #   How:   sum without(level) (fibonacci_pivot{level="P"}) - stock:previous_range:price.
+      #   Debug: Needs the P level and stock:previous_range:price.
       - record: stock:fibonacci_pivot:price
         labels: {level: S3}
         expr: sum without(level) (stock:fibonacci_pivot:price{level="P"}) - stock:previous_range:price
+      # stock:camarilla_pivot:price {level=H3}
+      #   What:  Camarilla H3 in rupees (inner resistance, often used as a fade level): prev close + 1.1/4 * prev range.
+      #   How:   sum without(field) (stock:previous_session:price{field="close"}) + 1.1/4 (=0.275) * previous_range.
+      #   Debug: Needs previous_session{field="close"} and stock:previous_range:price; empty when market closed.
       - record: stock:camarilla_pivot:price
         labels: {level: H3}
         expr: sum without(field) (stock:previous_session:price{field="close"}) + 1.1 / 4 * stock:previous_range:price
+      # stock:camarilla_pivot:price {level=H4}
+      #   What:  Camarilla H4 in rupees (outer resistance, breakout level): prev close + 1.1/2 * prev range.
+      #   How:   sum without(field) (stock:previous_session:price{field="close"}) + 1.1/2 (=0.55) * previous_range.
+      #   Debug: Needs previous close and previous range (e.g. C=100, range=14 -> 107.7).
       - record: stock:camarilla_pivot:price
         labels: {level: H4}
         expr: sum without(field) (stock:previous_session:price{field="close"}) + 1.1 / 2 * stock:previous_range:price
+      # stock:camarilla_pivot:price {level=L3}
+      #   What:  Camarilla L3 in rupees (inner support): prev close - 1.1/4 * prev range.
+      #   How:   sum without(field) (stock:previous_session:price{field="close"}) - 1.1/4 (=0.275) * previous_range.
+      #   Debug: Needs previous close and previous range.
       - record: stock:camarilla_pivot:price
         labels: {level: L3}
         expr: sum without(field) (stock:previous_session:price{field="close"}) - 1.1 / 4 * stock:previous_range:price
+      # stock:camarilla_pivot:price {level=L4}
+      #   What:  Camarilla L4 in rupees (outer support, breakdown level): prev close - 1.1/2 * prev range.
+      #   How:   sum without(field) (stock:previous_session:price{field="close"}) - 1.1/2 (=0.55) * previous_range.
+      #   Debug: Needs previous close and previous range.
       - record: stock:camarilla_pivot:price
         labels: {level: L4}
         expr: sum without(field) (stock:previous_session:price{field="close"}) - 1.1 / 2 * stock:previous_range:price
+      # stock:ichimoku_midpoint:price {line=tenkan}
+      #   What:  Ichimoku Tenkan-sen (conversion line) on one-minute bars, in rupees: midpoint of the 9-bar range.
+      #          LTP above Tenkan = short-term bullish.
+      #   How:   (max_over_time(stock:bar_1m_high:price[9m]) + min_over_time(stock:bar_1m_low:price[9m])) / 2, core EQ.
+      #          Warm-up guards: count_over_time == 9 for both high and low, stock_market_open == 1 and
+      #          stock_market_seconds_to_close <= 21960 (22500 - 9*60, i.e. 9 bars of today exist).
+      #   Debug: Query count_over_time(stock:bar_1m_high:price{symbol="X"}[9m]). Empty in the first 9 minutes of the
+      #          session or after any missing bar in the window (count < 9).
       - record: stock:ichimoku_midpoint:price
         labels: {line: tenkan}
         expr: |
@@ -126,6 +279,12 @@ groups:
           and count_over_time(stock:bar_1m_low:price[9m]) == 9
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 21960
+      # stock:ichimoku_midpoint:price {line=kijun}
+      #   What:  Ichimoku Kijun-sen (base line) on one-minute bars, in rupees: midpoint of the 26-bar range.
+      #          Tenkan crossing above Kijun = bullish TK cross.
+      #   How:   (max high[26m] + min low[26m]) / 2 from stock:bar_1m_high/low:price, core EQ; count_over_time == 26
+      #          for both, market open and seconds_to_close <= 20940 (22500 - 26*60).
+      #   Debug: Empty in the first 26 minutes of the session or when any of the last 26 bars is missing.
       - record: stock:ichimoku_midpoint:price
         labels: {line: kijun}
         expr: |
@@ -134,11 +293,21 @@ groups:
           and count_over_time(stock:bar_1m_low:price[26m]) == 26
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 20940
+      # stock:ichimoku_span:price {span=A}
+      #   What:  Undisplaced Senkou Span A in rupees = (Tenkan + Kijun) / 2; becomes a cloud edge 26 bars later.
+      #   How:   sum without(line) (stock:ichimoku_midpoint:price) / 2, only when count without(line) == 2 (both
+      #          lines present, so it inherits the Kijun 26-minute warm-up).
+      #   Debug: Query stock:ichimoku_midpoint:price{symbol="X"}; empty unless both line="tenkan" and line="kijun" exist.
       - record: stock:ichimoku_span:price
         labels: {span: A}
         expr: |
           sum without(line) (stock:ichimoku_midpoint:price) / 2
           and count without(line) (stock:ichimoku_midpoint:price) == 2
+      # stock:ichimoku_span:price {span=B}
+      #   What:  Undisplaced Senkou Span B in rupees = midpoint of the 52-bar range; the slower cloud edge.
+      #   How:   (max high[52m] + min low[52m]) / 2 from stock:bar_1m_high/low:price, core EQ; count_over_time == 52
+      #          for both, market open and seconds_to_close <= 19380 (22500 - 52*60).
+      #   Debug: Empty in the first 52 minutes of the session or with any missing bar in the 52-minute window.
       - record: stock:ichimoku_span:price
         labels: {span: B}
         expr: |
@@ -147,11 +316,28 @@ groups:
           and count_over_time(stock:bar_1m_low:price[52m]) == 52
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 19380
+      # stock:ichimoku_cloud:price
+      #   What:  Current Ichimoku cloud edges in rupees (one series per span=A|B): the spans computed 26 bars ago,
+      #          i.e. displaced forward to now. LTP above both = bullish, inside = no trend, below both = bearish.
+      #   How:   stock:ichimoku_span:price offset 26m, keeps the `span` label; market open and seconds_to_close
+      #          <= 17820 (22500 - 78*60: 52-bar warm-up + 26-bar displacement, so only today's spans are used).
+      #   Debug: Query stock:ichimoku_span:price offset 26m. Empty for the first 78 minutes of each session (warm-up
+      #          78m) or if the span was missing 26 minutes ago.
       - record: stock:ichimoku_cloud:price
         expr: |
           stock:ichimoku_span:price offset 26m
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 17820
+      # stock:session_obv:shares
+      #   What:  Intraday On-Balance Volume in shares, reset each session: running sum of +V on up-minutes and -V on
+      #          down-minutes. Rising OBV with flat price = accumulation; compare slope with price, not the level.
+      #   How:   Stateful: OBV(t) = OBV(t-1m) + stock:signed_volume_1m:shares, only if the own previous sample exists
+      #          exactly at t-60s (timestamp(self offset 1m) == time() - 60). Otherwise it is seeded with the signed
+      #          volume while stock_market_seconds_to_close >= 22380 (first 2 minutes; signed volume itself starts at
+      #          <= 22440). Whole expression gated on() stock_market_open == 1.
+      #   Debug: Query stock:signed_volume_1m:shares and stock:session_obv:shares offset 1m. A single missing minute
+      #          (signed volume absent, scrape gap, Prometheus restart) breaks the chain and the series stays empty until
+      #          the next session's open.
       - record: stock:session_obv:shares
         expr: |
           (
@@ -160,6 +346,15 @@ groups:
             or (stock:signed_volume_1m:shares and on() stock_market_seconds_to_close >= 22380)
           )
           and on() stock_market_open == 1
+      # stock:session_ad:shares
+      #   What:  Intraday Accumulation/Distribution line in shares, reset each session: running sum of Chaikin money-
+      #          flow volume. Rising = closes near bar highs on volume (buying pressure), falling = selling pressure.
+      #   How:   Stateful: AD(t) = AD(t-1m) + stock:bar_1m_money_flow_volume:shares{tier="core",instrument_type="EQ"}
+      #          if the own previous sample is exactly at t-60s; else seeded with the MFV while
+      #          stock_market_seconds_to_close >= 22380 (first 2 minutes). Extra freshness gate:
+      #          timestamp(MFV) > time() - 60 (MFV from this minute). Gated on() stock_market_open == 1.
+      #   Debug: Query stock:bar_1m_money_flow_volume:shares and stock:session_ad:shares offset 1m. Any gap breaks the
+      #          chain until the next open (no mid-session re-seed).
       - record: stock:session_ad:shares
         expr: |
           (
@@ -169,11 +364,26 @@ groups:
           )
           and timestamp(stock:bar_1m_money_flow_volume:shares) > time() - 60
           and on() stock_market_open == 1
+      # stock:open_anchored_vwap:price
+      #   What:  Session VWAP anchored at the open, in rupees (exchange-reported average traded price). LTP above it =
+      #          buyers in control since the open.
+      #   How:   stock_average_traded_price{tier="core",instrument_type="EQ"}, kept only where
+      #          stock_day_volume_shares > 0 (same labels), and on() stock_market_open == 1.
+      #   Debug: Query stock_average_traded_price and stock_day_volume_shares for the symbol. Empty before the first
+      #          trade of the day (volume 0), when closed, or if the exporter does not publish the average price.
       - record: stock:open_anchored_vwap:price
         expr: |
           stock_average_traded_price{tier="core", instrument_type="EQ"}
           and stock_day_volume_shares > 0
           and on() stock_market_open == 1
+      # stock:cutler_rsi_2m:index
+      #   What:  Two-bar Cutler RSI, 0..100: 100 = both of the last two 1m closes were up, 0 = both down, ~50 = mixed.
+      #          Extreme short-term overbought/oversold oscillator.
+      #   How:   100 * sum(max(dC, 0)) / sum(|dC|) over subquery [2m:1m] (two 1m steps) of stock:close_change_1m:price.
+      #          `> 0` guard drops a zero denominator (no price change); count_over_time(dC[2m]) == 2; market open and
+      #          seconds_to_close <= 22320 (3 minutes into the session).
+      #   Debug: Query stock:close_change_1m:price{symbol="X"}[2m]. Empty when both changes are 0 (flat price), when
+      #          a bar is missing, or in the first 3 minutes.
       - record: stock:cutler_rsi_2m:index
         expr: |
           (
@@ -183,24 +393,44 @@ groups:
           and count_over_time(stock:close_change_1m:price[2m]) == 2
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close <= 22320
+      # stock:range_retracement_20m:price {level=0.382, direction=bullish}
+      #   What:  Shallow pullback level in rupees inside the prior 20-bar range, measured down from the high:
+      #          HH - 0.382 * (HH - LL). Support candidate in an intraday uptrend.
+      #   How:   HH/LL = stock:donchian_prior_20m:price{bound="high"|"low"} (20 bars ending 1m ago); sum without(bound)
+      #          strips `bound` so both sides match. and on() stock_market_open == 1.
+      #   Debug: Query stock:donchian_prior_20m:price{symbol="X"}; empty during its 20-minute warm-up after the open or
+      #          with fewer than 20 bars in the window.
       - record: stock:range_retracement_20m:price
         labels: {level: "0.382", direction: bullish}
         expr: |
           sum without(bound) (stock:donchian_prior_20m:price{bound="high"})
           - 0.382 * (sum without(bound) (stock:donchian_prior_20m:price{bound="high"}) - sum without(bound) (stock:donchian_prior_20m:price{bound="low"}))
           and on() stock_market_open == 1
+      # stock:range_retracement_20m:price {level=0.618, direction=bullish}
+      #   What:  Deep pullback level in rupees: HH - 0.618 * (HH - LL) of the prior 20-bar range.
+      #   How:   As the 0.382 bullish level with factor 0.618; inputs stock:donchian_prior_20m:price.
+      #   Debug: Same as the 0.382 bullish level.
       - record: stock:range_retracement_20m:price
         labels: {level: "0.618", direction: bullish}
         expr: |
           sum without(bound) (stock:donchian_prior_20m:price{bound="high"})
           - 0.618 * (sum without(bound) (stock:donchian_prior_20m:price{bound="high"}) - sum without(bound) (stock:donchian_prior_20m:price{bound="low"}))
           and on() stock_market_open == 1
+      # stock:range_retracement_20m:price {level=0.382, direction=bearish}
+      #   What:  Shallow bounce level in rupees, measured up from the low: LL + 0.382 * (HH - LL) of the prior 20-bar
+      #          range. Resistance candidate in an intraday downtrend.
+      #   How:   sum without(bound) of stock:donchian_prior_20m:price{bound="low"} + 0.382 * (high - low); market open.
+      #   Debug: Same inputs and warm-up as the bullish levels.
       - record: stock:range_retracement_20m:price
         labels: {level: "0.382", direction: bearish}
         expr: |
           sum without(bound) (stock:donchian_prior_20m:price{bound="low"})
           + 0.382 * (sum without(bound) (stock:donchian_prior_20m:price{bound="high"}) - sum without(bound) (stock:donchian_prior_20m:price{bound="low"}))
           and on() stock_market_open == 1
+      # stock:range_retracement_20m:price {level=0.618, direction=bearish}
+      #   What:  Deep bounce level in rupees: LL + 0.618 * (HH - LL) of the prior 20-bar range.
+      #   How:   As the 0.382 bearish level with factor 0.618.
+      #   Debug: Same inputs and warm-up as the bullish levels.
       - record: stock:range_retracement_20m:price
         labels: {level: "0.618", direction: bearish}
         expr: |
@@ -208,30 +438,74 @@ groups:
           + 0.618 * (sum without(bound) (stock:donchian_prior_20m:price{bound="high"}) - sum without(bound) (stock:donchian_prior_20m:price{bound="low"}))
           and on() stock_market_open == 1
 
+      # stock:weinstein_ma_30w:price
+      #   What:  Approximate 30-week moving average in rupees: mean of completed daily closes over 210 calendar days.
+      #          Used for Weinstein stage analysis (price vs. a rising/falling long-term MA).
+      #   How:   avg_over_time(stock:session_close:price{tier="core",instrument_type="EQ"}[210d]) (one EOD sample per
+      #          session), only if count_over_time(...[210d]) >= 140 sessions; and on() stock_market_open == 1.
+      #   Debug: Query count_over_time(stock:session_close:price{symbol="X"}[210d]); empty until ~140 sessions of EOD
+      #          snapshots exist, if retention is < 210d, or while the market is closed.
       - record: stock:weinstein_ma_30w:price
         expr: |
           avg_over_time(stock:session_close:price{tier="core", instrument_type="EQ"}[210d])
           and count_over_time(stock:session_close:price[210d]) >= 140
           and on() stock_market_open == 1
+      # stock:stage_30w:code
+      #   What:  Weinstein stage code: 2 = advancing (LTP above a rising 30w MA), 4 = declining (LTP below a falling
+      #          30w MA). Absent for stages 1/3 or mixed conditions.
+      #   How:   2 if LTP > MA and MA > MA offset 7d; 4 if LTP < MA and MA < MA offset 7d; `* 0 + 2/4` sets the code;
+      #          `or` combines both. LTP = stock_last_price{tier="core",instrument_type="EQ"}, MA =
+      #          stock:weinstein_ma_30w:price. No own market gate; the MA is only recorded while the market is open.
+      #   Debug: Query stock:weinstein_ma_30w:price now and offset 7d. Empty if the MA was not recorded at the same time
+      #          7 days ago (holiday, warm-up, retention < 217d) or if price and slope disagree.
       - record: stock:stage_30w:code
         expr: |
           ((stock_last_price{tier="core", instrument_type="EQ"} > stock:weinstein_ma_30w:price
             and stock:weinstein_ma_30w:price > stock:weinstein_ma_30w:price offset 7d) * 0 + 2)
           or ((stock_last_price{tier="core", instrument_type="EQ"} < stock:weinstein_ma_30w:price
             and stock:weinstein_ma_30w:price < stock:weinstein_ma_30w:price offset 7d) * 0 + 4)
+      # stock:momentum_12_1m:percent
+      #   What:  12-minus-1-month momentum in percent: total price return from ~365 to 30 calendar days ago, skipping
+      #          the last month (short-term reversal). +40 = up 40 % over that window.
+      #   How:   (exp(sum_over_time(stock:session_log_return:ratio{tier="core",instrument_type="EQ"}[335d] offset 30d))
+      #          - 1) * 100, i.e. compounding daily log returns in (t-365d, t-30d]. Requires count_over_time(...) >= 220
+      #          sessions in that window; and on() stock_market_open == 1.
+      #   Debug: Query count_over_time(stock:session_log_return:ratio{symbol="X"}[335d] offset 30d). Empty until ~1 year
+      #          of EOD snapshots exists (needs > 365d retention) or while the market is closed.
       - record: stock:momentum_12_1m:percent
         expr: |
           (exp(sum_over_time(stock:session_log_return:ratio{tier="core", instrument_type="EQ"}[335d] offset 30d)) - 1) * 100
           and count_over_time(stock:session_log_return:ratio[335d] offset 30d) >= 220
           and on() stock_market_open == 1
+      # stock:momentum_leader_12_1m:percent
+      #   What:  The top decile of eligible core equities by 12-1 momentum, with their momentum value in percent
+      #          (series present = stock is a momentum leader).
+      #   How:   topk(k, stock:momentum_12_1m:percent) with k = ceil(N / 10), N = count of momentum series
+      #          (`or vector(0)` so the scalar exists when N = 0).
+      #   Debug: Check count(stock:momentum_12_1m:percent); empty whenever that input is empty (warm-up, market closed).
       - record: stock:momentum_leader_12_1m:percent
         expr: topk(scalar(ceil((count(stock:momentum_12_1m:percent) or vector(0)) / 10)), stock:momentum_12_1m:percent)
+      # market:net_advances:count
+      #   What:  Live breadth: number of core equities up on the day minus number down (unchanged ignored). Positive =
+      #          broad participation in a rally; range roughly -200..+200 for NIFTY 200.
+      #   How:   count(stock_change_percent{tier="core",instrument_type="EQ"} > 0) - count(... < 0), each
+      #          `or vector(0)` so a side with no stocks counts as 0. Guarded by count(stock_change_percent) > 0
+      #          (data present) and on() stock_market_open == 1.
+      #   Debug: Query count by (instrument_type) (stock_change_percent{tier="core"}). Empty when closed or when no core
+      #          EQ change_percent is scraped.
       - record: market:net_advances:count
         expr: |
           ((count(stock_change_percent{tier="core", instrument_type="EQ"} > 0) or vector(0))
             - (count(stock_change_percent{tier="core", instrument_type="EQ"} < 0) or vector(0)))
           and on() count(stock_change_percent{tier="core", instrument_type="EQ"}) > 0
           and on() stock_market_open == 1
+      # market:mcclellan:count
+      #   What:  McClellan oscillator of core-equity breadth = EMA19 - EMA39 of daily net advances, as of the last
+      #          completed session. > 0 = breadth momentum improving, < 0 = deteriorating; constant during a session.
+      #   How:   last_over_time(market:breadth_ema:count{period="19"}[7d]) - last_over_time(...{period="39"}[7d]),
+      #          `period` stripped via sum without(period); and on() stock_market_open == 1.
+      #   Debug: Query market:breadth_ema:count[7d]; the EMA39 needs 39 sessions of market:session_net_advances:count
+      #          snapshots to seed, so this is empty for the first ~39 sessions and while the market is closed.
       - record: market:mcclellan:count
         expr: |
           sum without(period) (last_over_time(market:breadth_ema:count{period="19"}[7d]))
@@ -241,6 +515,14 @@ groups:
   - name: nse_pattern_snapshots
     interval: 30m
     rules:
+      # stock:heikin_ashi:price {field=open}
+      #   What:  Daily Heikin Ashi open in rupees for the completed session (EOD snapshot, one sample per session).
+      #   How:   Stateful: HAO = (prior HAO + prior HAC) / 2, read via last_over_time(self{field=~"open|close"}[7d])
+      #          and only when both exist (count == 2). This rule runs before field=close in the group, so it sees the
+      #          previous session's HAC. Seed when no history: (open + LTP) / 2 (core EQ). Gated on
+      #          stock_market_phase{phase="post_close"} == 1 (15:30-16:00, hit once by the 30m interval).
+      #   Debug: Query stock:heikin_ashi:price{symbol="X"}[7d]. Read with last_over_time; empty outside post_close. A
+      #          missed post_close (Prometheus down 15:30-16:00) skips that session; only a > 7d gap re-seeds.
       - record: stock:heikin_ashi:price
         labels: {field: open}
         expr: |
@@ -250,11 +532,20 @@ groups:
             or (stock_open_price{tier="core", instrument_type="EQ"} + stock_last_price) / 2
           )
           and on() stock_market_phase{phase="post_close"} == 1
+      # stock:heikin_ashi:price {field=close}
+      #   What:  Daily Heikin Ashi close in rupees = average of the session's O, H, L, C (EOD snapshot).
+      #   How:   (stock_open_price + stock_high_price + stock_low_price + stock_last_price) / 4, core EQ, at post_close.
+      #   Debug: Query the four raw price series at post_close; empty outside the post_close window.
       - record: stock:heikin_ashi:price
         labels: {field: close}
         expr: |
           (stock_open_price{tier="core", instrument_type="EQ"} + stock_high_price + stock_low_price + stock_last_price) / 4
           and on() stock_market_phase{phase="post_close"} == 1
+      # stock:heikin_ashi:price {field=high}
+      #   What:  Daily Heikin Ashi high in rupees = max(raw high, HA open, HA close) of the completed session.
+      #   How:   max without(field) over today's stock:heikin_ashi:price{field=~"open|close"} (written earlier in the
+      #          same evaluation) or stock_high_price relabelled field="raw" via label_replace. post_close gate.
+      #   Debug: Query stock:heikin_ashi:price{field=~"open|close"} and stock_high_price at post_close.
       - record: stock:heikin_ashi:price
         labels: {field: high}
         expr: |
@@ -263,6 +554,11 @@ groups:
             or label_replace(stock_high_price{tier="core", instrument_type="EQ"}, "field", "raw", "", "")
           )
           and on() stock_market_phase{phase="post_close"} == 1
+      # stock:heikin_ashi:price {field=low}
+      #   What:  Daily Heikin Ashi low in rupees = min(raw low, HA open, HA close) of the completed session.
+      #   How:   min without(field) over stock:heikin_ashi:price{field=~"open|close"} or stock_low_price relabelled
+      #          field="raw" via label_replace. post_close gate.
+      #   Debug: Query stock:heikin_ashi:price{field=~"open|close"} and stock_low_price at post_close.
       - record: stock:heikin_ashi:price
         labels: {field: low}
         expr: |
@@ -271,34 +567,83 @@ groups:
             or label_replace(stock_low_price{tier="core", instrument_type="EQ"}, "field", "raw", "", "")
           )
           and on() stock_market_phase{phase="post_close"} == 1
+      # stock:session_range_history:price {lag=5}
+      #   What:  High-low range in rupees of the session 6 completed sessions back (oldest slot of a 6-slot shift
+      #          register used by NR7). One sample per session.
+      #   How:   Copies last_over_time(lag="4"[7d]) (sum without(lag) strips the label) at post_close. Rules run
+      #          oldest-first (5,4,...,0) so each slot reads its neighbour before that neighbour is overwritten.
+      #   Debug: Query stock:session_range_history:price{symbol="X"}[7d]; this slot fills only after 6 post_close runs.
       - record: stock:session_range_history:price
         labels: {lag: "5"}
         expr: sum without(lag) (last_over_time(stock:session_range_history:price{lag="4"}[7d])) and on() stock_market_phase{phase="post_close"} == 1
+      # stock:session_range_history:price {lag=4}
+      #   What:  Session range in rupees 5 completed sessions back (shift-register slot 4).
+      #   How:   Copies last_over_time(lag="3"[7d]) at post_close, before slot 3 is updated.
+      #   Debug: Fills after 5 post_close runs; a missed post_close leaves the register one session stale.
       - record: stock:session_range_history:price
         labels: {lag: "4"}
         expr: sum without(lag) (last_over_time(stock:session_range_history:price{lag="3"}[7d])) and on() stock_market_phase{phase="post_close"} == 1
+      # stock:session_range_history:price {lag=3}
+      #   What:  Session range in rupees 4 completed sessions back (shift-register slot 3).
+      #   How:   Copies last_over_time(lag="2"[7d]) at post_close, before slot 2 is updated.
+      #   Debug: Fills after 4 post_close runs.
       - record: stock:session_range_history:price
         labels: {lag: "3"}
         expr: sum without(lag) (last_over_time(stock:session_range_history:price{lag="2"}[7d])) and on() stock_market_phase{phase="post_close"} == 1
+      # stock:session_range_history:price {lag=2}
+      #   What:  Session range in rupees 3 completed sessions back (shift-register slot 2).
+      #   How:   Copies last_over_time(lag="1"[7d]) at post_close, before slot 1 is updated.
+      #   Debug: Fills after 3 post_close runs.
       - record: stock:session_range_history:price
         labels: {lag: "2"}
         expr: sum without(lag) (last_over_time(stock:session_range_history:price{lag="1"}[7d])) and on() stock_market_phase{phase="post_close"} == 1
+      # stock:session_range_history:price {lag=1}
+      #   What:  Session range in rupees 2 completed sessions back (shift-register slot 1).
+      #   How:   Copies last_over_time(lag="0"[7d]) at post_close, before slot 0 is overwritten with today.
+      #   Debug: Fills after 2 post_close runs.
       - record: stock:session_range_history:price
         labels: {lag: "1"}
         expr: sum without(lag) (last_over_time(stock:session_range_history:price{lag="0"}[7d])) and on() stock_market_phase{phase="post_close"} == 1
+      # stock:session_range_history:price {lag=0}
+      #   What:  Range in rupees of the session that just closed (newest shift-register slot); during the next
+      #          session it is "yesterday's range".
+      #   How:   stock_high_price{tier="core",instrument_type="EQ"} - stock_low_price at post_close (written last).
+      #   Debug: Query stock_high_price/stock_low_price at post_close; empty outside the 15:30-16:00 window.
       - record: stock:session_range_history:price
         labels: {lag: "0"}
         expr: (stock_high_price{tier="core", instrument_type="EQ"} - stock_low_price) and on() stock_market_phase{phase="post_close"} == 1
+      # stock:session_open:price
+      #   What:  Official open of the completed session in rupees, EOD snapshot (one sample per session).
+      #   How:   stock_open_price{tier="core",instrument_type="EQ"} and on() stock_market_phase{phase="post_close"} == 1.
+      #          Read next session as stock:previous_session:price{field="open"}.
+      #   Debug: Query stock_market_phase{phase="post_close"}; empty outside 15:30-16:00 or on holidays.
       - record: stock:session_open:price
         expr: stock_open_price{tier="core", instrument_type="EQ"} and on() stock_market_phase{phase="post_close"} == 1
+      # stock:session_range:price
+      #   What:  High-low range in rupees of the completed session, EOD snapshot (one sample per session).
+      #   How:   (stock_high_price{tier="core",instrument_type="EQ"} - stock_low_price) at post_close.
+      #   Debug: Empty outside the post_close window; query stock_high_price/stock_low_price at 15:30-16:00.
       - record: stock:session_range:price
         expr: (stock_high_price{tier="core", instrument_type="EQ"} - stock_low_price) and on() stock_market_phase{phase="post_close"} == 1
+      # market:session_net_advances:count
+      #   What:  Closing breadth of the session: core equities up minus core equities down at the close (one sample per
+      #          session); input for the McClellan EMAs.
+      #   How:   Same formula as market:net_advances:count (counts of stock_change_percent{tier="core",
+      #          instrument_type="EQ"} > 0 and < 0, `or vector(0)`, count > 0 guard) but gated on post_close.
+      #   Debug: Empty outside 15:30-16:00 or when no core EQ stock_change_percent is scraped then.
       - record: market:session_net_advances:count
         expr: |
           ((count(stock_change_percent{tier="core", instrument_type="EQ"} > 0) or vector(0))
             - (count(stock_change_percent{tier="core", instrument_type="EQ"} < 0) or vector(0)))
           and on() count(stock_change_percent{tier="core", instrument_type="EQ"}) > 0
           and on() stock_market_phase{phase="post_close"} == 1
+      # market:breadth_ema:count {period=19}
+      #   What:  19-session EMA of closing net advances (fast McClellan leg), in stocks; one sample per session.
+      #   How:   Stateful: EMA = 0.1 * today + 0.9 * last_over_time(self{period="19"}[7d]) (alpha = 2/(19+1)).
+      #          Seed when no prior value: avg_over_time(market:session_net_advances:count[35d]) once it has >= 19
+      #          samples. Gated on post_close.
+      #   Debug: Query count_over_time(market:session_net_advances:count[35d]); empty for the first 19 sessions, and
+      #          re-seeds only if the own series has a > 7d gap.
       - record: market:breadth_ema:count
         labels: {period: "19"}
         expr: |
@@ -308,6 +653,13 @@ groups:
             or (avg_over_time(market:session_net_advances:count[35d]) and count_over_time(market:session_net_advances:count[35d]) >= 19)
           )
           and on() stock_market_phase{phase="post_close"} == 1
+      # market:breadth_ema:count {period=39}
+      #   What:  39-session EMA of closing net advances (slow McClellan leg), in stocks; one sample per session.
+      #   How:   Stateful: EMA = 0.05 * today + 0.95 * last_over_time(self{period="39"}[7d]) (alpha = 2/(39+1)).
+      #          Seed: avg_over_time(market:session_net_advances:count[70d]) once it has >= 39 samples. Gated on
+      #          post_close.
+      #   Debug: Query count_over_time(market:session_net_advances:count[70d]); empty for the first 39 sessions, and
+      #          re-seeds only if the own series has a > 7d gap.
       - record: market:breadth_ema:count
         labels: {period: "39"}
         expr: |

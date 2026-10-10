@@ -10,6 +10,17 @@ groups:
   - name: nse_predict_features
     interval: 1m
     rules:
+      # stock:feature:value
+      #   What:  Feature store: one series per core equity and model input, with the input's name in the `feature`
+      #          label and its raw value in the input's own units (percent, RSI 0-100, sigma, ratio, ...).
+      #   How:   13 label_replace(..., "feature", "<name>") selections OR-ed together: return_1m, return_15m (tier=core EQ),
+      #          rsi_14m, macd_histogram, bollinger_percent_b_20m, price_zscore_20m, trend_r2_30m (EQ), relative_volume,
+      #          orderbook_imbalance (raw stock_orderbook_imbalance_ratio, core EQ), weighted_imbalance, volume_delta_1h,
+      #          vwap_deviation (core EQ), abnormal_return_15m; all `and on() stock_market_open == 1`. Labels of each input
+      #          are kept (no aggregation). Evaluated every 1m.
+      #   Debug: stock:feature:value{symbol="X"} and count by (feature) (stock:feature:value). A missing feature means its
+      #          source rule is empty (warm-up: RVOL needs >= 5 EOD sessions, abnormal return >= 30 1m bars, RSI/MACD
+      #          their own windows; orderbook needs the depth/orderbook collector). Empty everywhere outside market hours.
       - record: stock:feature:value
         expr: |
           (
@@ -28,6 +39,14 @@ groups:
             or label_replace(stock:abnormal_return_15m:percent, "feature", "abnormal_return_15m", "", "")
           )
           and on() stock_market_open == 1
+      # stock:feature:zscore
+      #   What:  Each feature standardised against its own last 24 hours: 0 = typical, +/-2 = unusually high/low for
+      #          this symbol and feature (unitless sigma).
+      #   How:   (x - avg_over_time(x[1d])) / stddev_over_time(x[1d]) with x = stock:feature:value per series; the
+      #          `> 0` guard drops series with zero variance (constant features). 1d is a trailing 24 h window, i.e. the
+      #          current session plus the later part of the previous one (no samples while the market is closed).
+      #   Debug: Compare stock:feature:value with avg_over_time/stddev_over_time(stock:feature:value[1d]). Empty when the
+      #          feature is empty, has a single sample (stddev 0) or is constant (e.g. bounded ratios stuck at a limit).
       - record: stock:feature:zscore
         expr: |
           (stock:feature:value - avg_over_time(stock:feature:value[1d]))
@@ -36,24 +55,68 @@ groups:
   - name: nse_predict_intake
     interval: 15s
     rules:
+      # stock:prob_up:ratio
+      #   What:  Quant Lab probability (0-1) that the price is higher after `horizon`; 0.5 = no edge, > 0.5 bullish.
+      #   How:   max by (exchange, symbol, model, horizon) (stock_prediction_prob_up) - strips job/instance from the
+      #          stock_quantlab scrape. Today only model="ar1", horizon="15m": AR(1) on the last 60m of 1m log returns with
+      #          EWMA volatility, P(up) = Phi(expected / sigma) (deploy/quantlab/quantlab.py). Refreshed every ~60 s.
+      #   Debug: stock_prediction_prob_up, up{job="stock_quantlab"}, stock_prediction_last_run_timestamp_seconds. Empty when
+      #          quantlab is not running/scraped or a symbol has < 30 stock:log_return_1m:ratio samples in 60m.
       - record: stock:prob_up:ratio
         expr: max by (exchange, symbol, model, horizon) (stock_prediction_prob_up)
+      # stock:model_return:percent
+      #   What:  Quant Lab expected return over `horizon`, in percent (e.g. 0.12 = +0.12% in 15 min); sign = direction.
+      #   How:   max by (exchange, symbol, model, horizon) (stock_prediction_expected_return_percent); ar1 model, 15m horizon:
+      #          (exp(E) - 1) * 100, E = 15 mu + (r_last - mu) phi (1 - phi^15) / (1 - phi) from the AR(1) fit on the
+      #          last 60m of 1m log returns.
+      #   Debug: stock_prediction_expected_return_percent{symbol="X"}. Empty when quantlab is down or has < 30 returns.
       - record: stock:model_return:percent
         expr: max by (exchange, symbol, model, horizon) (stock_prediction_expected_return_percent)
+      # stock:vol_forecast:percent
+      #   What:  Quant Lab forecast standard deviation of the return over `horizon`, in percent (1-sigma band width).
+      #   How:   max by (exchange, symbol, model, horizon) (stock_prediction_volatility_percent); ar1: sqrt(15 * EWMA
+      #          variance(lambda 0.94) of the 1m log returns) * 100.
+      #   Debug: stock_prediction_volatility_percent{symbol="X"}. Empty when quantlab is down or has < 30 returns.
       - record: stock:vol_forecast:percent
         expr: max by (exchange, symbol, model, horizon) (stock_prediction_volatility_percent)
+      # underlying:max_pain_distance:percent
+      #   What:  How far spot is from the option max-pain strike, in percent: > 0 spot above max pain, < 0 below. Near
+      #          expiry, prices are often said to gravitate towards max pain (weak, heuristic).
+      #   How:   (underlying:spot:price / underlying_max_pain_strike_price - 1) * 100, matched on(underlying) with
+      #          group_right() so each expiry of the Quant Lab max-pain series keeps its labels (underlying, expiry);
+      #          `> 0` guards a zero strike.
+      #   Debug: underlying_max_pain_strike_price and underlying:spot:price. Empty without option contracts
+      #          (exporter needs --sim.derivatives or real NFO instruments), when quantlab is down, or when the spot symbol
+      #          is not mapped to the underlying in underlying:spot:price.
       - record: underlying:max_pain_distance:percent
         expr: (underlying:spot:price / on(underlying) group_right() (underlying_max_pain_strike_price > 0) - 1) * 100
 
   - name: nse_predict_forecasts
     interval: 1m
     rules:
+      # stock:forecast:price {model=naive, horizon=1m}
+      #   What:  Random-walk benchmark forecast of the price 1 minute ahead: simply the current last price (INR).
+      #   How:   max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"}) and on() market open; the
+      #          static labels mark the model/horizon. Scored 1 minute later by stock:forecast_error:percent{horizon="1m"}.
+      #   Debug: stock_last_price{tier="core", instrument_type="EQ"}, stock_market_open. Empty when the market is closed.
       - record: stock:forecast:price
         labels: {model: naive, horizon: 1m}
         expr: max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"}) and on() stock_market_open == 1
+      # stock:forecast:price {model=naive, horizon=15m}
+      #   What:  Random-walk benchmark forecast of the price 15 minutes ahead (= current last price, INR); the denominator
+      #          of Theil U.
+      #   How:   Same expression as the 1m naive forecast, labelled horizon=15m; scored 15 minutes later.
+      #   Debug: As for the 1m naive forecast; empty when the market is closed.
       - record: stock:forecast:price
         labels: {model: naive, horizon: 15m}
         expr: max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"}) and on() stock_market_open == 1
+      # stock:forecast:price (Quant Lab models)
+      #   What:  Price implied by a Quant Lab model's expected return, in INR, for its `model` and `horizon` labels
+      #          (today model=ar1, horizon=15m).
+      #   How:   last price * (1 + stock:model_return:percent / 100); on(exchange, symbol) group_right() keeps the model and
+      #          horizon labels of the right side; core EQ only; and on() stock_market_open == 1.
+      #   Debug: stock:model_return:percent and stock_last_price. Empty when quantlab is down, the market is closed or the
+      #          symbol is not core EQ.
       - record: stock:forecast:price
         expr: |
           max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"})
@@ -63,6 +126,14 @@ groups:
   - name: nse_predict_evaluation
     interval: 1m
     rules:
+      # stock:forecast_error:percent {horizon=1m}
+      #   What:  Out-of-sample error of the 1-minute forecasts made 1 minute ago, in percent of the current price;
+      #          > 0 = price ended above the forecast. Only the naive model has a 1m horizon.
+      #   How:   (C - F{horizon="1m"} offset 1m) / C * 100, C = max by (exchange, symbol) last price (core EQ);
+      #          group_right() keeps the forecast's model label. Gated on market open and seconds_to_close < 22440
+      #          (>= 1 minute after 09:15) so the forecast origin lies inside the same session.
+      #   Debug: stock:forecast:price{horizon="1m"} offset 1m vs stock_last_price. Empty in the first minute of the
+      #          session, outside market hours, or when the forecast series did not exist 1 minute ago.
       - record: stock:forecast_error:percent
         labels: {horizon: 1m}
         expr: |
@@ -73,6 +144,13 @@ groups:
           / on(exchange, symbol) group_left() max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"}) * 100
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close < 22440
+      # stock:forecast_error:percent {horizon=15m}
+      #   What:  Out-of-sample error of every 15-minute forecast (naive and Quant Lab models) made 15 minutes ago, in
+      #          percent of the current price; > 0 = price ended above the forecast.
+      #   How:   (C - F{horizon="15m"} offset 15m) / C * 100 per model (group_right keeps `model`). Gated on market
+      #          open and seconds_to_close < 21600 (>= 15 minutes after the open, origin inside the session).
+      #   Debug: stock:forecast:price{horizon="15m"} offset 15m. Empty before 09:30, outside market hours, or for a
+      #          model without forecasts 15 minutes ago (e.g. quantlab just started).
       - record: stock:forecast_error:percent
         labels: {horizon: 15m}
         expr: |
@@ -83,8 +161,19 @@ groups:
           / on(exchange, symbol) group_left() max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"}) * 100
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close < 21600
+      # stock:forecast_squared_error:percent2
+      #   What:  Squared forecast error (percent^2) per symbol, model and horizon; the per-sample input of RMSE.
+      #   How:   stock:forecast_error:percent ^ 2 (labels kept, name dropped).
+      #   Debug: Inherits all gaps of stock:forecast_error:percent (first 1/15 minutes, market closed).
       - record: stock:forecast_squared_error:percent2
         expr: stock:forecast_error:percent ^ 2
+      # stock:forecast_direction_hit:bool {horizon=15m}
+      #   What:  1 if a non-naive model's 15m forecast made 15 minutes ago got the direction right, 0 if not.
+      #   How:   sgn(C - C[15m ago]) == bool sgn(F{horizon="15m", model!="naive"} offset 15m - C[15m ago]);
+      #          group_right/group_left keep the model label. A flat price (sgn 0) only counts as a hit for a flat
+      #          forecast. Naive is excluded (its direction is always 0). Market open and >= 15 minutes after the open.
+      #   Debug: stock:forecast:price{model!="naive"} offset 15m and stock_last_price offset 15m. Empty without quantlab
+      #          forecasts, before 09:30 or when the market is closed.
       - record: stock:forecast_direction_hit:bool
         labels: {horizon: 15m}
         expr: |
@@ -96,11 +185,21 @@ groups:
           )
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close < 21600
+      # stock:price_up_15m:bool
+      #   What:  Realised outcome for the 15m probability forecasts: 1 if the price is above its level 15 minutes ago.
+      #   How:   max by (exchange, symbol) last price > bool the same offset 15m (core EQ); market open and
+      #          seconds_to_close < 21600. Its 1d average is the Brier base rate.
+      #   Debug: stock_last_price{tier="core", instrument_type="EQ"} now vs offset 15m. Empty before 09:30 or market closed.
       - record: stock:price_up_15m:bool
         expr: |
           max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"}) > bool max by (exchange, symbol) (stock_last_price{tier="core", instrument_type="EQ"} offset 15m)
           and on() stock_market_open == 1
           and on() stock_market_seconds_to_close < 21600
+      # stock:prob_brier:ratio {horizon=15m}
+      #   What:  Brier score (0-1) of each model's P(up) issued 15 minutes ago; 0 = perfect, 0.25 = coin flip at 0.5.
+      #   How:   (stock:prob_up:ratio{horizon="15m"} offset 15m - stock:price_up_15m:bool)^2, on(exchange, symbol)
+      #          group_left() keeps the model label; market open and >= 15 minutes after the open.
+      #   Debug: stock:prob_up:ratio offset 15m and stock:price_up_15m:bool. Empty without quantlab or before 09:30.
       - record: stock:prob_brier:ratio
         labels: {horizon: 15m}
         expr: |
@@ -111,28 +210,69 @@ groups:
   - name: nse_predict_scores
     interval: 15m
     rules:
+      # stock:forecast_rmse_1d:percent
+      #   What:  Root-mean-square forecast error over the last 24 hours, in percent of price, per symbol, model and
+      #          horizon; lower is better.
+      #   How:   sqrt(avg_over_time(stock:forecast_squared_error:percent2[1d])), evaluated every 15m; the window holds
+      #          the in-session samples of the trailing 24 h (current session + later part of the previous one).
+      #   Debug: count_over_time(stock:forecast_squared_error:percent2[1d]). Empty if no errors were scored in 24 h
+      #          (e.g. Monday morning before 09:30 or after a long holiday).
       - record: stock:forecast_rmse_1d:percent
         expr: sqrt(avg_over_time(stock:forecast_squared_error:percent2[1d]))
+      # stock:forecast_theil_u_1d:ratio
+      #   What:  Theil U: model RMSE divided by the naive (random-walk) RMSE over 1 day; < 1 beats the naive forecast,
+      #          > 1 is worse than doing nothing.
+      #   How:   stock:forecast_rmse_1d:percent{model!="naive"} / ignoring(model) group_left() RMSE{model="naive"},
+      #          matched on exchange, symbol, horizon; `> 0` drops a zero naive RMSE (price did not move).
+      #   Debug: stock:forecast_rmse_1d:percent by model. Empty without quantlab models, for horizons the naive model
+      #          lacks, or when the naive RMSE is 0.
       - record: stock:forecast_theil_u_1d:ratio
         expr: |
           stock:forecast_rmse_1d:percent{model!="naive"}
           / ignoring(model) group_left() (stock:forecast_rmse_1d:percent{model="naive"} > 0)
+      # stock:forecast_hit_rate_1d:ratio
+      #   What:  Share (0-1) of correct direction calls over the last 24 hours per symbol and model; 0.5 = coin flip.
+      #   How:   avg_over_time(stock:forecast_direction_hit:bool[1d]), evaluated every 15m.
+      #   Debug: count_over_time(stock:forecast_direction_hit:bool[1d]). Empty without quantlab forecasts.
       - record: stock:forecast_hit_rate_1d:ratio
         expr: avg_over_time(stock:forecast_direction_hit:bool[1d])
+      # stock:prob_skill_1d:ratio
+      #   What:  Brier skill score over 1 day: 1 - Brier / climatology; > 0 beats always predicting the observed up-share,
+      #          0 = no skill, < 0 = worse than the base rate. Maximum 1.
+      #   How:   1 - avg(stock:prob_brier:ratio[1d]) / (base * (1 - base)), base = avg_over_time(stock:price_up_15m:bool[1d]);
+      #          on(exchange, symbol) group_left() keeps model/horizon; `> 0` drops symbols whose price only rose or
+      #          only fell (base 0 or 1).
+      #   Debug: avg_over_time of stock:prob_brier:ratio and stock:price_up_15m:bool over 1d. Empty without quantlab,
+      #          or when the base rate is 0/1.
       - record: stock:prob_skill_1d:ratio
         expr: |
           1 - avg_over_time(stock:prob_brier:ratio[1d])
             / on(exchange, symbol) group_left() (
                 (avg_over_time(stock:price_up_15m:bool[1d]) * (1 - avg_over_time(stock:price_up_15m:bool[1d]))) > 0
               )
+      # model:theil_u_1d:median
+      #   What:  Median Theil U across all symbols per model and horizon; the model-level accuracy headline (< 1 good).
+      #   How:   quantile by (model, horizon) (0.5, stock:forecast_theil_u_1d:ratio). Feeds PredictionModelUnderperformsNaive.
+      #   Debug: stock:forecast_theil_u_1d:ratio by symbol. Empty when no symbol has a Theil U.
       - record: model:theil_u_1d:median
         expr: quantile by (model, horizon) (0.5, stock:forecast_theil_u_1d:ratio)
+      # model:prob_skill_1d:median
+      #   What:  Median Brier skill score across symbols per model and horizon (> 0 = probabilities add information).
+      #   How:   quantile by (model, horizon) (0.5, stock:prob_skill_1d:ratio).
+      #   Debug: stock:prob_skill_1d:ratio by symbol. Empty when no symbol has a skill score.
       - record: model:prob_skill_1d:median
         expr: quantile by (model, horizon) (0.5, stock:prob_skill_1d:ratio)
 
   - name: nse_predict_alerts
     interval: 1m
     rules:
+      # StockPredictorStale
+      #   What:  Fires when the Quant Lab is down (model="all") or a model's last successful run is older than 5 minutes
+      #          during market hours; value is 0 (down) or the age of the last run in seconds.
+      #   How:   label_replace(up{job="stock_quantlab"} == 0, "model", "all") or
+      #          time() - max by (model) (stock_prediction_last_run_timestamp_seconds) > 300; and on() market open; for: 2m.
+      #   Debug: up{job="stock_quantlab"}, time() - stock_prediction_last_run_timestamp_seconds, quantlab logs ("failed:").
+      #          Does not fire if the scrape job is absent entirely (no `up` series) or the market is closed.
       - alert: StockPredictorStale
         expr: |
           (
@@ -145,6 +285,11 @@ groups:
         annotations:
           summary: "Quant Lab model {{ $labels.model }} is stale"
           description: "The Quant Lab is down or model {{ $labels.model }} has not completed a run for more than 5 minutes; forecasts and option analytics are frozen."
+      # StockPredictorSlow
+      #   What:  Fires when one Quant Lab model run (options or ar1) takes more than 30 s; value = run duration in seconds.
+      #   How:   max by (model) (stock_prediction_inference_duration_seconds) > 30, for: 10m; no market-hours gate.
+      #   Debug: stock_prediction_inference_duration_seconds by model; large option chains or a slow Prometheus API make
+      #          runs slow. Silent when quantlab is not scraped.
       - alert: StockPredictorSlow
         expr: max by (model) (stock_prediction_inference_duration_seconds) > 30
         for: 10m
@@ -152,6 +297,11 @@ groups:
         annotations:
           summary: "Quant Lab model {{ $labels.model }} takes {{ $value | printf \"%.0f\" }}s per run"
           description: "A Quant Lab run takes more than 30 seconds; the 60-second refresh falls behind."
+      # PredictionModelUnderperformsNaive
+      #   What:  Fires when a model's median Theil U over the last day is above 1, i.e. it is worse than the random walk.
+      #   How:   model:theil_u_1d:median > 1, for: 1h (about 4 evaluations of the 15m score group).
+      #   Debug: model:theil_u_1d:median and stock:forecast_theil_u_1d:ratio. Needs scored forecasts (quantlab running,
+      #          >= 15 minutes into a session); the value persists across the 1d window after the close.
       - alert: PredictionModelUnderperformsNaive
         expr: model:theil_u_1d:median > 1
         for: 1h

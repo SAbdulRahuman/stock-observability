@@ -5,10 +5,30 @@ groups:
   - name: nse_returns
     interval: 15s
     rules:
+      # stock:return_60m:percent
+      #   What:  Price change over the last 60 minutes in percent (+1.5 = up 1.5 %); intraday momentum on a rolling hour.
+      #   How:   (LTP / LTP offset 60m - 1) * 100 on stock_last_price{tier="core"} (all instrument types), evaluated
+      #          every 15s. The `> 0` guard drops a zero/missing price 60m ago. No market-open gate: in the first hour
+      #          of the session the offset reads the pre-open/previous-session price if the exporter still exported it.
+      #   Debug: Compare stock_last_price{symbol="X"} and stock_last_price{symbol="X"} offset 60m. Empty when there was no
+      #          sample 60m ago (exporter down/restart, symbol newly added); outside hours it settles at 0 for a flat LTP.
       - record: stock:return_60m:percent
         expr: (stock_last_price{tier="core"} / (stock_last_price{tier="core"} offset 60m > 0) - 1) * 100
+      # stock:day_range:percent
+      #   What:  Today's high-low range as a percent of the low (3 = high is 3 % above low); a daily volatility gauge, >= 0.
+      #   How:   (stock_high_price - stock_low_price) / stock_low_price * 100, tier="core", 15s interval. The
+      #          `stock_low_price > 0` guard drops symbols with no low yet. No market-open gate (also computed while
+      #          closed, from whatever H/L the exporter still exposes).
+      #   Debug: Query stock_high_price and stock_low_price for the symbol. Empty when the low is 0/missing (no trade yet
+      #          or exporter missing the field).
       - record: stock:day_range:percent
         expr: (stock_high_price{tier="core"} - stock_low_price{tier="core"}) / (stock_low_price{tier="core"} > 0) * 100
+      # stock:range_position:ratio
+      #   What:  Where the LTP sits inside today's range: 0 = at the day low, 1 = at the day high, 0.5 = mid-range.
+      #   How:   (LTP - L) / (H - L) on tier="core" stock_last_price/stock_high_price/stock_low_price, 15s interval.
+      #          The `(H - L) > 0` guard drops symbols whose range is still zero. No market-open gate.
+      #   Debug: Query stock_last_price, stock_high_price, stock_low_price for the symbol. Empty right after the open or
+      #          for untraded names (H == L); values slightly outside 0..1 mean LTP and H/L were scraped out of sync.
       - record: stock:range_position:ratio
         expr: |
           (stock_last_price{tier="core"} - stock_low_price{tier="core"})
@@ -17,10 +37,25 @@ groups:
   - name: nse_returns_1m
     interval: 1m
     rules:
+      # stock:log_return_1m:ratio
+      #   What:  One-minute log return ln(C / C 1m ago); about the fractional change (0.001 = +0.1 %), positive = up.
+      #          Additive across minutes, input for volatility/covariance rules.
+      #   How:   ln(stock_last_price{tier="core"} / stock_last_price{tier="core"} offset 1m) with a `> 0` guard on the
+      #          old price; all core instrument types incl. indices. Gated on() stock_market_open == 1. The first
+      #          minute of the session compares against the last pre-open/previous-close LTP if it is still in lookback.
+      #   Debug: Query stock_last_price{symbol="X"} and its offset 1m. Empty when the market is closed or no sample 1m ago;
+      #          exactly 0 means the LTP did not change in that minute.
       - record: stock:log_return_1m:ratio
         expr: |
           ln(stock_last_price{tier="core"} / (stock_last_price{tier="core"} offset 1m > 0))
           and on() stock_market_open == 1
+      # stock:log_return_x_nifty_1m:ratio
+      #   What:  Per-minute product r_stock * r_NIFTY of one-minute log returns (very small, ~1e-6); positive when the
+      #          stock and NIFTY 50 moved the same way. Averaged over 60m it gives the beta/covariance numerator (nse_risk).
+      #   How:   stock:log_return_1m:ratio{instrument_type="EQ"} * on() group_left() stock:log_return_1m:ratio{symbol=
+      #          "NIFTY 50"}: on() matches every equity with the single NIFTY series; group_left keeps the stock's labels.
+      #   Debug: Query stock:log_return_1m:ratio{symbol="NIFTY 50"} - it must be exactly one series (NIFTY 50 must be
+      #          tier="core"); if it is missing the whole rule is empty, if duplicated the rule errors (many-to-many).
       # Release 3: r * r_NIFTY per 1m bar, for the 60m covariance (nse_risk).
       - record: stock:log_return_x_nifty_1m:ratio
         expr: stock:log_return_1m:ratio{instrument_type="EQ"} * on() group_left() stock:log_return_1m:ratio{symbol="NIFTY 50"}

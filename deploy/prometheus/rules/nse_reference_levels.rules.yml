@@ -6,18 +6,43 @@ groups:
   - name: nse_reference_levels
     interval: 15s
     rules:
+      # stock:range_52w_position:ratio
+      #   What:  Where the price sits in its 52-week range: 0 = at the 52W low, 1 = at the 52W high; < 0 or > 1 means
+      #          today broke the range (the levels exclude the current session).
+      #   How:   (stock_last_price{tier="core"} - stock_52w_low_price) / (stock_52w_high_price - stock_52w_low_price), `> 0`
+      #          guard on the range; one-to-one match on all labels.
+      #   Debug: stock_52w_high_price / stock_52w_low_price (reference collector, loaded from one year of Kite day
+      #          candles). Empty for non-core symbols or when the historical candles could not be loaded.
       - record: stock:range_52w_position:ratio
         expr: |
           (stock_last_price{tier="core"} - stock_52w_low_price)
           / ((stock_52w_high_price - stock_52w_low_price) > 0)
+      # stock:distance_52w_high:percent
+      #   What:  Distance from the 52-week high in percent: usually <= 0 (-12 = 12% below the high); > 0 = new high today.
+      #   How:   (stock_last_price{tier="core"} / stock_52w_high_price - 1) * 100, `> 0` guard on the high.
+      #   Debug: stock_52w_high_price. Empty without reference data (non-core symbol, candle load failed).
       - record: stock:distance_52w_high:percent
         expr: (stock_last_price{tier="core"} / (stock_52w_high_price > 0) - 1) * 100
+      # stock:sma_spread_50_200d:percent
+      #   What:  Gap between the 50-day and 200-day daily SMAs in percent; > 0 = long-term uptrend regime (after a golden
+      #          cross), < 0 = downtrend. Changes once per session.
+      #   How:   (stock_sma_50d_price / stock_sma_200d_price - 1) * 100, `> 0` guard on the 200d SMA.
+      #   Debug: stock_sma_50d_price, stock_sma_200d_price. Empty when fewer than 200 (or 50) daily closes are available
+      #          (the collector omits a zero SMA, e.g. recent listings).
       - record: stock:sma_spread_50_200d:percent
         expr: (stock_sma_50d_price / (stock_sma_200d_price > 0) - 1) * 100
 
   - name: nse_reference_levels_alerts
     interval: 15s
     rules:
+      # Stock52WeekBreakout
+      #   What:  Fires when a core equity trades above its 52-week high (direction=bullish) or below its 52-week low
+      #          (bearish) on more than 1.5x relative volume; value = last price.
+      #   How:   stock_last_price{tier="core", instrument_type="EQ"} > stock_52w_high_price (or < low) and
+      #          stock:relative_volume:ratio > 1.5, labelled via label_replace; and on() market open; for: 1m,
+      #          keep_firing_for: 30m (stays active through pullbacks into the old range).
+      #   Debug: stock_52w_high_price/low, stock:relative_volume:ratio. Silent while RVOL is empty (needs >= 5 EOD
+      #          volume snapshots; 0 elapsed time at the open), without reference data, or when the market is closed.
       - alert: Stock52WeekBreakout
         expr: |
           (
@@ -39,6 +64,13 @@ groups:
           summary: "{{ $labels.symbol }} {{ $labels.direction }} 52-week breakout at {{ $value }}"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} is trading beyond its 52-week {{ if eq $labels.direction \"bullish\" }}high{{ else }}low{{ end }} on more than 1.5x relative volume."
           effectiveness: '{{ with printf `alert:hit_rate_5d:ratio{alertname="Stock52WeekBreakout",direction=%q,horizon="15m"}` $labels.direction | query }}15m hit rate over the last 5 days: {{ . | first | value | humanizePercentage }}{{ else }}No history yet{{ end }}'
+      # StockGoldenDeathCross
+      #   What:  Fires all through the session after the daily 50-SMA crossed above (golden, direction=bullish) or below
+      #          (death, bearish) the 200-SMA at the previous close; value = cross flag +1/-1.
+      #   How:   stock_sma_50d_200d_cross{tier="core", instrument_type="EQ"} == 1 / == -1 (exporter sets it only on the
+      #          crossing day's candle), label_replace direction; and on() market open; no `for:`.
+      #   Debug: stock_sma_50d_200d_cross (absent when there was no cross), stock_sma_50d_price/stock_sma_200d_price.
+      #          Silent without 200 daily closes or when the market is closed.
       # The cross happened at the previous session's close; it notifies during the next session.
       - alert: StockGoldenDeathCross
         expr: |
