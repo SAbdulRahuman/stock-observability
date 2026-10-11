@@ -4,5 +4,6 @@ node_modules/
 secrets/
 *.env
 .env
+!deploy/native/manifest.env
 .vscode/
 .idea/
