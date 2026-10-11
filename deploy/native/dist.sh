@@ -2,8 +2,9 @@
 # Builds the native-install release assets (install.sh / install.ps1) into $OUT:
 #   stock-observability_linux_amd64.tar.gz, stock-observability_windows_amd64.zip,
 #   install.sh, install.ps1, checksums.txt
+# plus standalone <component>-<version>.<os>-<arch> archives of stock_exporter, stock_home and stock_website.
 # Needs go, npm (stock_home UI), uv (OpenBB wheels), python3 and the OpenBB/OpenBB submodule.
-# SKIP_WEB=1 reuses an existing stock_home/ui/dist build.
+# SKIP_WEB=1 reuses existing stock_home/ui/dist and website/ui/dist builds; SKIP_STANDALONE=1 skips the standalone archives.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -13,6 +14,8 @@ WORK=$ROOT/.build/native
 NATIVE=$ROOT/deploy/native
 OPENBB_PLATFORM=$ROOT/OpenBB/OpenBB/openbb_platform
 REVISION=$(git -C "$ROOT" rev-parse --short HEAD)
+SITE_URL=${SITE_URL:-https://iseeticks.com}
+PLATFORMS=(linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64)
 
 # Same package set as deploy/openbb/Dockerfile (OPENBB_PACKAGES).
 OPENBB_PACKAGES=(
@@ -81,5 +84,44 @@ log "Packaging $VERSION"
 tar -C "$WORK/linux" -czf "$OUT/stock-observability_linux_amd64.tar.gz" stock-observability
 (cd "$WORK/windows" && python3 -m zipfile -c "$OUT/stock-observability_windows_amd64.zip" stock-observability)
 cp "$ROOT/install.sh" "$ROOT/install.ps1" "$OUT/"
+
+# standalone <name> <source dir> <ldflags> [extra files...]
+standalone() {
+	local name=$1 src=$2 ldflags=$3; shift 3
+	local ver; ver=$(cat "$src/VERSION")
+	for p in "${PLATFORMS[@]}"; do
+		local os=${p%/*} arch=${p#*/} ext=""
+		[[ $os == windows ]] && ext=.exe
+		local dir=$name-$ver.$os-$arch stage=$WORK/standalone
+		mkdir -p "$stage/$dir"
+		(cd "$src" && CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w $ldflags" -o "$stage/$dir/$name$ext" .)
+		[[ $# -gt 0 ]] && cp "$@" "$stage/$dir/"
+		if [[ $os == windows ]]; then
+			(cd "$stage" && python3 -m zipfile -c "$OUT/$dir.zip" "$dir")
+		else
+			tar -C "$stage" -czf "$OUT/$dir.tar.gz" "$dir"
+		fi
+	done
+}
+
+if [[ ${SKIP_STANDALONE:-0} != 1 ]]; then
+	if [[ ${SKIP_WEB:-0} != 1 ]]; then
+		log "Building website UI for $SITE_URL"
+		make -C "$ROOT/website" web SITE_URL="$SITE_URL"
+	fi
+	[[ -f $ROOT/website/ui/dist/index.html ]] || { echo "website/ui/dist is empty: build the UI first" >&2; exit 1; }
+	ex=$ROOT/stock_exporter
+	log "Building standalone stock_exporter"
+	standalone stock_exporter "$ex" \
+		"-X github.com/prometheus/common/version.Version=$(cat "$ex/VERSION") -X github.com/prometheus/common/version.Revision=$REVISION" \
+		"$ex/LICENSE" "$ex/NOTICE" "$ex/examples/watchlist.yml" "$ex/examples/holidays-nse-2026.yml"
+	log "Building standalone stock_home"
+	standalone stock_home "$ROOT/stock_home" "-X main.version=$(cat "$ROOT/stock_home/VERSION")" \
+		"$ex/examples/holidays-nse-2026.yml"
+	log "Building standalone stock_website"
+	standalone stock_website "$ROOT/website" "-X main.version=$(cat "$ROOT/website/VERSION")" \
+		"$ROOT/deploy/vm/systemd/stock-website.service" "$ROOT/deploy/vm/env/stock-website.env.example"
+fi
+
 (cd "$OUT" && sha256sum -- *.tar.gz *.zip install.sh install.ps1 >checksums.txt)
 ls -l "$OUT"

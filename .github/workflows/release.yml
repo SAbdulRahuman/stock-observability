@@ -17,18 +17,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check tag matches component versions
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          for c in stock_exporter stock_home website; do
+            [ "v$(cat $c/VERSION)" = "$GITHUB_REF_NAME" ] || { echo "$c/VERSION is $(cat $c/VERSION), tag is $GITHUB_REF_NAME"; exit 1; }
+          done
+
       - name: Check out OpenBB
         run: git submodule update --init --depth 1 OpenBB/OpenBB
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: stock_exporter/go.mod
+          go-version-file: website/go.mod
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: stock_home/web/package-lock.json
+          cache-dependency-path: |
+            stock_home/web/package-lock.json
+            website/web/package-lock.json
 
       - uses: astral-sh/setup-uv@v6
 
@@ -49,6 +58,7 @@ jobs:
         run: |
           make -C stock_exporter test
           make -C stock_home test
+          make -C website test
 
       - name: Build release assets
         run: VERSION=${GITHUB_REF_NAME} deploy/native/dist.sh
