@@ -1,0 +1,124 @@
+---
+title: Install on Linux or Windows
+---
+
+One command installs the whole iSee Ticks stack on your workstation and starts it: the exporter, the product home,
+Prometheus, Alertmanager, Grafana, OpenBB and a portal that serves all of them on `http://localhost:8080`. You do not need
+root or admin rights or Docker. Everything installs for the current user.
+
+The installer downloads the latest [GitHub release](https://github.com/SAbdulRahuman/stock-observability/releases/latest),
+checks every file against its SHA-256 checksum, and only then installs.
+
+## Before you start
+
+| | Linux | Windows |
+| --- | --- | --- |
+| System | x86_64 with systemd | Windows 10 or 11, x64 |
+| Shell | bash with `curl`, `tar`, `sha256sum` | PowerShell |
+| Free disk | 3 GB | 3 GB |
+
+You also need a [Kite Connect](https://developers.kite.trade) app for the live market feed:
+
+1. Create the app and note its **API key** and **API secret**.
+2. Set the app's **redirect URL** to `http://127.0.0.1:8080/exporter/kite/callback`. If you install with a different
+   port, use that port here.
+
+## Install
+
+### Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.sh | bash
+```
+
+### Windows
+
+```powershell
+irm https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.ps1 | iex
+```
+
+The installer asks for the Kite API key and secret. To install without prompts, set them as environment variables first:
+
+```bash
+export KITE_API_KEY=your-api-key KITE_API_SECRET=your-api-secret
+curl -fsSL https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.sh | bash
+```
+
+```powershell
+$env:KITE_API_KEY = 'your-api-key'; $env:KITE_API_SECRET = 'your-api-secret'
+irm https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.ps1 | iex
+```
+
+## After you install
+
+| Open | What it is |
+| --- | --- |
+| `http://localhost:8080/` | Product home |
+| `http://localhost:8080/grafana/` | Grafana dashboards (user `admin`, password in the config folder, file `grafana-admin-password`) |
+| `http://localhost:8080/prometheus/` | Prometheus |
+| `http://localhost:8080/alertmanager/` | Alertmanager |
+
+Log in to Kite **once per trading day** at `http://localhost:8080/exporter/login`. Kite tokens expire at 06:00 IST every
+day.
+
+## Options
+
+| Linux | Windows | Purpose |
+| --- | --- | --- |
+| `--version v0.1.0` | `-Version v0.1.0` | Install a specific release (default: latest) |
+| `--port 9000` | `-Port 9000` | Portal port (default 8080) |
+| `--listen 0.0.0.0` | `-Listen 0.0.0.0` | Expose the portal on your network. Prometheus and Alertmanager have no login, so only do this on a trusted network |
+| `--archive FILE` | `-Archive FILE` | Install from a bundle you already downloaded |
+| `--no-start` | `-NoStart` | Install without starting the services |
+| `--uninstall` | `-Uninstall` | Remove the services and programs, keep config and data |
+| `--uninstall --purge` | `-Uninstall -Purge` | Also delete config and data |
+
+On Linux, pass options after `bash -s --`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.sh | bash -s -- --version v0.1.0 --port 9000
+```
+
+On Windows, run the script as a script block:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.ps1))) -Version v0.1.0 -Port 9000
+```
+
+## Where things live
+
+| | Linux | Windows |
+| --- | --- | --- |
+| Programs and data | `~/.local/share/stock-observability` | `%LOCALAPPDATA%\StockObservability` |
+| Config | `~/.config/stock-observability` | `%LOCALAPPDATA%\StockObservability\config` |
+| Logs | `journalctl --user -u 'stockobs-*' -f` | `%LOCALAPPDATA%\StockObservability\logs` |
+| Services | `systemctl --user status stockobs.target` | Scheduled Tasks `StockObservability-*`, started at logon |
+
+On Linux, user services stop when you log out. To keep them running, ask an administrator to run
+`sudo loginctl enable-linger $USER` once.
+
+## Upgrade
+
+Run the install command again. Your edits to `prometheus.yml`, `alertmanager.yml`, `watchlist.yml` and `Caddyfile` are
+kept. When a release changes one of those defaults, the new version is written next to your file with a `.new` suffix so
+you can merge it.
+
+## Standalone binaries
+
+Each release also ships the components on their own, for Linux (`linux-amd64.tar.gz`) and Windows (`windows-amd64.zip`):
+
+| Archive | Contents |
+| --- | --- |
+| `stock_exporter-VERSION.OS-ARCH` | Exporter, example watchlist and NSE holiday calendar |
+| `stock_home-VERSION.OS-ARCH` | Product home with its embedded UI |
+| `stock_website-VERSION.OS-ARCH` | This website, with a systemd unit and an example environment file |
+
+Download them from the [releases page](https://github.com/SAbdulRahuman/stock-observability/releases) and check them
+against `checksums.txt` from the same release:
+
+```bash
+sha256sum --check --ignore-missing checksums.txt
+```
+
+To try iSee Ticks without a broker account, follow the [quickstart](/docs/quickstart) and run the market simulator
+instead.

@@ -7,6 +7,13 @@
     "file": "content/docs/quickstart.mdx"
   },
   {
+    "slug": "install",
+    "title": "Install on Linux or Windows",
+    "description": "One command installs and starts the whole stack for the current user, with the live Kite feed.",
+    "group": "Get started",
+    "file": "content/docs/install.mdx"
+  },
+  {
     "slug": "architecture",
     "title": "System architecture",
     "description": "Components, responsibilities and data flow from feed to product home.",

@@ -1,0 +1,52 @@
+---
+title: "iSee Ticks 0.1.0: install with one command"
+date: 2026-10-11
+summary: "The first release runs the whole stack on your own Linux or Windows machine, without Docker or admin rights."
+author: "iSee Ticks team"
+---
+
+Until now, running iSee Ticks meant cloning the repository and building every component yourself. With **0.1.0** you run
+one command and get the whole stack on your own machine.
+
+## What is in the release
+
+The installer sets up and starts everything for the current user:
+
+- **The exporter**, which streams Kite ticks into Prometheus metrics.
+- **The product home**: market overview, watchlist, movers, sectors and alerts.
+- **Prometheus** with every KPI and alert rule, **Alertmanager** and **Grafana** with the dashboards.
+- **OpenBB** for research.
+- **A portal** that serves all of them on `http://localhost:8080`.
+
+It needs no root or admin rights and no Docker. On Linux the services run under systemd as your user; on Windows they are
+scheduled tasks that start when you log on.
+
+## Install it
+
+On Linux (x86_64):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.sh | bash
+```
+
+On Windows 10 or 11 (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.ps1 | iex
+```
+
+You need a [Kite Connect](https://developers.kite.trade) app; the installer asks for its API key and secret. Every
+download is checked against a SHA-256 checksum before it is installed. Running the command again upgrades the stack and
+keeps your configuration.
+
+The [install guide](/docs/install) covers the options, where files go and how to uninstall.
+
+## Standalone binaries
+
+If you only want one piece, the [release](https://github.com/SAbdulRahuman/stock-observability/releases/tag/v0.1.0) also
+has the exporter, the product home and the website as standalone archives for Linux and Windows.
+
+## What is next
+
+This is an early release for Linux and Windows on x86_64. Tell us what breaks and what you want next, or
+[join the waitlist](/waitlist) for hosted access.
