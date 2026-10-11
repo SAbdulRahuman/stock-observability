@@ -1,0 +1,40 @@
+# Portal for the native install: same routes as the Helm chart nginx portal
+# (deploy/charts/stock-observability/templates/portal-configmap.yaml).
+{
+	admin off
+	persist_config off
+	auto_https off
+	# install.sh --listen 0.0.0.0 exposes the portal; Prometheus and Alertmanager have no auth.
+	default_bind {$STOCKOBS_BIND:127.0.0.1}
+}
+
+:{$STOCKOBS_PORT:8080} {
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	redir /grafana /grafana/
+	redir /prometheus /prometheus/
+	redir /alertmanager /alertmanager/
+
+	handle /grafana/* {
+		reverse_proxy 127.0.0.1:3000
+	}
+	handle /prometheus/* {
+		reverse_proxy 127.0.0.1:9090
+	}
+	handle /alertmanager/* {
+		reverse_proxy 127.0.0.1:9093
+	}
+
+	# Only the Kite login flow is exposed from the exporter.
+	@kite path /exporter/login /exporter/kite/callback
+	handle @kite {
+		uri strip_prefix /exporter
+		reverse_proxy 127.0.0.1:9101
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8081
+	}
+}

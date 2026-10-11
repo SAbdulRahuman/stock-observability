@@ -27,6 +27,29 @@ flowchart LR
 
 Nothing is compiled inside Docker. The Dockerfiles only copy prebuilt binaries onto a small base image, so `docker build` downloads nothing through the proxy.
 
+## Install on a workstation (Linux, Windows)
+
+One command installs and starts the whole stack for the current user, without root/admin rights or Docker: stock_exporter, stock_home, Prometheus, Alertmanager, Grafana, OpenBB and a Caddy portal on http://localhost:8080.
+
+Linux (x86_64, systemd):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.sh | bash
+```
+
+Windows 10/11 (x64, PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.ps1 | iex
+```
+
+- A [Kite Connect](https://developers.kite.trade) app is required. The installer prompts for its API key and secret, or reads `KITE_API_KEY` and `KITE_API_SECRET`. Set the app's redirect URL to `http://127.0.0.1:8080/exporter/kite/callback`, then log in once per trading day at http://localhost:8080/exporter/login.
+- Options: `--version vX.Y.Z`, `--port`, `--listen`, `--no-start`, `--uninstall [--purge]` (`bash -s -- <options>`); on Windows `-Version`, `-Port`, `-Listen`, `-NoStart`, `-Uninstall [-Purge]` via `& ([scriptblock]::Create((irm <url>))) <options>`.
+- Linux: programs and data in `~/.local/share/stock-observability`, config in `~/.config/stock-observability`, services `systemctl --user ... stockobs.target`. Windows: everything in `%LOCALAPPDATA%\StockObservability`, services are Scheduled Tasks `StockObservability-*` started at logon.
+- Re-running the installer upgrades. Your edits to `prometheus.yml`, `alertmanager.yml`, `watchlist.yml` and `Caddyfile` are kept, and a changed default is written next to them as `.new`.
+
+Releases are built by [.github/workflows/release.yml](.github/workflows/release.yml) on `v*` tags (`make dist-native` locally). Third-party downloads are pinned with sha256 in [deploy/native/manifest.env](deploy/native/manifest.env).
+
 ## Repository layout
 
 This repository lives at [SAbdulRahuman/stock-observability](https://github.com/SAbdulRahuman/stock-observability). `stock_exporter`, `stock_home` and `deploy` are tracked here directly. The upstream projects are git submodules that point to forks in the [stock-observability](https://github.com/stock-observability) org, each pinned to a commit:

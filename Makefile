@@ -85,6 +85,7 @@ help:
 	@echo "  build-<name>, docker-build-<name>, docker-push-<name> for a single service"
 	@echo "  build-website  Build the iSee Ticks website binary (website/stock_website)"
 	@echo "  dist-website   Package website/dist/stock_website-<ver>.linux-amd64.tar.gz for the VM"
+	@echo "  dist-native    Build the install.sh/install.ps1 release assets into .build/release"
 	@echo
 	@echo "Images:"
 	@$(foreach i,$(IMAGES),printf '  %-15s %s\n' "$(i)" "$(IMG_$(i))";)
@@ -110,6 +111,11 @@ build-website:
 
 dist-website:
 	$(MAKE) -C website dist NPM_STRICT_SSL=$(TLS_VERIFY)
+
+# Release assets for the native installers (install.sh, install.ps1); CI runs this on v* tags.
+.PHONY: dist-native
+dist-native:
+	deploy/native/dist.sh
 
 build-prometheus:
 	cd prometheus/web/ui && $(NPM_ENV) $(PNPM) install --frozen-lockfile --config.strict-ssl=$(TLS_VERIFY)

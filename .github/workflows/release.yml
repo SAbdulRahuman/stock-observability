@@ -1,0 +1,73 @@
+name: release
+
+# Tag vX.Y.Z to publish the native-install assets used by install.sh and install.ps1.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out OpenBB
+        run: git submodule update --init --depth 1 OpenBB/OpenBB
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: stock_exporter/go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: stock_home/web/package-lock.json
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Verify pinned upstream downloads
+        run: |
+          set -a; . deploy/native/manifest.env; set +a
+          mkdir -p /tmp/upstream
+          for c in PROMETHEUS ALERTMANAGER GRAFANA CADDY UV; do
+            for os in LINUX WINDOWS; do
+              url=${c}_${os}_URL sha=${c}_${os}_SHA256
+              f=/tmp/upstream/$(basename "${!url}")
+              curl -fsSL --retry 3 -o "$f" "${!url}"
+              echo "${!sha}  $f" | sha256sum -c -
+            done
+          done
+
+      - name: Test
+        run: |
+          make -C stock_exporter test
+          make -C stock_home test
+
+      - name: Build release assets
+        run: VERSION=${GITHUB_REF_NAME} deploy/native/dist.sh
+
+      - name: Validate packaged configuration
+        run: |
+          set -a; . deploy/native/manifest.env; set +a
+          cfg=.build/native/linux/stock-observability/config
+          tools=/tmp/tools && mkdir -p $tools
+          tar -C $tools -xzf /tmp/upstream/$(basename "$PROMETHEUS_LINUX_URL") --strip-components=1
+          tar -C $tools -xzf /tmp/upstream/$(basename "$ALERTMANAGER_LINUX_URL") --strip-components=1
+          tar -C $tools -xzf /tmp/upstream/$(basename "$CADDY_LINUX_URL") caddy
+          $tools/promtool check config $cfg/prometheus/prometheus.yml
+          $tools/amtool check-config $cfg/alertmanager/alertmanager.yml
+          $tools/caddy validate --adapter caddyfile --config $cfg/Caddyfile
+          bash -n install.sh
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" .build/release/* --title "$GITHUB_REF_NAME" --generate-notes --verify-tag

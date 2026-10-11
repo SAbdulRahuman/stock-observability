@@ -138,6 +138,10 @@ func TestLoginFlow(t *testing.T) {
 
 	// A new session loads the persisted token.
 	s2 := NewSession(auth, "s3cret", path, ist, store.NewHealth("kite", "full"), slog.New(slog.DiscardHandler))
+	s2.now = func() time.Time { return now }
+	if err := s2.load(); err != nil {
+		t.Fatal(err)
+	}
 	if tok, ok := s2.Token(); !ok || tok != "acc3ss" {
 		t.Fatalf("persisted token not loaded: %q %v", tok, ok)
 	}
