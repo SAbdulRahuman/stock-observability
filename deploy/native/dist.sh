@@ -15,7 +15,7 @@ NATIVE=$ROOT/deploy/native
 OPENBB_PLATFORM=$ROOT/OpenBB/OpenBB/openbb_platform
 REVISION=$(git -C "$ROOT" rev-parse --short HEAD)
 SITE_URL=${SITE_URL:-https://iseeticks.com}
-PLATFORMS=(linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64)
+PLATFORMS=(linux/amd64 windows/amd64)
 
 # Same package set as deploy/openbb/Dockerfile (OPENBB_PACKAGES).
 OPENBB_PACKAGES=(
