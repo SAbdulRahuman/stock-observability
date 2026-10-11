@@ -43,8 +43,8 @@ Windows 10/11 (x64, PowerShell):
 irm https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.ps1 | iex
 ```
 
-- A [Kite Connect](https://developers.kite.trade) app is required. The installer prompts for its API key and secret, or reads `KITE_API_KEY` and `KITE_API_SECRET`. Set the app's redirect URL to `http://127.0.0.1:8080/exporter/kite/callback`, then log in once per trading day at http://localhost:8080/exporter/login.
-- Options: `--version vX.Y.Z`, `--port`, `--listen`, `--no-start`, `--uninstall [--purge]` (`bash -s -- <options>`); on Windows `-Version`, `-Port`, `-Listen`, `-NoStart`, `-Uninstall [-Purge]` via `& ([scriptblock]::Create((irm <url>))) <options>`.
+- A [Kite Connect](https://developers.kite.trade) app is needed for live data. After installing, open **Settings → Data Sources → Zerodha Kite Connect** to configure it. The page shows the exact redirect URL (`http://127.0.0.1:8080/exporter/kite/callback`); save the credentials, then select **Test with Kite** to sign in and verify them. Change credentials later on the same computer. For unattended installs set `KITE_API_KEY` and `KITE_API_SECRET`. Log in once per trading day.
+- Options: `--version vX.Y.Z`, `--port`, `--listen`, `--no-start`, `--no-browser`, `--uninstall [--purge]` (`bash -s -- <options>`); on Windows `-Version`, `-Port`, `-Listen`, `-NoStart`, `-NoBrowser`, `-Uninstall [-Purge]` via `& ([scriptblock]::Create((irm <url>))) <options>`.
 - Linux: programs and data in `~/.local/share/stock-observability`, config in `~/.config/stock-observability`, services `systemctl --user ... stockobs.target`. Windows: everything in `%LOCALAPPDATA%\StockObservability`, services are Scheduled Tasks `StockObservability-*` started at logon.
 - Re-running the installer upgrades. Your edits to `prometheus.yml`, `alertmanager.yml`, `watchlist.yml` and `Caddyfile` are kept, and a changed default is written next to them as `.new`.
 

@@ -28,6 +28,7 @@ type feedCollector struct {
 	info, connections, ticks, reconnects, errors typedDesc
 	subscribed, lastTick, instruments            typedDesc
 	sessionValid, sessionExpiry, apiRequests     typedDesc
+	credentials                                  typedDesc
 }
 
 func init() {
@@ -49,6 +50,7 @@ func NewFeedCollector(_ *slog.Logger, deps Deps) (Collector, error) {
 		sessionValid:  gaugeDesc("kite", "session_valid", "1 if a non-expired Kite access token is held."),
 		sessionExpiry: gaugeDesc("kite", "session_expiry_timestamp_seconds", "Expiry time of the Kite access token."),
 		apiRequests:   counterDesc("kite", "api_requests_total", "Kite REST API requests by endpoint and outcome.", "endpoint", "outcome"),
+		credentials:   gaugeDesc("kite", "credentials_configured", "1 if a Kite Connect API key and secret are configured."),
 	}, nil
 }
 
@@ -71,6 +73,9 @@ func (c *feedCollector) Update(ch chan<- prometheus.Metric, _ Scope) error {
 		ch <- c.instruments.mustNewConstMetric(n, t)
 	}
 	ch <- c.sessionValid.mustNewConstMetric(b2f(h.SessionValid))
+	if h.Source == "kite" {
+		ch <- c.credentials.mustNewConstMetric(b2f(h.Credentials))
+	}
 	if !h.SessionExpiry.IsZero() {
 		ch <- c.sessionExpiry.mustNewConstMetric(unixSeconds(h.SessionExpiry))
 	}

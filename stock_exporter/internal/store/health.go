@@ -49,6 +49,7 @@ type Health struct {
 	lastTick      time.Time
 	sessionValid  bool
 	sessionExpiry time.Time
+	credentials   bool
 	api           map[apiKey]uint64
 }
 
@@ -64,6 +65,7 @@ type HealthSnapshot struct {
 	LastTick      time.Time
 	SessionValid  bool
 	SessionExpiry time.Time
+	Credentials   bool
 	API           []APICount
 }
 
@@ -123,6 +125,13 @@ func (h *Health) SetSession(valid bool, expiry time.Time) {
 	h.sessionExpiry = expiry
 }
 
+// SetCredentials records whether upstream API credentials are configured.
+func (h *Health) SetCredentials(configured bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.credentials = configured
+}
+
 // ObserveAPI records an upstream API call.
 func (h *Health) ObserveAPI(endpoint, outcome string) {
 	h.mu.Lock()
@@ -144,6 +153,7 @@ func (h *Health) Snapshot() HealthSnapshot {
 		LastTick:      h.lastTick,
 		SessionValid:  h.sessionValid,
 		SessionExpiry: h.sessionExpiry,
+		Credentials:   h.credentials,
 	}
 	for _, up := range h.connections {
 		if up {

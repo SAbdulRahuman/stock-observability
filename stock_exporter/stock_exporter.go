@@ -35,7 +35,6 @@ import (
 	versioncollector "github.com/prometheus/client_golang/prometheus/collectors/version"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/exporter-toolkit/bootstrap"
-	kiteconnect "github.com/zerodha/gokiteconnect/v4"
 	kiteticker "github.com/zerodha/gokiteconnect/v4/ticker"
 
 	"github.com/seenimo/stock_exporter/collector"
@@ -175,6 +174,8 @@ type options struct {
 
 	kiteAPIKey         string
 	kiteAPISecretFile  string
+	kiteCredsFile      string
+	kitePostLogin      string
 	kiteTokenFile      string
 	kiteMode           string
 	kiteCircuitEvery   time.Duration
@@ -203,6 +204,34 @@ func readSecretFile(path string) (string, error) {
 		return "", fmt.Errorf("%s is empty", path)
 	}
 	return s, nil
+}
+
+// kiteCredentials resolves credentials from flags or the credentials file; both unset is allowed.
+func kiteCredentials(o options) (kite.Credentials, string, error) {
+	flags := o.kiteAPIKey != "" || o.kiteAPISecretFile != ""
+	switch {
+	case flags && o.kiteCredsFile != "":
+		return kite.Credentials{}, "", errors.New("--kite.credentials-file cannot be combined with --kite.api-key or --kite.api-secret-file")
+	case flags:
+		if o.kiteAPIKey == "" {
+			return kite.Credentials{}, "", errors.New("--kite.api-key is required with --kite.api-secret-file")
+		}
+		secret, err := readSecretFile(o.kiteAPISecretFile)
+		if err != nil {
+			return kite.Credentials{}, "", fmt.Errorf("reading Kite API secret: %w", err)
+		}
+		return kite.Credentials{APIKey: o.kiteAPIKey, APISecret: secret}, kite.SourceFlags, nil
+	case o.kiteCredsFile != "":
+		c, err := kite.LoadCredentials(o.kiteCredsFile)
+		if err != nil {
+			return kite.Credentials{}, "", err
+		}
+		if c.APIKey == "" {
+			return c, kite.SourceNone, nil
+		}
+		return c, kite.SourceFile, nil
+	}
+	return kite.Credentials{}, kite.SourceNone, nil
 }
 
 // start loads configuration, starts the feed in the background and returns collector dependencies.
@@ -242,34 +271,35 @@ func start(ctx context.Context, o options, b *bootstrap.Bootstrap) (collector.De
 		if err != nil {
 			return collector.Deps{}, err
 		}
-		if o.kiteAPIKey == "" {
-			return collector.Deps{}, errors.New("--kite.api-key is required for --feed.source=kite")
-		}
-		secret, err := readSecretFile(o.kiteAPISecretFile)
+		creds, source, err := kiteCredentials(o)
 		if err != nil {
-			return collector.Deps{}, fmt.Errorf("reading Kite API secret: %w", err)
+			return collector.Deps{}, err
 		}
 		deps.Health = store.NewHealth("kite", string(mode))
 		if mode != kiteticker.ModeFull && (collector.Enabled("depth") || collector.Enabled("orderbook")) {
 			b.Logger.Warn("Order book depth is only streamed in full mode; depth and orderbook metrics will be empty", "mode", mode)
 		}
-		auth := kiteconnect.New(o.kiteAPIKey)
-		if o.kiteBaseURI != "" {
-			auth.SetBaseURI(o.kiteBaseURI)
+		sup, err := kite.NewSupervisor(kite.SupervisorConfig{
+			Runner: kite.RunnerConfig{
+				Feed:              kite.FeedConfig{Mode: mode},
+				BaseURI:           o.kiteBaseURI,
+				CircuitInterval:   o.kiteCircuitEvery,
+				ReferenceInterval: o.kiteReferenceEvery,
+				PortfolioPoll:     collector.Enabled("portfolio"),
+				PortfolioEvery:    o.kitePortfolioEvery,
+			},
+			TokenPath:         o.kiteTokenFile,
+			CredentialsPath:   o.kiteCredsFile,
+			PostLoginRedirect: o.kitePostLogin,
+			Location:          loc,
+		}, creds, source, wl, st, deps.Health, b.Logger)
+		if err != nil {
+			return collector.Deps{}, err
 		}
-		sess := kite.NewSession(auth, secret, o.kiteTokenFile, loc, deps.Health, b.Logger.With("component", "kite-session"))
-		b.Handle("/login", sess.LoginHandler())
-		b.Handle("/kite/callback", sess.CallbackHandler())
-		go sess.Watch(ctx)
-		cfg := kite.RunnerConfig{
-			Feed:              kite.FeedConfig{APIKey: o.kiteAPIKey, Mode: mode},
-			BaseURI:           o.kiteBaseURI,
-			CircuitInterval:   o.kiteCircuitEvery,
-			ReferenceInterval: o.kiteReferenceEvery,
-			PortfolioPoll:     collector.Enabled("portfolio"),
-			PortfolioEvery:    o.kitePortfolioEvery,
-		}
-		go kite.Run(ctx, cfg, sess, wl, st, deps.Health, b.Logger.With("component", "kite"))
+		b.Handle("/login", sup.LoginHandler())
+		b.Handle("/kite/callback", sup.CallbackHandler())
+		b.Handle("/kite/config", sup.ConfigHandler())
+		sup.Start(ctx)
 	default:
 		return collector.Deps{}, fmt.Errorf("unknown feed source %q", o.source)
 	}
@@ -289,6 +319,8 @@ func main() {
 	kingpin.Flag("market.force-open", "Report the market as always open (testing and demos only).").Default("false").BoolVar(&o.forceOpen)
 	kingpin.Flag("kite.api-key", "Kite Connect API key.").Default("").StringVar(&o.kiteAPIKey)
 	kingpin.Flag("kite.api-secret-file", "File containing the Kite Connect API secret.").Default("").StringVar(&o.kiteAPISecretFile)
+	kingpin.Flag("kite.credentials-file", "JSON file with api_key and api_secret, editable at runtime via /kite/config (mode 0600). Excludes --kite.api-key.").Default("").StringVar(&o.kiteCredsFile)
+	kingpin.Flag("kite.post-login-redirect", "Site-relative path the browser returns to after the Kite login callback, e.g. /settings?tab=data-sources&source=kite.").Default("").StringVar(&o.kitePostLogin)
 	kingpin.Flag("kite.token-file", "File where the daily Kite access token is persisted (mode 0600).").Default("data/kite_session.json").StringVar(&o.kiteTokenFile)
 	kingpin.Flag("kite.ticker-mode", "Kite WebSocket mode: full, quote or ltp.").Default("full").StringVar(&o.kiteMode)
 	kingpin.Flag("kite.circuit-refresh-interval", "How often to refresh circuit limits via the quote API.").Default("5m").DurationVar(&o.kiteCircuitEvery)

@@ -13,6 +13,7 @@ type Feed struct {
 	Source             string             `json:"source"`
 	Mode               string             `json:"mode"`
 	SessionValid       bool               `json:"sessionValid"`
+	CredentialsMissing bool               `json:"credentialsMissing"`
 	SessionExpiresAt   *time.Time         `json:"sessionExpiresAt"`
 	Connections        *float64           `json:"connections"`
 	Subscribed         *float64           `json:"subscribed"`
@@ -29,8 +30,10 @@ type Feed struct {
 func (s *Server) feed(ctx context.Context) (any, error) {
 	q := s.querier(ctx)
 	info := q.vector(`max by (source, mode) (stock_feed_info)`)
+	creds := q.scalar(`max(stock_kite_credentials_configured)`)
 	f := Feed{
 		SessionValid:       isOne(q.scalar(`max(stock_kite_session_valid)`)),
+		CredentialsMissing: creds != nil && *creds == 0,
 		SessionExpiresAt:   unixTime(q.scalar(`max(stock_kite_session_expiry_timestamp_seconds)`)),
 		Connections:        q.scalar(`max(stock_feed_connections)`),
 		Subscribed:         q.scalar(`max(stock_feed_subscribed_instruments)`),

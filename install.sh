@@ -5,8 +5,8 @@
 #   curl -fsSL .../install.sh | bash -s -- --version v0.1.0
 #   curl -fsSL .../install.sh | bash -s -- --uninstall [--purge]
 #
-# Kite Connect credentials are required: --kite-api-key or KITE_API_KEY, and KITE_API_SECRET,
-# otherwise they are prompted for on the terminal. Re-running upgrades and keeps config and data.
+# Connect your Zerodha Kite account in Settings → Data Sources afterwards, or pass
+# --kite-api-key / KITE_API_KEY and KITE_API_SECRET for unattended installs. Re-running upgrades and keeps config and data.
 set -euo pipefail
 
 REPO=${STOCKOBS_REPO:-SAbdulRahuman/stock-observability}
@@ -23,6 +23,7 @@ KITE_KEY=${KITE_API_KEY:-}
 BIND=""
 PORT=""
 START=1
+OPEN_SETUP=1
 ACTION=install
 PURGE=0
 TMP=""
@@ -32,13 +33,14 @@ usage() {
 Usage: install.sh [options]
 
   --version TAG        Release to install (default: latest)
-  --kite-api-key KEY   Kite Connect API key (or KITE_API_KEY); the secret is read from
-                       KITE_API_SECRET or prompted for
+  --kite-api-key KEY   Kite Connect API key (or KITE_API_KEY), with the secret in KITE_API_SECRET;
+					   optional: you can enter both in Settings → Data Sources instead
   --listen ADDR        Portal bind address (default 127.0.0.1; 0.0.0.0 exposes it to the
                        network, and Prometheus/Alertmanager have no authentication)
   --port PORT          Portal port (default 8080)
   --archive FILE       Install from a local stock-observability_linux_amd64.tar.gz
   --no-start           Install without starting the services
+	--no-browser         Do not open Settings → Data Sources in a browser after installing
   --uninstall          Stop and remove the services and programs (config and data are kept)
   --purge              With --uninstall, also delete config and data
   -h, --help           Show this help
@@ -61,6 +63,7 @@ parse_args() {
 		--port) PORT=${2:?--port needs a value}; shift ;;
 		--archive) ARCHIVE=${2:?--archive needs a value}; shift ;;
 		--no-start) START=0 ;;
+		--no-browser) OPEN_SETUP=0 ;;
 		--uninstall) ACTION=uninstall ;;
 		--purge) PURGE=1 ;;
 		-h | --help) usage; exit 0 ;;
@@ -94,38 +97,36 @@ preflight() {
 	((free >= MIN_FREE_KB)) || die "at least 3 GB free space is needed in $APP_DIR"
 }
 
-# Prompts read from the terminal: stdin is the script itself under curl | bash.
-ask() {
-	local prompt=$1 secret=${2:-0} reply
-	[[ -r /dev/tty ]] || return 1
-	if ((secret)); then
-		read -rsp "$prompt" reply </dev/tty
-		echo >&2
-	else
-		read -rp "$prompt" reply </dev/tty
-	fi
-	printf '%s' "$reply"
-}
+kite_valid() { [[ $1 =~ ^[A-Za-z0-9]{6,128}$ ]]; }
 
+# kite_credentials writes $CONF_DIR/kite_credentials.json, which stock_exporter owns and stock_home edits.
+# Credentials are optional: without them, configure Kite from Settings → Data Sources.
 kite_credentials() {
-	if [[ -z $KITE_KEY && -f $CONF_DIR/stockobs.env ]]; then
-		KITE_KEY=$(sed -n 's/^KITE_API_KEY=//p' "$CONF_DIR/stockobs.env")
+	local file=$CONF_DIR/kite_credentials.json old_secret=$CONF_DIR/kite_api_secret secret=${KITE_API_SECRET:-}
+	umask 077
+	mkdir -p "$CONF_DIR"
+	# Releases before 0.2.0 kept the key in stockobs.env and the secret in kite_api_secret.
+	if [[ -z $KITE_KEY && -z $secret && ! -f $file && -s $old_secret && -f $CONF_DIR/stockobs.env ]]; then
+		local old_key
+		old_key=$(sed -n 's/^KITE_API_KEY=//p' "$CONF_DIR/stockobs.env")
+		if [[ -n $old_key ]]; then
+			log "Moving Kite credentials to $file"
+			KITE_KEY=$old_key
+			secret=$(<"$old_secret")
+		fi
 	fi
-	if [[ -z $KITE_KEY ]]; then
-		cat >&2 <<'EOF'
-
-Stock Observability needs a Zerodha Kite Connect app (https://developers.kite.trade).
-EOF
-		KITE_KEY=$(ask "Kite Connect API key: ") || true
+	if [[ -n $KITE_KEY || -n $secret ]]; then
+		kite_valid "$KITE_KEY" || die "invalid Kite API key (--kite-api-key or KITE_API_KEY): 6-128 letters or digits"
+		kite_valid "$secret" || die "KITE_API_SECRET must be set with the API key: 6-128 letters or digits"
+		printf '{"api_key":"%s","api_secret":"%s"}\n' "$KITE_KEY" "$secret" >"$file"
+		chmod 600 "$file"
 	fi
-	[[ $KITE_KEY =~ ^[A-Za-z0-9]+$ ]] || die "a valid Kite API key is required (--kite-api-key or KITE_API_KEY)"
-
-	KITE_SECRET=${KITE_API_SECRET:-}
-	if [[ -z $KITE_SECRET && -s $CONF_DIR/kite_api_secret ]]; then
-		return
+	rm -f "$old_secret"
+	umask 022
+	KITE_CONFIGURED=0
+	if [[ -s $file ]] && grep -q '"api_key":"[A-Za-z0-9]' "$file"; then
+		KITE_CONFIGURED=1
 	fi
-	[[ -n $KITE_SECRET ]] || KITE_SECRET=$(ask "Kite Connect API secret (hidden): " 1) || true
-	[[ $KITE_SECRET =~ ^[A-Za-z0-9]+$ ]] || die "a valid Kite API secret is required (KITE_API_SECRET)"
 }
 
 fetch() {
@@ -262,12 +263,8 @@ install_config() {
 		render "$c/grafana/grafana.ini" "$CONF_DIR/grafana/grafana.ini"
 	fi
 
-	if [[ -n ${KITE_SECRET:-} ]]; then
-		printf '%s' "$KITE_SECRET" >"$CONF_DIR/kite_api_secret"
-	fi
 	cat >"$CONF_DIR/stockobs.env" <<EOF
 # Read by the stockobs-* systemd user services.
-KITE_API_KEY=$KITE_KEY
 STOCKOBS_BIND=$BIND
 STOCKOBS_PORT=$PORT
 EOF
@@ -302,12 +299,12 @@ install_units() {
 	unit grafana Grafana "\"$grafana/bin/grafana\" server \"--homepath=$grafana\" \"--config=$c/grafana/grafana.ini\"" \
 		"WorkingDirectory=$grafana
 "
-	unit exporter "Kite stock exporter" "\"$APP_DIR/bin/stock_exporter\" --web.listen-address=127.0.0.1:9101 --feed.source=kite --kite.api-key=\${KITE_API_KEY} \"--kite.api-secret-file=$c/kite_api_secret\" \"--kite.token-file=$d/kite/kite_session.json\" \"--stock.watchlist-file=$c/stock_exporter/watchlist.yml\" \"--market.holidays-file=$c/stock_exporter/holidays.yml\" \"--collector.textfile.directory=$c/stock_exporter/textfile\""
+	unit exporter "Kite stock exporter" "\"$APP_DIR/bin/stock_exporter\" --web.listen-address=127.0.0.1:9101 --feed.source=kite \"--kite.credentials-file=$c/kite_credentials.json\" \"--kite.post-login-redirect=/settings?tab=data-sources&source=kite\" \"--kite.token-file=$d/kite/kite_session.json\" \"--stock.watchlist-file=$c/stock_exporter/watchlist.yml\" \"--market.holidays-file=$c/stock_exporter/holidays.yml\" \"--collector.textfile.directory=$c/stock_exporter/textfile\""
 	unit openbb "OpenBB Platform API" "\"$APP_DIR/openbb/bin/openbb-api\"" \
 		"Environment=OPENBB_API_HOST=127.0.0.1 OPENBB_API_PORT=6900 OPENBB_AUTO_BUILD=false PYTHONUNBUFFERED=1
 WorkingDirectory=$APP_DIR/openbb
 "
-	unit home "Stock Home" "\"$APP_DIR/bin/stock_home\" --web.listen-address=127.0.0.1:8081 --prometheus.url=http://127.0.0.1:9090/prometheus --alertmanager.url=http://127.0.0.1:9093/alertmanager --grafana.url=http://127.0.0.1:3000/grafana \"--market.holidays-file=$c/stock_exporter/holidays.yml\" --openbb.url=http://127.0.0.1:6900"
+	unit home "Stock Home" "\"$APP_DIR/bin/stock_home\" --web.listen-address=127.0.0.1:8081 --prometheus.url=http://127.0.0.1:9090/prometheus --alertmanager.url=http://127.0.0.1:9093/alertmanager --grafana.url=http://127.0.0.1:3000/grafana \"--market.holidays-file=$c/stock_exporter/holidays.yml\" --openbb.url=http://127.0.0.1:6900 --exporter.url=http://127.0.0.1:9101"
 	unit portal "Portal (Caddy)" "\"$caddy/caddy\" run \"--config=$c/Caddyfile\" --adapter=caddyfile" \
 		"Environment=\"XDG_DATA_HOME=$d/caddy\" \"XDG_CONFIG_HOME=$d/caddy\"
 "
@@ -379,8 +376,26 @@ prune_vendor() {
 	done
 }
 
+# open_setup opens the Kite data source settings when a desktop browser is available.
+open_setup() {
+	local url="http://localhost:$PORT/settings?tab=data-sources&source=kite"
+	((OPEN_SETUP && START && !KITE_CONFIGURED)) || return 0
+	[[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} || -n ${WSL_DISTRO_NAME:-} ]] || return 0
+	if command -v wslview >/dev/null; then
+		wslview "$url" >/dev/null 2>&1 &
+	elif command -v xdg-open >/dev/null; then
+		xdg-open "$url" >/dev/null 2>&1 &
+	fi
+}
+
 summary() {
-	local url=http://localhost:$PORT
+	local url=http://localhost:$PORT kite
+	if ((KITE_CONFIGURED)); then
+		kite="Kite Connect: log in once per trading day at $url/exporter/login
+  (your app's redirect URL must be http://127.0.0.1:$PORT/exporter/kite/callback)"
+	else
+		kite="Next step: connect your Zerodha account in Settings → Data Sources at $url"
+	fi
 	cat <<EOF
 
 Stock Observability $RELEASE_VERSION is installed.
@@ -390,10 +405,7 @@ Stock Observability $RELEASE_VERSION is installed.
   Prometheus    $url/prometheus/
   Alertmanager  $url/alertmanager/
 
-Kite Connect:
-  1. In https://developers.kite.trade set your app's redirect URL to
-       http://127.0.0.1:$PORT/exporter/kite/callback
-  2. Log in once per trading day: $url/exporter/login
+$kite
 
 Manage:  systemctl --user {status|restart|stop} stockobs.target
 Logs:    journalctl --user -u 'stockobs-*' -f
@@ -437,6 +449,7 @@ do_install() {
 		start_services
 	fi
 	summary
+	open_setup
 }
 
 do_uninstall() {

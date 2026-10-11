@@ -38,6 +38,8 @@ type Config struct {
 	OpenBBURL      string
 	OpenBBUsername string
 	OpenBBPassword string
+	// ExporterURL is stock_exporter's base URL for Kite credential setup; empty disables it.
+	ExporterURL string
 }
 
 // Server implements the /api/v1 endpoints.
@@ -110,6 +112,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	s.registerProm(mux)
 	s.registerAM(mux)
 	s.registerIntegrations(mux)
+	s.registerKiteSetup(mux)
 	mux.HandleFunc("GET /api/v1/alerts/items", s.section("alert-items", 5*time.Second, s.alertItems))
 	mux.HandleFunc("POST /api/v1/silences", s.createSilences)
 }

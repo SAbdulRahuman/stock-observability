@@ -4,8 +4,8 @@
 #   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.ps1))) -Version v0.1.0
 #   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.ps1))) -Uninstall [-Purge]
 #
-# Kite Connect credentials are required: -KiteApiKey or KITE_API_KEY, and KITE_API_SECRET,
-# otherwise they are prompted for. Services run as Scheduled Tasks at logon of the current user.
+# Connect your Zerodha Kite account in Settings > Data Sources afterwards, or pass -KiteApiKey /
+# KITE_API_KEY and KITE_API_SECRET for unattended installs. Services run as Scheduled Tasks at logon of the current user.
 param(
     [string]$Version = 'latest',
     [string]$KiteApiKey = $env:KITE_API_KEY,
@@ -13,6 +13,7 @@ param(
     [int]$Port = 0,
     [string]$Archive = '',
     [switch]$NoStart,
+    [switch]$NoBrowser,
     [switch]$Uninstall,
     [switch]$Purge
 )
@@ -75,11 +76,6 @@ function Assert-Preflight {
     if ($drive.Free -lt 3GB) { throw "at least 3 GB free space is needed on $($drive.Name):" }
 }
 
-function ConvertFrom-Secure([Security.SecureString]$Secure) {
-    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
-    try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
-}
-
 function Get-Settings {
     $path = Join-Path $ConfDir 'settings.json'
     if (Test-Path -LiteralPath $path) { return Get-Content -Raw -LiteralPath $path | ConvertFrom-Json }
@@ -88,22 +84,25 @@ function Get-Settings {
 
 function Resolve-Settings {
     $saved = Get-Settings
-    if (-not $S.KiteApiKey -and $saved) { $S.KiteApiKey = $saved.KiteApiKey }
     if (-not $S.Listen) { $S.Listen = if ($saved) { $saved.Listen } else { '127.0.0.1' } }
     if (-not $S.Port) { $S.Port = if ($saved) { [int]$saved.Port } else { 8080 } }
     if ($S.Listen -notmatch '^[0-9a-fA-F.:]+$') { throw "invalid -Listen address: $($S.Listen)" }
 
-    if (-not $S.KiteApiKey) {
-        Write-Host "`nStock Observability needs a Zerodha Kite Connect app (https://developers.kite.trade)."
-        $S.KiteApiKey = Read-Host 'Kite Connect API key'
-    }
-    if ($S.KiteApiKey -notmatch '^[A-Za-z0-9]+$') { throw 'a valid Kite API key is required (-KiteApiKey or KITE_API_KEY)' }
-
+    # Credentials are optional: without them, configure Kite in Settings > Data Sources.
+    $credFile = Join-Path $ConfDir 'kite_credentials.json'
+    $oldSecret = Join-Path $ConfDir 'kite_api_secret'
     $S.KiteSecret = $env:KITE_API_SECRET
-    $secretFile = Join-Path $ConfDir 'kite_api_secret'
-    if (-not $S.KiteSecret -and (Test-Path -LiteralPath $secretFile)) { return }
-    if (-not $S.KiteSecret) { $S.KiteSecret = ConvertFrom-Secure (Read-Host 'Kite Connect API secret' -AsSecureString) }
-    if ($S.KiteSecret -notmatch '^[A-Za-z0-9]+$') { throw 'a valid Kite API secret is required (KITE_API_SECRET)' }
+    # Releases before 0.2.0 kept the key in settings.json and the secret in kite_api_secret.
+    if (-not $S.KiteApiKey -and -not $S.KiteSecret -and -not (Test-Path -LiteralPath $credFile) -and $saved -and $saved.KiteApiKey -and (Test-Path -LiteralPath $oldSecret)) {
+        Write-Step "Moving Kite credentials to $credFile"
+        $S.KiteApiKey = $saved.KiteApiKey
+        $S.KiteSecret = (Get-Content -Raw -LiteralPath $oldSecret).Trim()
+    }
+    if ($S.KiteApiKey -or $S.KiteSecret) {
+        if ($S.KiteApiKey -notmatch '^[A-Za-z0-9]{6,128}$') { throw 'invalid Kite API key (-KiteApiKey or KITE_API_KEY): 6-128 letters or digits' }
+        if ($S.KiteSecret -notmatch '^[A-Za-z0-9]{6,128}$') { throw 'KITE_API_SECRET must be set with the API key: 6-128 letters or digits' }
+    }
+    $S.KiteConfigured = [bool]$S.KiteApiKey -or ((Test-Path -LiteralPath $credFile) -and (Get-Content -Raw -LiteralPath $credFile) -match '"api_key"\s*:\s*"[A-Za-z0-9]')
 }
 
 function Get-Release([string]$Tmp) {
@@ -231,8 +230,12 @@ function Install-Config($Release) {
         Format-Template (Join-Path $c 'grafana\grafana.ini') $ini $password
     }
 
-    if ($S.KiteSecret) { Write-Text (Join-Path $ConfDir 'kite_api_secret') $S.KiteSecret }
-    $settings = [pscustomobject]@{ KiteApiKey = $S.KiteApiKey; Listen = $S.Listen; Port = $S.Port }
+    if ($S.KiteApiKey) {
+        $cred = [ordered]@{ api_key = $S.KiteApiKey; api_secret = $S.KiteSecret }
+        Write-Text (Join-Path $ConfDir 'kite_credentials.json') ($cred | ConvertTo-Json -Compress)
+    }
+    Remove-Item -Force -LiteralPath (Join-Path $ConfDir 'kite_api_secret') -ErrorAction SilentlyContinue
+    $settings = [pscustomobject]@{ Listen = $S.Listen; Port = $S.Port }
     Write-Text (Join-Path $ConfDir 'settings.json') ($settings | ConvertTo-Json)
 }
 
@@ -284,8 +287,8 @@ function Install-Services([string]$Prom, [string]$Am, [string]$Grafana, [string]
         grafana      = @{ exe = "$Grafana\bin\grafana.exe"; dir = $Grafana; env = @{}; args = @(
                 'server', "--homepath=$Grafana", "--config=$c\grafana\grafana.ini") }
         exporter     = @{ exe = "$bin\stock_exporter.exe"; dir = $AppDir; env = @{}; args = @(
-                '--web.listen-address=127.0.0.1:9101', '--feed.source=kite', "--kite.api-key=$($S.KiteApiKey)",
-                "--kite.api-secret-file=$c\kite_api_secret", "--kite.token-file=$d\kite\kite_session.json",
+                '--web.listen-address=127.0.0.1:9101', '--feed.source=kite',
+                "--kite.credentials-file=$c\kite_credentials.json", '--kite.post-login-redirect=/settings?tab=data-sources&source=kite', "--kite.token-file=$d\kite\kite_session.json",
                 "--stock.watchlist-file=$c\stock_exporter\watchlist.yml", "--market.holidays-file=$c\stock_exporter\holidays.yml",
                 "--collector.textfile.directory=$c\stock_exporter\textfile") }
         openbb       = @{ exe = "$venv\Scripts\openbb-api.exe"; dir = $venv; args = @()
@@ -293,7 +296,7 @@ function Install-Services([string]$Prom, [string]$Am, [string]$Grafana, [string]
         home         = @{ exe = "$bin\stock_home.exe"; dir = $AppDir; env = @{}; args = @(
                 '--web.listen-address=127.0.0.1:8081', '--prometheus.url=http://127.0.0.1:9090/prometheus',
                 '--alertmanager.url=http://127.0.0.1:9093/alertmanager', '--grafana.url=http://127.0.0.1:3000/grafana',
-                "--market.holidays-file=$c\stock_exporter\holidays.yml", '--openbb.url=http://127.0.0.1:6900') }
+                "--market.holidays-file=$c\stock_exporter\holidays.yml", '--openbb.url=http://127.0.0.1:6900', '--exporter.url=http://127.0.0.1:9101') }
         portal       = @{ exe = "$Caddy\caddy.exe"; dir = $AppDir; args = @('run', "--config=$c\Caddyfile", '--adapter=caddyfile')
             env = @{ STOCKOBS_BIND = $S.Listen; STOCKOBS_PORT = [string]$port; XDG_DATA_HOME = "$d\caddy"; XDG_CONFIG_HOME = "$d\caddy" } }
     }
@@ -370,6 +373,11 @@ function Remove-Vendor([string[]]$Keep) {
 function Show-Summary($Release) {
     $url = "http://localhost:$($S.Port)"
     $raw = "https://raw.githubusercontent.com/$Repo/main/install.ps1"
+    $kite = if ($S.KiteConfigured) {
+        "Kite Connect: log in once per trading day at $url/exporter/login`n  (your app's redirect URL must be http://127.0.0.1:$($S.Port)/exporter/kite/callback)"
+    } else {
+        "Next step: connect your Zerodha account in Settings > Data Sources at $url/settings?tab=data-sources&source=kite"
+    }
     Write-Host @"
 
 Stock Observability $($Release.Version) is installed.
@@ -379,10 +387,7 @@ Stock Observability $($Release.Version) is installed.
   Prometheus    $url/prometheus/
   Alertmanager  $url/alertmanager/
 
-Kite Connect:
-  1. In https://developers.kite.trade set your app's redirect URL to
-       http://127.0.0.1:$($S.Port)/exporter/kite/callback
-  2. Log in once per trading day: $url/exporter/login
+$kite
 
 Services start at logon (Task Scheduler, tasks $TaskPrefix*).
 Logs:    $LogDir
@@ -416,6 +421,7 @@ function Install-StockObs {
         Remove-Vendor @($prom, $am, $grafana, $caddy, $uvDir)
         if (-not $NoStart) { Start-StockObs }
         Show-Summary $release
+        if (-not $NoStart -and -not $NoBrowser -and -not $S.KiteConfigured) { Start-Process "http://localhost:$($S.Port)/settings?tab=data-sources&source=kite" }
     } finally {
         Remove-Item -Recurse -Force -LiteralPath $tmp -ErrorAction SilentlyContinue
     }
@@ -440,7 +446,7 @@ function Main {
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
     # Functions called from Main see $S through dynamic scoping (also under & scriptblock invocation).
-    $S = @{ Version = $Version; KiteApiKey = $KiteApiKey; Listen = $Listen; Port = $Port; Archive = $Archive; KiteSecret = $null }
+    $S = @{ Version = $Version; KiteApiKey = $KiteApiKey; Listen = $Listen; Port = $Port; Archive = $Archive; KiteSecret = $null; KiteConfigured = $false }
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     if ($Uninstall) { Uninstall-StockObs } else { Install-StockObs }
 }

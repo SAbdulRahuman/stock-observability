@@ -17,11 +17,8 @@ checks every file against its SHA-256 checksum, and only then installs.
 | Shell | bash with `curl`, `tar`, `sha256sum` | PowerShell |
 | Free disk | 3 GB | 3 GB |
 
-You also need a [Kite Connect](https://developers.kite.trade) app for the live market feed:
-
-1. Create the app and note its **API key** and **API secret**.
-2. Set the app's **redirect URL** to `http://127.0.0.1:8080/exporter/kite/callback`. If you install with a different
-   port, use that port here.
+You also need a [Kite Connect](https://developers.kite.trade) app for the live market feed. You can create it while
+configuring the data source after installation.
 
 ## Install
 
@@ -37,7 +34,27 @@ curl -fsSL https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/m
 irm https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.ps1 | iex
 ```
 
-The installer asks for the Kite API key and secret. To install without prompts, set them as environment variables first:
+The installer asks no questions. When it finishes, it opens **Settings → Data Sources** in your browser.
+
+## Configure your Zerodha account
+
+Open **Settings → Data Sources → Zerodha Kite Connect** at `http://localhost:8080/settings?tab=data-sources&source=kite`:
+
+1. Create a Kite Connect app in the [Kite developer console](https://developers.kite.trade/apps).
+2. Copy the redirect URL shown in Stock Home into your Kite app's **Redirect URL** field.
+3. Enter the API key and secret and select **Save credentials**. The secret is stored only on this computer, in a file
+   only your user can read, and is never shown again.
+4. Select **Test with Kite** to sign in. This completes credential verification and starts the live feed. Kite requires a new
+   sign-in each trading day.
+
+**Refresh status** checks whether credentials are saved and whether a Kite session is active. Kite verifies the API
+secret during browser sign-in. To change or remove the key and secret later,
+open **Settings → Data Sources → Zerodha Kite Connect**. For security, they
+can only be changed from the computer that runs iSee Ticks.
+
+### Unattended installs
+
+To skip opening the settings page, for example in a script, pass the key and secret as environment variables:
 
 ```bash
 export KITE_API_KEY=your-api-key KITE_API_SECRET=your-api-secret
@@ -58,8 +75,8 @@ irm https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/ins
 | `http://localhost:8080/prometheus/` | Prometheus |
 | `http://localhost:8080/alertmanager/` | Alertmanager |
 
-Log in to Kite **once per trading day** at `http://localhost:8080/exporter/login`. Kite tokens expire at 06:00 IST every
-day.
+Log in to Kite **once per trading day**. Kite tokens expire at 06:00 IST every day; a banner on the home page then links
+straight to the login.
 
 ## Options
 
@@ -70,6 +87,7 @@ day.
 | `--listen 0.0.0.0` | `-Listen 0.0.0.0` | Expose the portal on your network. Prometheus and Alertmanager have no login, so only do this on a trusted network |
 | `--archive FILE` | `-Archive FILE` | Install from a bundle you already downloaded |
 | `--no-start` | `-NoStart` | Install without starting the services |
+| `--no-browser` | `-NoBrowser` | Don't open Data Sources settings after installing |
 | `--uninstall` | `-Uninstall` | Remove the services and programs, keep config and data |
 | `--uninstall --purge` | `-Uninstall -Purge` | Also delete config and data |
 

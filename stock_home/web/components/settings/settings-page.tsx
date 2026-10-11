@@ -3,6 +3,7 @@
 import { Archive, Bell, Database, LayoutDashboard, Monitor, Plug, Settings, TriangleAlert, TrendingUp } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
+import { DataSourcesPage } from "@/components/settings/data-sources-page";
 import { cn } from "@/lib/utils";
 import { BackupCard, DangerCard } from "./backup";
 import { ApplicationCard, DashboardCard, DisplayCard, IntegrationsCard, MarketCard, type Notify, NotificationCard, RetentionCard } from "./cards";
@@ -13,7 +14,7 @@ const ALL: CardId[] = ["application", "market", "display", "notifications", "das
 /** The wireframe details only General; the other tabs show the General cards that belong to them. */
 const TABS: { id: string; label: string; cards: CardId[] }[] = [
   { id: "general", label: "General", cards: ALL },
-  { id: "data-sources", label: "Data Sources", cards: ["market", "integrations", "retention"] },
+  { id: "data-sources", label: "Data Sources", cards: [] },
   { id: "alert-rules", label: "Alert Rules", cards: ["notifications", "retention", "backup"] },
   { id: "watchlist", label: "Watchlist", cards: ["backup"] },
   { id: "preferences", label: "User Preferences", cards: ["application", "display", "dashboard"] },
@@ -74,8 +75,8 @@ export function SettingsPage() {
         ))}
       </div>
 
-      <section role="tabpanel" aria-label={`${tab.label} settings`} className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {tab.cards.map((id) => card[id])}
+      <section role="tabpanel" aria-label={`${tab.label} settings`}>
+        {tab.id === "data-sources" ? <DataSourcesPage notify={notify} /> : <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">{tab.cards.map((id) => card[id])}</div>}
       </section>
     </main>
   );

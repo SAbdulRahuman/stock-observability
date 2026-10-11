@@ -173,7 +173,8 @@ describe("SettingsPage", () => {
     const calls = renderPage("tab=integrations");
     const c = card("API & Integration Settings");
     expect(await within(c).findByText("Prometheus")).toBeInTheDocument();
-    expect(within(c).getAllByText("Configured")).toHaveLength(2);
+    expect(within(c).getAllByText("Configured")).toHaveLength(1);
+    expect(within(c).getByRole("link", { name: "Data Sources" })).toHaveAttribute("href", "/settings?tab=data-sources&source=kite");
     fireEvent.click(within(c).getByRole("button", { name: "Test Prometheus" }));
     expect(await within(c).findByText("Connected")).toBeInTheDocument();
     expect(within(c).getByText(/Prometheus is ready · 12 ms · checked/)).toBeInTheDocument();

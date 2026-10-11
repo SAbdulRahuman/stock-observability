@@ -57,6 +57,7 @@ func (s *Server) status(ctx context.Context) (any, error) {
 	st.Market.SecondsToClose = q.scalar(`max(stock_market_seconds_to_close)`)
 	exporterUp := q.scalar(`min(up{job=~"stock_core|stock_broad"})`)
 	session := q.scalar(`max(stock_kite_session_valid)`)
+	creds := q.scalar(`max(stock_kite_credentials_configured)`)
 	feed := q.vector(`max by (source) (stock_feed_info)`)
 	stale := q.scalar(`max(market:stale_core_instruments:ratio)`)
 
@@ -76,7 +77,7 @@ func (s *Server) status(ctx context.Context) (any, error) {
 		if len(feed) > 0 {
 			st.Market.FeedSource = feed[0].Labels["source"]
 		}
-		st.Banners = append(st.Banners, feedBanners(exporterUp, session, stale, st.Market)...)
+		st.Banners = append(st.Banners, feedBanners(exporterUp, session, creds, stale, st.Market)...)
 	}
 
 	if b := s.alertBanner(ctx); b != nil {
@@ -85,7 +86,7 @@ func (s *Server) status(ctx context.Context) (any, error) {
 	return st, nil
 }
 
-func feedBanners(exporterUp, session, stale *float64, m MarketClock) []Banner {
+func feedBanners(exporterUp, session, creds, stale *float64, m MarketClock) []Banner {
 	var out []Banner
 	if exporterUp == nil || *exporterUp == 0 {
 		return append(out, Banner{
@@ -94,7 +95,14 @@ func feedBanners(exporterUp, session, stale *float64, m MarketClock) []Banner {
 			Action:  &Link{Label: "Scrape targets", Href: "/prometheus/targets"},
 		})
 	}
-	if m.FeedSource == "kite" && !isOne(session) {
+	// Older exporters do not export the credentials metric; treat that as configured.
+	if m.FeedSource == "kite" && creds != nil && *creds == 0 {
+		out = append(out, Banner{
+			Level: "warning", Title: "Connect your Zerodha account",
+			Message: "Add your Kite Connect API key and secret to stream live market data.",
+			Action:  &Link{Label: "Configure Kite", Href: "/settings?tab=data-sources&source=kite"},
+		})
+	} else if m.FeedSource == "kite" && !isOne(session) {
 		level := "warning"
 		if m.TradingDay {
 			level = "critical"

@@ -6,7 +6,7 @@
   "grafana" (list 3000 (list "portal" "stock-home"))
   "prometheus" (list 9090 (list "portal" "grafana" "stock-home"))
   "alertmanager" (list 9093 (list "portal" "grafana" "prometheus" "stock-home"))
-  "stock-exporter" (list 9101 (list "portal" "prometheus"))
+  "stock-exporter" (list 9101 (list "portal" "prometheus" "stock-home"))
 }}
 {{- if .Values.home.enabled }}
 {{- $_ := set $policies "stock-home" (list 8080 (list "portal")) }}

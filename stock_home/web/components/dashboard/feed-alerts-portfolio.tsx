@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Bell, Briefcase, LogIn } from "lucide-react";
+import { Activity, Bell, Briefcase, KeyRound, LogIn } from "lucide-react";
 import { Money } from "@/components/privacy";
 import { Badge, severityVariant } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,14 +26,21 @@ export function FeedHealth() {
             <div className="flex items-center gap-2">
               <StatusDot ok={kite ? f.sessionValid : true} />
               <span className="font-medium">
-                {kite ? (f.sessionValid ? "Kite session active" : "Kite session expired") : `Source: ${f.source || "unknown"}`}
+                {kite ? (f.credentialsMissing ? "Kite not set up" : f.sessionValid ? "Kite session active" : "Kite session expired") : `Source: ${f.source || "unknown"}`}
               </span>
               {f.mode && <Badge variant="outline" className="ml-auto">{f.mode}</Badge>}
             </div>
             {kite && f.sessionValid && f.sessionExpiresAt && (
               <p className="text-xs text-muted-foreground">Valid until {formatTimeIST(f.sessionExpiresAt)} IST</p>
             )}
-            {kite && !f.sessionValid && (
+            {kite && f.credentialsMissing && (
+              <Button asChild size="sm" className="w-full">
+                <a href="/settings?tab=data-sources&source=kite">
+                  <KeyRound /> Configure Kite
+                </a>
+              </Button>
+            )}
+            {kite && !f.sessionValid && !f.credentialsMissing && (
               <Button asChild size="sm" variant="critical" className="w-full">
                 <a href="/exporter/login">
                   <LogIn /> Log in to Kite

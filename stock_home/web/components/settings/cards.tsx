@@ -241,7 +241,7 @@ export function IntegrationsCard({ icon }: { icon: React.ComponentType<{ classNa
         <p className="text-muted-foreground">Loading…</p>
       ) : (
         <ul className="divide-y">
-          {list.data.data.map((i) => {
+          {list.data.data.filter((i) => i.id !== "kite").map((i) => {
             const r = results[i.id];
             const done = r && r !== "running" && !("error" in r) ? r : undefined;
             const badge = done ? testBadge[done.status] : i.configured ? { label: "Configured", variant: "info" as BadgeVariant } : testBadge.not_configured;
@@ -287,6 +287,9 @@ export function IntegrationsCard({ icon }: { icon: React.ComponentType<{ classNa
           })}
         </ul>
       )}
+      <p className="text-xs text-muted-foreground">
+        Kite Connect is configured under <Link href="/settings?tab=data-sources&source=kite" className="text-primary underline-offset-2 hover:underline">Data Sources</Link>.
+      </p>
       <p className="text-xs text-muted-foreground">Endpoints and credentials are set in the stock_home deployment; secrets are never sent to the browser.</p>
     </SettingsCard>
   );

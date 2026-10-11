@@ -64,7 +64,7 @@ func (s *Server) integrations() []Integration {
 	}
 	return []Integration{
 		{ID: "kite", Name: "Zerodha Kite API", Configured: true, Auth: "credentials are held by stock_exporter",
-			Note: "stock_home does not call Kite; the status comes from stock_exporter metrics in Prometheus."},
+			Note: "Set the API key and secret in the Kite Connect card. The status comes from stock_exporter metrics in Prometheus."},
 		ob,
 		{ID: "prometheus", Name: "Prometheus", Configured: s.cfg.PrometheusURL != "", Endpoint: redactURL(s.cfg.PrometheusURL), Auth: "none"},
 		{ID: "alertmanager", Name: "Alertmanager", Configured: s.cfg.AlertmanagerURL != "", Endpoint: redactURL(s.cfg.AlertmanagerURL), Auth: "none"},

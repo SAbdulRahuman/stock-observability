@@ -44,6 +44,7 @@ spec:
             - --market.indices={{ join "," $v.indices }}
             - --market.holidays-file=/etc/stock-home/holidays.yml
             - --query.timeout={{ $v.queryTimeout }}
+            - --exporter.url=http://{{ include "so.fullname" (list . "stock-exporter") }}:9101
             {{- if .Values.openbb.enabled }}
             - --openbb.url=http://{{ include "so.fullname" (list . "openbb") }}:8080
             - --openbb.timeout={{ $v.openbbTimeout }}

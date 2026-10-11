@@ -45,6 +45,7 @@ func main() {
 		timeout      = flag.Duration("query.timeout", 10*time.Second, "Timeout for one section refresh.")
 		openbbURL    = flag.String("openbb.url", "", "OpenBB Platform API base URL; /api/v2 commands without a native port are forwarded there. Empty disables. Credentials: env STOCK_HOME_OPENBB_USERNAME, STOCK_HOME_OPENBB_PASSWORD.")
 		openbbTO     = flag.Duration("openbb.timeout", 30*time.Second, "Timeout for one command forwarded to OpenBB.")
+		exporterURL  = flag.String("exporter.url", "", "stock_exporter base URL for setting up Kite credentials from Settings, e.g. http://127.0.0.1:9101. Empty disables.")
 		showVersion  = flag.Bool("version", false, "Print version and exit.")
 	)
 	flag.Parse()
@@ -59,13 +60,13 @@ func main() {
 		Password: os.Getenv("STOCK_HOME_OPENBB_PASSWORD"),
 		Timeout:  *openbbTO,
 	}
-	if err := run(logger, *listen, *promURL, *amURL, *grafanaURL, *indices, *sectorIdx, *holidaysFile, *tz, *exchange, *session, *timeout, *amSilences, ob); err != nil {
+	if err := run(logger, *listen, *promURL, *amURL, *grafanaURL, *indices, *sectorIdx, *holidaysFile, *tz, *exchange, *session, *timeout, *amSilences, ob, trim(*exporterURL)); err != nil {
 		logger.Error("Exiting", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, sectorIdx, holidaysFile, tz, exchange, session string, timeout time.Duration, amSilences bool, ob openbb.Config) error {
+func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, sectorIdx, holidaysFile, tz, exchange, session string, timeout time.Duration, amSilences bool, ob openbb.Config, exporterURL string) error {
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
 		return err
@@ -110,6 +111,7 @@ func run(logger *slog.Logger, listen, promURL, amURL, grafanaURL, indices, secto
 		OpenBBURL:       trim(ob.URL),
 		OpenBBUsername:  ob.Username,
 		OpenBBPassword:  ob.Password,
+		ExporterURL:     exporterURL,
 	}, prom, source.NewAlertmanager(trim(amURL), client), client, logger, reg)
 
 	mux := http.NewServeMux()

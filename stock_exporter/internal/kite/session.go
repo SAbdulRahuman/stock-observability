@@ -71,6 +71,8 @@ type Session struct {
 	health    *store.Health
 	logger    *slog.Logger
 	now       func() time.Time
+	// postLogin, if set, is where the browser goes after the callback instead of a plain-text page.
+	postLogin string
 
 	token   string
 	userID  string
@@ -134,14 +136,19 @@ func (s *Session) load() error {
 }
 
 func (s *Session) persist(p persistedToken) error {
-	if err := os.MkdirAll(filepath.Dir(s.tokenPath), 0o700); err != nil {
-		return err
-	}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(s.tokenPath), ".kite-token-*")
+	return writePrivateFile(s.tokenPath, b)
+}
+
+// writePrivateFile atomically replaces path with b, readable only by the owner.
+func writePrivateFile(path string, b []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".kite-*")
 	if err != nil {
 		return err
 	}
@@ -157,7 +164,7 @@ func (s *Session) persist(p persistedToken) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), s.tokenPath)
+	return os.Rename(tmp.Name(), path)
 }
 
 // Token returns the access token if one is present and not expired.
@@ -168,6 +175,17 @@ func (s *Session) Token() (string, bool) {
 		return "", false
 	}
 	return s.token, true
+}
+
+// Info reports whether the session is valid, for which user, and when it expires.
+func (s *Session) Info() (valid bool, userID string, expiry time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	valid = s.token != "" && s.now().Before(s.expiry)
+	if !valid {
+		return false, "", time.Time{}
+	}
+	return true, s.userID, s.expiry
 }
 
 // Changed is signalled whenever the token is set or invalidated.
@@ -265,26 +283,25 @@ func (s *Session) LoginHandler() http.Handler {
 // CallbackHandler is the Kite redirect URL. It validates state and exchanges the request token.
 func (s *Session) CallbackHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		q := r.URL.Query()
 		if !s.consumeState(q.Get("state")) {
-			http.Error(w, "invalid or expired login state; start again at /login", http.StatusBadRequest)
+			s.fail(w, r, "state", "invalid or expired login state; start again at /login", http.StatusBadRequest)
 			return
 		}
 		if q.Get("status") != "success" {
-			http.Error(w, "Kite login was not successful", http.StatusBadRequest)
+			s.fail(w, r, "cancelled", "Kite login was not successful", http.StatusBadRequest)
 			return
 		}
 		rt := q.Get("request_token")
 		if !requestTokenRe.MatchString(rt) {
-			http.Error(w, "invalid request_token", http.StatusBadRequest)
+			s.fail(w, r, "state", "invalid request_token", http.StatusBadRequest)
 			return
 		}
 		sess, err := s.auth.GenerateSession(rt, s.apiSecret)
 		if err != nil {
 			s.logger.Error("Kite session exchange failed", "err", err)
-			http.Error(w, "session exchange with Kite failed; see exporter logs", http.StatusBadGateway)
+			s.fail(w, r, "exchange", "session exchange with Kite failed; see exporter logs", http.StatusBadGateway)
 			return
 		}
 		login := s.now()
@@ -298,6 +315,31 @@ func (s *Session) CallbackHandler() http.Handler {
 		s.publishHealth()
 		s.notify()
 		s.logger.Info("Kite session established", "user_id", p.UserID, "expires_at", p.ExpiresAt)
+		if s.postLogin != "" {
+			http.Redirect(w, r, withQuery(s.postLogin, "kite", "connected"), http.StatusSeeOther)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		fmt.Fprintf(w, "Kite session established for %s, valid until %s.\n", p.UserID, p.ExpiresAt.Format(time.RFC1123))
 	})
+}
+
+// fail reports a callback error as text, or as ?kite_error=code on the post-login page.
+func (s *Session) fail(w http.ResponseWriter, r *http.Request, code, msg string, status int) {
+	if s.postLogin != "" {
+		http.Redirect(w, r, withQuery(s.postLogin, "kite_error", code), http.StatusSeeOther)
+		return
+	}
+	http.Error(w, msg, status)
+}
+
+func withQuery(target, key, value string) string {
+	u, err := url.Parse(target)
+	if err != nil {
+		return target
+	}
+	q := u.Query()
+	q.Set(key, value)
+	u.RawQuery = q.Encode()
+	return u.String()
 }

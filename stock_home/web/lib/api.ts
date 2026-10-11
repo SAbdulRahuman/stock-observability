@@ -47,6 +47,7 @@ const schemas = {
     source: z.string(),
     mode: z.string(),
     sessionValid: z.boolean(),
+    credentialsMissing: z.boolean().optional(),
     sessionExpiresAt: z.string().nullish(),
     connections: num,
     subscribed: num,
