@@ -179,11 +179,7 @@ vendor() {
 		verify "$file" "$(manifest "${key}_LINUX_SHA256")"
 		rm -rf "$dir"
 		mkdir -p "$dir"
-		if [[ $name == caddy ]]; then
-			tar -C "$dir" -xzf "$file"
-		else
-			tar -C "$dir" -xzf "$file" --strip-components=1
-		fi
+		tar -C "$dir" -xzf "$file" --strip-components=1
 		touch "$dir/.complete"
 	fi
 	printf '%s' "$dir"
@@ -212,8 +208,11 @@ install_openbb() {
 sed_escape() { printf '%s' "$1" | sed 's/[\\&|]/\\&/g'; }
 
 render() {
+	local portal_bind=$BIND
+	[[ $portal_bind == *:* ]] && portal_bind="[$portal_bind]"
 	sed -e "s|@CONFIG_DIR@|$(sed_escape "$CONF_DIR")|g" \
 		-e "s|@DATA_DIR@|$(sed_escape "$DATA_DIR")|g" \
+		-e "s|@PORTAL_BIND@|$(sed_escape "$portal_bind")|g" \
 		-e "s|@PORTAL_PORT@|$PORT|g" \
 		-e "s|@GRAFANA_ADMIN_PASSWORD@|${GRAFANA_PASSWORD:-}|g" "$1" >"$2"
 }
@@ -240,12 +239,13 @@ install_config() {
 	log "Writing configuration to $CONF_DIR"
 	umask 077
 	mkdir -p "$CONF_DIR"/{prometheus,alertmanager,grafana/provisioning/datasources,grafana/provisioning/dashboards,stock_exporter} \
-		"$DATA_DIR"/{prometheus,alertmanager,grafana,kite,caddy}
+		"$DATA_DIR"/{prometheus,alertmanager,grafana,kite,nginx/logs,nginx/client_body_temp,nginx/proxy_temp}
 
 	keep_user_file "$c/prometheus/prometheus.yml" "$CONF_DIR/prometheus/prometheus.yml"
 	keep_user_file "$c/alertmanager/alertmanager.yml" "$CONF_DIR/alertmanager/alertmanager.yml"
 	keep_user_file "$c/stock_exporter/watchlist.yml" "$CONF_DIR/stock_exporter/watchlist.yml"
-	keep_user_file "$c/Caddyfile" "$CONF_DIR/Caddyfile"
+	render "$c/nginx.conf" "$TMP/nginx.conf"
+	keep_user_file "$TMP/nginx.conf" "$CONF_DIR/nginx.conf"
 
 	replace_dir "$c/prometheus/rules" "$CONF_DIR/prometheus/rules"
 	replace_dir "$c/alertmanager/templates" "$CONF_DIR/alertmanager/templates"
@@ -291,7 +291,7 @@ EOF
 }
 
 install_units() {
-	local prom=$1 am=$2 grafana=$3 caddy=$4 c=$CONF_DIR d=$DATA_DIR
+	local prom=$1 am=$2 grafana=$3 c=$CONF_DIR d=$DATA_DIR
 	log "Installing systemd user services"
 	mkdir -p "$UNIT_DIR"
 	unit prometheus Prometheus "\"$prom/prometheus\" \"--config.file=$c/prometheus/prometheus.yml\" \"--storage.tsdb.path=$d/prometheus\" --web.listen-address=127.0.0.1:9090 --web.external-url=http://localhost:\${STOCKOBS_PORT}/prometheus/ --web.route-prefix=/prometheus --web.enable-lifecycle"
@@ -305,9 +305,7 @@ install_units() {
 WorkingDirectory=$APP_DIR/openbb
 "
 	unit home "Stock Home" "\"$APP_DIR/bin/stock_home\" --web.listen-address=127.0.0.1:8081 --prometheus.url=http://127.0.0.1:9090/prometheus --alertmanager.url=http://127.0.0.1:9093/alertmanager --grafana.url=http://127.0.0.1:3000/grafana \"--market.holidays-file=$c/stock_exporter/holidays.yml\" --openbb.url=http://127.0.0.1:6900 --exporter.url=http://127.0.0.1:9101"
-	unit portal "Portal (Caddy)" "\"$caddy/caddy\" run \"--config=$c/Caddyfile\" --adapter=caddyfile" \
-		"Environment=\"XDG_DATA_HOME=$d/caddy\" \"XDG_CONFIG_HOME=$d/caddy\"
-"
+	unit portal "Portal (nginx)" "\"$APP_DIR/bin/nginx\" -p \"$d/nginx/\" -c \"$c/nginx.conf\""
 	cat >"$UNIT_DIR/stockobs.target" <<EOF
 [Unit]
 Description=Stock Observability
@@ -468,22 +466,21 @@ do_install() {
 	trap 'rm -rf "$TMP"' EXIT
 	download_release
 	log "Installing Stock Observability $RELEASE_VERSION into $APP_DIR"
-	local prom am grafana caddy uv_dir
+	local prom am grafana uv_dir
 	prom=$(vendor prometheus)
 	am=$(vendor alertmanager)
 	grafana=$(vendor grafana)
-	caddy=$(vendor caddy)
 	uv_dir=$(vendor uv)
 	UV=$uv_dir/uv
 
 	stop_services
 	check_ports
 	mkdir -p "$APP_DIR/bin"
-	install -m 0755 "$REL/bin/stock_exporter" "$REL/bin/stock_home" "$APP_DIR/bin/"
+	install -m 0755 "$REL/bin/stock_exporter" "$REL/bin/stock_home" "$REL/bin/nginx" "$APP_DIR/bin/"
 	install_openbb
 	install_config
-	install_units "$prom" "$am" "$grafana" "$caddy"
-	prune_vendor "$prom" "$am" "$grafana" "$caddy" "$uv_dir"
+	install_units "$prom" "$am" "$grafana"
+	prune_vendor "$prom" "$am" "$grafana" "$uv_dir"
 
 	if ((START)); then
 		start_services

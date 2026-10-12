@@ -29,7 +29,7 @@ Nothing is compiled inside Docker. The Dockerfiles only copy prebuilt binaries o
 
 ## Install on a workstation (Linux, Windows)
 
-The installer downloads the **latest published GitHub release** (`latest`) and installs the whole stack for the current user, without root/admin rights or Docker: stock_exporter, stock_home, Prometheus, Alertmanager, Grafana, OpenBB and a Caddy portal at http://localhost:8080. Run the command for your OS:
+The installer downloads the **latest published GitHub release** (`latest`) and installs the whole stack for the current user, without root/admin rights or Docker: stock_exporter, stock_home, Prometheus, Alertmanager, Grafana, OpenBB and an Nginx portal at http://localhost:8080. The release bundles a static Linux Nginx binary and the official Windows Nginx binary. Run the command for your OS:
 
 Linux (x86_64 with systemd):
 
@@ -49,9 +49,9 @@ After installation, open http://localhost:8080. For live market data, configure 
 
 Options: Linux supports `--kite-api-key` (or `KITE_API_KEY` with `KITE_API_SECRET`), `--port`, `--listen`, `--no-start`, `--no-browser`, `--archive`, `--uninstall` and `--purge` (with `--uninstall`), passed after `bash -s --`. Windows supports the corresponding `-KiteApiKey`, `-Port`, `-Listen`, `-NoStart`, `-NoBrowser`, `-Archive`, `-Uninstall` and `-Purge` parameters. For example, append `--no-start` to the Linux command above, or `-NoStart` after the Windows scriptblock invocation.
 
-Linux: programs and data are in `~/.local/share/stock-observability`, config in `~/.config/stock-observability`, and services are managed with `systemctl --user` (`stockobs.target`). Windows: files are in `%LOCALAPPDATA%\StockObservability`; services are Scheduled Tasks named `StockObservability-*` and start at user logon. On either OS, edits to `prometheus.yml`, `alertmanager.yml`, `watchlist.yml` and `Caddyfile` are kept during upgrades; changed defaults are written alongside as `.new` files.
+Linux: programs and data are in `~/.local/share/stock-observability`, config in `~/.config/stock-observability`, and services are managed with `systemctl --user` (`stockobs.target`). Windows: files are in `%LOCALAPPDATA%\StockObservability`; services are Scheduled Tasks named `StockObservability-*` and start at user logon. On either OS, edits to `prometheus.yml`, `alertmanager.yml`, `watchlist.yml` and `nginx.conf` are kept during upgrades; changed defaults are written alongside as `.new` files. Existing Caddy installations keep their old `Caddyfile`, but Nginx no longer reads it; move any custom portal routes to `nginx.conf`.
 
-Releases are built by [.github/workflows/release.yml](.github/workflows/release.yml) on `v*` tags (`make dist-native` locally). Third-party downloads are pinned with sha256 in [deploy/native/manifest.env](deploy/native/manifest.env).
+Releases are built by [.github/workflows/release.yml](.github/workflows/release.yml) on `v*` tags (`make dist-native` locally). Local release builds also need `gcc`, `make`, `libpcre2-dev`, `strip`, `curl` and `unzip`. Third-party binaries are pinned by SHA-256 and the Nginx source by commit in [deploy/native/manifest.env](deploy/native/manifest.env).
 
 ## Repository layout
 

@@ -3,7 +3,7 @@
 #   stock-observability_linux_amd64.tar.gz, stock-observability_windows_amd64.zip,
 #   install.sh, install.ps1, checksums.txt
 # plus standalone <component>-<version>.<os>-<arch> archives of stock_exporter, stock_home and stock_website.
-# Needs go, npm (stock_home UI), uv (OpenBB wheels), python3 and the OpenBB/OpenBB submodule.
+# Needs gcc, make, libpcre2-dev, strip, curl, unzip, go, npm (stock_home UI), uv (OpenBB wheels), python3 and OpenBB/OpenBB.
 # SKIP_WEB=1 reuses existing stock_home/ui/dist and website/ui/dist builds; SKIP_STANDALONE=1 skips the standalone archives.
 set -euo pipefail
 
@@ -16,6 +16,9 @@ OPENBB_PLATFORM=$ROOT/OpenBB/OpenBB/openbb_platform
 REVISION=$(git -C "$ROOT" rev-parse --short HEAD)
 SITE_URL=${SITE_URL:-https://iseeticks.com}
 PLATFORMS=(linux/amd64 windows/amd64)
+set -a
+. "$NATIVE/manifest.env"
+set +a
 
 # Same package set as deploy/openbb/Dockerfile (OPENBB_PACKAGES).
 OPENBB_PACKAGES=(
@@ -30,6 +33,12 @@ OPENBB_PACKAGES=(
 
 log() { printf '==> %s\n' "$*" >&2; }
 
+fetch_pinned() {
+	local url=$1 sha=$2 dest=$3
+	curl -fsSL --retry 3 -o "$dest" "$url"
+	printf '%s  %s\n' "$sha" "$dest" | sha256sum -c --quiet -
+}
+
 rm -rf "$WORK" "$OUT"
 mkdir -p "$WORK" "$OUT"
 
@@ -38,6 +47,25 @@ if [[ ${SKIP_WEB:-0} != 1 ]]; then
 	make -C "$ROOT/stock_home" web
 fi
 [[ -f $ROOT/stock_home/ui/dist/index.html ]] || { echo "stock_home/ui/dist is empty: build the UI first" >&2; exit 1; }
+
+log "Building static Nginx $NGINX_VERSION"
+nginx_src=$WORK/nginx-source
+git clone --quiet --depth 1 --branch "release-$NGINX_VERSION" https://github.com/nginx/nginx.git "$nginx_src"
+[[ $(git -C "$nginx_src" rev-parse HEAD) == "$NGINX_SOURCE_COMMIT" ]] || {
+	echo "Nginx source tag does not match the pinned commit" >&2
+	exit 1
+}
+(
+	cd "$nginx_src"
+	./auto/configure --prefix=/ --without-http_gzip_module --with-cc-opt=-static --with-ld-opt=-static
+	make -j"${JOBS:-2}"
+)
+strip "$nginx_src/objs/nginx"
+mkdir -p "$WORK/nginx-static" "$WORK/nginx-windows"
+cp "$nginx_src/objs/nginx" "$WORK/nginx-static/nginx"
+nginx_windows_zip=$WORK/nginx-windows.zip
+fetch_pinned "$NGINX_WINDOWS_URL" "$NGINX_WINDOWS_SHA256" "$nginx_windows_zip"
+unzip -q "$nginx_windows_zip" -d "$WORK/nginx-windows"
 
 log "Building OpenBB wheels"
 [[ -d $OPENBB_PLATFORM/core ]] || { echo "OpenBB/OpenBB submodule is not checked out" >&2; exit 1; }
@@ -59,7 +87,7 @@ stage_config() {
 	cp "$ROOT/stock_exporter/examples/watchlist.yml" "$c/stock_exporter/"
 	cp "$ROOT/stock_exporter/examples/holidays-nse-2026.yml" "$c/stock_exporter/holidays.yml"
 	cp "$ROOT"/deploy/stock_exporter/textfile/*.prom "$c/stock_exporter/textfile/"
-	cp "$NATIVE/Caddyfile" "$c/"
+	cp "$NATIVE/nginx.conf" "$c/"
 }
 
 for os in linux windows; do
@@ -78,6 +106,11 @@ for os in linux windows; do
 	cp -R "$WORK/wheels" "$stage/openbb/"
 	cp "$NATIVE/manifest.env" "$stage/"
 	printf '%s\n' "$VERSION" >"$stage/VERSION"
+	if [[ $os == linux ]]; then
+		cp "$WORK/nginx-static/nginx" "$stage/bin/nginx"
+	else
+		cp "$WORK/nginx-windows/nginx-$NGINX_VERSION/nginx.exe" "$stage/bin/nginx.exe"
+	fi
 done
 
 log "Packaging $VERSION"

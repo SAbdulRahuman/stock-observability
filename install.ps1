@@ -179,8 +179,10 @@ function Install-OpenBB($Release, [string]$Uv) {
 # Forward slashes: these paths are written into YAML and INI files.
 function Format-Template([string]$Src, [string]$Dst, [string]$Password = '') {
     $text = [IO.File]::ReadAllText($Src)
+    $portalBind = $S.Listen
+    if ($portalBind.Contains(':')) { $portalBind = "[$portalBind]" }
     $text = $text.Replace('@CONFIG_DIR@', ($ConfDir -replace '\\', '/')).Replace('@DATA_DIR@', ($DataDir -replace '\\', '/'))
-    $text = $text.Replace('@PORTAL_PORT@', [string]$S.Port).Replace('@GRAFANA_ADMIN_PASSWORD@', $Password)
+    $text = $text.Replace('@PORTAL_BIND@', $portalBind).Replace('@PORTAL_PORT@', [string]$S.Port).Replace('@GRAFANA_ADMIN_PASSWORD@', $Password)
     Write-Text $Dst $text
 }
 
@@ -205,14 +207,18 @@ function Install-Config($Release) {
     foreach ($d in @('prometheus', 'alertmanager', 'grafana\provisioning\datasources', 'grafana\provisioning\dashboards', 'stock_exporter')) {
         New-Item -ItemType Directory -Force -Path (Join-Path $ConfDir $d) | Out-Null
     }
-    foreach ($d in @('prometheus', 'alertmanager', 'grafana', 'kite', 'caddy')) {
+    foreach ($d in @('prometheus', 'alertmanager', 'grafana', 'kite', 'nginx\logs', 'nginx\client_body_temp', 'nginx\proxy_temp')) {
         New-Item -ItemType Directory -Force -Path (Join-Path $DataDir $d) | Out-Null
     }
     New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
-    foreach ($f in @('prometheus\prometheus.yml', 'alertmanager\alertmanager.yml', 'stock_exporter\watchlist.yml', 'Caddyfile')) {
+    foreach ($f in @('prometheus\prometheus.yml', 'alertmanager\alertmanager.yml', 'stock_exporter\watchlist.yml')) {
         Copy-UserFile (Join-Path $c $f) (Join-Path $ConfDir $f)
     }
+    $nginxDefault = Join-Path $AppDir 'nginx.conf.default'
+    Format-Template (Join-Path $c 'nginx.conf') $nginxDefault
+    Copy-UserFile $nginxDefault (Join-Path $ConfDir 'nginx.conf')
+    Remove-Item -Force -LiteralPath $nginxDefault
     foreach ($d in @('prometheus\rules', 'alertmanager\templates', 'grafana\dashboards', 'stock_exporter\textfile')) {
         Copy-Dir (Join-Path $c $d) (Join-Path $ConfDir $d)
     }
@@ -270,13 +276,14 @@ while ($true) {
 }
 '@
 
-function Install-Services([string]$Prom, [string]$Am, [string]$Grafana, [string]$Caddy) {
+function Install-Services([string]$Prom, [string]$Am, [string]$Grafana) {
     Write-Step 'Registering Scheduled Tasks'
     $c = $ConfDir
     $d = $DataDir
     $bin = Join-Path $AppDir 'bin'
     $venv = Join-Path $AppDir 'openbb'
     $port = $S.Port
+    $nginxPrefix = ((Join-Path $d 'nginx') -replace '\\', '/') + '/'
     $defs = [ordered]@{
         prometheus   = @{ exe = "$Prom\prometheus.exe"; dir = $Prom; env = @{}; args = @(
                 "--config.file=$c\prometheus\prometheus.yml", "--storage.tsdb.path=$d\prometheus", '--web.listen-address=127.0.0.1:9090',
@@ -297,8 +304,7 @@ function Install-Services([string]$Prom, [string]$Am, [string]$Grafana, [string]
                 '--web.listen-address=127.0.0.1:8081', '--prometheus.url=http://127.0.0.1:9090/prometheus',
                 '--alertmanager.url=http://127.0.0.1:9093/alertmanager', '--grafana.url=http://127.0.0.1:3000/grafana',
                 "--market.holidays-file=$c\stock_exporter\holidays.yml", '--openbb.url=http://127.0.0.1:6900', '--exporter.url=http://127.0.0.1:9101') }
-        portal       = @{ exe = "$Caddy\caddy.exe"; dir = $AppDir; args = @('run', "--config=$c\Caddyfile", '--adapter=caddyfile')
-            env = @{ STOCKOBS_BIND = $S.Listen; STOCKOBS_PORT = [string]$port; XDG_DATA_HOME = "$d\caddy"; XDG_CONFIG_HOME = "$d\caddy" } }
+        portal       = @{ exe = "$bin\nginx.exe"; dir = $AppDir; args = @('-p', $nginxPrefix, '-c', "$c\nginx.conf"); env = @{} }
     }
     foreach ($name in $defs.Keys) { $defs[$name].kill = @($defs[$name].exe) }
     # The venv launcher starts the uv-managed interpreter as a child process.
@@ -464,7 +470,6 @@ function Install-StockObs {
         $prom = Install-Vendor $release 'prometheus' $tmp
         $am = Install-Vendor $release 'alertmanager' $tmp
         $grafana = Install-Vendor $release 'grafana' $tmp
-        $caddy = Install-Vendor $release 'caddy' $tmp
         $uvDir = Install-Vendor $release 'uv' $tmp
 
         Stop-StockObs
@@ -474,8 +479,8 @@ function Install-StockObs {
         Copy-Item -Force -Path (Join-Path $release.Dir 'bin\*.exe') -Destination $bin
         Install-OpenBB $release (Join-Path $uvDir 'uv.exe')
         Install-Config $release
-        Install-Services $prom $am $grafana $caddy
-        Remove-Vendor @($prom, $am, $grafana, $caddy, $uvDir)
+        Install-Services $prom $am $grafana
+        Remove-Vendor @($prom, $am, $grafana, $uvDir)
         if (-not $NoStart) { Start-StockObs }
         Show-Summary $release
         if (-not $NoStart -and -not $NoBrowser -and -not $S.KiteConfigured) { Start-Process "http://localhost:$($S.Port)/settings?tab=data-sources&source=kite" }

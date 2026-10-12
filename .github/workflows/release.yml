@@ -41,11 +41,14 @@ jobs:
 
       - uses: astral-sh/setup-uv@v6
 
+      - name: Install Nginx build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libpcre2-dev
+
       - name: Verify pinned upstream downloads
         run: |
           set -a; . deploy/native/manifest.env; set +a
           mkdir -p /tmp/upstream
-          for c in PROMETHEUS ALERTMANAGER GRAFANA CADDY UV; do
+          for c in PROMETHEUS ALERTMANAGER GRAFANA UV; do
             for os in LINUX WINDOWS; do
               url=${c}_${os}_URL sha=${c}_${os}_SHA256
               f=/tmp/upstream/$(basename "${!url}")
@@ -53,6 +56,9 @@ jobs:
               echo "${!sha}  $f" | sha256sum -c -
             done
           done
+          f=/tmp/upstream/$(basename "$NGINX_WINDOWS_URL")
+          curl -fsSL --retry 3 -o "$f" "$NGINX_WINDOWS_URL"
+          echo "$NGINX_WINDOWS_SHA256  $f" | sha256sum -c -
 
       - name: Test
         run: |
@@ -67,17 +73,58 @@ jobs:
         run: |
           set -a; . deploy/native/manifest.env; set +a
           cfg=.build/native/linux/stock-observability/config
+          stage=.build/native/linux/stock-observability
           tools=/tmp/tools && mkdir -p $tools
           tar -C $tools -xzf /tmp/upstream/$(basename "$PROMETHEUS_LINUX_URL") --strip-components=1
           tar -C $tools -xzf /tmp/upstream/$(basename "$ALERTMANAGER_LINUX_URL") --strip-components=1
-          tar -C $tools -xzf /tmp/upstream/$(basename "$CADDY_LINUX_URL") caddy
           $tools/promtool check config $cfg/prometheus/prometheus.yml
           $tools/amtool check-config $cfg/alertmanager/alertmanager.yml
-          $tools/caddy validate --adapter caddyfile --config $cfg/Caddyfile
+          mkdir -p "$stage/nginx-test"/{logs,client_body_temp,proxy_temp}
+          sed -e 's/@PORTAL_BIND@/127.0.0.1/' -e 's/@PORTAL_PORT@/8080/' "$cfg/nginx.conf" >"$stage/nginx-test.conf"
+          "$stage/bin/nginx" -t -p "$stage/nginx-test/" -c "$stage/nginx-test.conf"
           bash -n install.sh
+          bash -n deploy/native/dist.sh
 
       - name: Publish
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" .build/release/* --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+
+  windows-native:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Windows installer and Nginx config
+        shell: pwsh
+        run: |
+          $manifest = @{}
+          foreach ($line in Get-Content deploy/native/manifest.env) {
+            if ($line -match '^(NGINX_[A-Z0-9_]+)=(.+)$') { $manifest[$Matches[1]] = $Matches[2] }
+          }
+          $root = Join-Path $env:RUNNER_TEMP 'stockobs-nginx'
+          $zip = Join-Path $root 'nginx.zip'
+          $expanded = Join-Path $root 'expanded'
+          $prefix = Join-Path $root 'prefix'
+          New-Item -ItemType Directory -Force -Path $root, $expanded, $prefix | Out-Null
+          Invoke-WebRequest -Uri $manifest['NGINX_WINDOWS_URL'] -OutFile $zip
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant() -ne $manifest['NGINX_WINDOWS_SHA256']) {
+            throw 'Nginx Windows archive checksum mismatch'
+          }
+          Expand-Archive -LiteralPath $zip -DestinationPath $expanded
+          foreach ($directory in @('logs', 'client_body_temp', 'proxy_temp')) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $prefix $directory) | Out-Null
+          }
+          $nginx = Join-Path $expanded "nginx-$($manifest['NGINX_VERSION'])\nginx.exe"
+          $config = Join-Path $root 'nginx.conf'
+          $text = [IO.File]::ReadAllText((Resolve-Path 'deploy/native/nginx.conf').Path)
+          $text = $text.Replace('@PORTAL_BIND@', '127.0.0.1').Replace('@PORTAL_PORT@', '18089')
+          [IO.File]::WriteAllText($config, $text, [System.Text.UTF8Encoding]::new($false))
+          & $nginx -p "$prefix/" -c $config -t
+          if ($LASTEXITCODE -ne 0) { throw 'Nginx Windows config validation failed' }
+
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'install.ps1').Path, [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) { throw ($parseErrors | Out-String) }
