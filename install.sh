@@ -348,6 +348,41 @@ wait_ready() {
 	warn "$name is not ready yet; check: journalctl --user -u stockobs-$name"
 }
 
+portal_route_ready() {
+	local name=$1 path=$2 marker=$3 host=$BIND url body i
+	if [[ $host == 0.0.0.0 ]]; then
+		host=127.0.0.1
+	elif [[ $host == :: ]]; then
+		host=::1
+	fi
+	[[ $host == *:* ]] && host="[$host]"
+	url="http://$host:$PORT$path"
+	for ((i = 0; i < 5; i++)); do
+		body=$(curl -fsS --connect-timeout 1 --max-time 2 "$url" 2>/dev/null) || body=""
+		[[ $body == *"$marker"* ]] && return 0
+		sleep 1
+	done
+	warn "$name portal route is not responding correctly: $url"
+}
+
+portal_redirect_ready() {
+	local name=$1 path=$2 host=$BIND url response status location i
+	if [[ $host == 0.0.0.0 ]]; then
+		host=127.0.0.1
+	elif [[ $host == :: ]]; then
+		host=::1
+	fi
+	[[ $host == *:* ]] && host="[$host]"
+	url="http://$host:$PORT$path"
+	for ((i = 0; i < 5; i++)); do
+		response=$(curl -sS --connect-timeout 1 --max-time 2 -o /dev/null -w '%{http_code} %{redirect_url}' "$url" 2>/dev/null) || response=""
+		read -r status location <<<"$response"
+		[[ $status =~ ^3[0-9]{2}$ && -n $location ]] && return 0
+		sleep 1
+	done
+	warn "$name portal route is not redirecting: $url"
+}
+
 start_services() {
 	log "Starting services"
 	systemctl --user start stockobs.target
@@ -358,6 +393,11 @@ start_services() {
 	wait_ready home http://127.0.0.1:8081/healthz
 	wait_ready openbb http://127.0.0.1:6900/
 	wait_ready portal "http://127.0.0.1:$PORT/healthz"
+	portal_route_ready home / 'Stock Observability Platform'
+	portal_route_ready Grafana /grafana/api/health '"database"'
+	portal_route_ready Prometheus /prometheus/-/ready 'Prometheus Server is Ready.'
+	portal_route_ready Alertmanager /alertmanager/-/ready 'OK'
+	portal_redirect_ready 'Kite login' /exporter/login
 
 	if [[ $(loginctl show-user "$USER" -p Linger --value 2>/dev/null) != yes ]] &&
 		! loginctl enable-linger "$USER" 2>/dev/null; then

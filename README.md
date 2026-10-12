@@ -29,24 +29,27 @@ Nothing is compiled inside Docker. The Dockerfiles only copy prebuilt binaries o
 
 ## Install on a workstation (Linux, Windows)
 
-One command installs and starts the whole stack for the current user, without root/admin rights or Docker: stock_exporter, stock_home, Prometheus, Alertmanager, Grafana, OpenBB and a Caddy portal on http://localhost:8080.
+The installer downloads the **latest published GitHub release** (`latest`) and installs the whole stack for the current user, without root/admin rights or Docker: stock_exporter, stock_home, Prometheus, Alertmanager, Grafana, OpenBB and a Caddy portal at http://localhost:8080. Run the command for your OS:
 
-Linux (x86_64, systemd):
+Linux (x86_64 with systemd):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.sh | bash -s -- --version latest
 ```
 
-Windows 10/11 (x64, PowerShell):
+Windows 10/11 (x64, PowerShell 5.1 or later):
 
 ```powershell
-irm https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.ps1 | iex
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.ps1))) -Version latest
 ```
 
-- A [Kite Connect](https://developers.kite.trade) app is needed for live data. After installing, open **Settings → Data Sources → Zerodha Kite Connect** to configure it. The page shows the exact redirect URL (`http://127.0.0.1:8080/exporter/kite/callback`); save the credentials, then select **Test with Kite** to sign in and verify them. Change credentials later on the same computer. For unattended installs set `KITE_API_KEY` and `KITE_API_SECRET`. Log in once per trading day.
-- Options: `--version vX.Y.Z`, `--port`, `--listen`, `--no-start`, `--no-browser`, `--uninstall [--purge]` (`bash -s -- <options>`); on Windows `-Version`, `-Port`, `-Listen`, `-NoStart`, `-NoBrowser`, `-Uninstall [-Purge]` via `& ([scriptblock]::Create((irm <url>))) <options>`.
-- Linux: programs and data in `~/.local/share/stock-observability`, config in `~/.config/stock-observability`, services `systemctl --user ... stockobs.target`. Windows: everything in `%LOCALAPPDATA%\StockObservability`, services are Scheduled Tasks `StockObservability-*` started at logon.
-- Re-running the installer upgrades. Your edits to `prometheus.yml`, `alertmanager.yml`, `watchlist.yml` and `Caddyfile` are kept, and a changed default is written next to them as `.new`.
+The installer verifies the downloaded release archive against its published SHA-256 checksum. To upgrade later, run the same command again; it checks GitHub for the latest published release each time, installs it, and keeps your configuration and data. Upgrades are manual; the installer does not run automatically in the background. To install a specific release instead, replace `latest` with its tag, such as `vX.Y.Z`.
+
+After installation, open http://localhost:8080. For live market data, configure your [Kite Connect](https://developers.kite.trade) app in **Settings → Data Sources → Zerodha Kite Connect**. The page shows the redirect URL (`http://127.0.0.1:8080/exporter/kite/callback`); save the credentials, then select **Test with Kite** to sign in and verify them. Credentials can be changed later on the same computer. For unattended installs, set `KITE_API_KEY` and `KITE_API_SECRET` before running the installer. Kite login must be refreshed once per trading day.
+
+Options: Linux supports `--kite-api-key` (or `KITE_API_KEY` with `KITE_API_SECRET`), `--port`, `--listen`, `--no-start`, `--no-browser`, `--archive`, `--uninstall` and `--purge` (with `--uninstall`), passed after `bash -s --`. Windows supports the corresponding `-KiteApiKey`, `-Port`, `-Listen`, `-NoStart`, `-NoBrowser`, `-Archive`, `-Uninstall` and `-Purge` parameters. For example, append `--no-start` to the Linux command above, or `-NoStart` after the Windows scriptblock invocation.
+
+Linux: programs and data are in `~/.local/share/stock-observability`, config in `~/.config/stock-observability`, and services are managed with `systemctl --user` (`stockobs.target`). Windows: files are in `%LOCALAPPDATA%\StockObservability`; services are Scheduled Tasks named `StockObservability-*` and start at user logon. On either OS, edits to `prometheus.yml`, `alertmanager.yml`, `watchlist.yml` and `Caddyfile` are kept during upgrades; changed defaults are written alongside as `.new` files.
 
 Releases are built by [.github/workflows/release.yml](.github/workflows/release.yml) on `v*` tags (`make dist-native` locally). Third-party downloads are pinned with sha256 in [deploy/native/manifest.env](deploy/native/manifest.env).
 

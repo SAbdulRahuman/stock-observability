@@ -352,6 +352,58 @@ function Wait-Ready([string]$Name, [string]$Url) {
     Write-Warn "$Name is not ready yet; check $LogDir\$Name.err.log"
 }
 
+function Test-PortalRoute {
+    param(
+        [string]$Name,
+        [string]$Path,
+        [string]$Marker,
+        [switch]$Redirect
+    )
+    $portalHost = $S.Listen
+    if ($portalHost -eq '0.0.0.0') { $portalHost = '127.0.0.1' }
+    elseif ($portalHost -eq '::') { $portalHost = '::1' }
+    if ($portalHost.Contains(':')) { $portalHost = "[$portalHost]" }
+    $url = 'http://{0}:{1}{2}' -f $portalHost, $S.Port, $Path
+
+    for ($i = 0; $i -lt 5; $i++) {
+        $response = $null
+        $status = 0
+        $location = ''
+        $content = ''
+        try {
+            $request = [System.Net.HttpWebRequest]::Create($url)
+            $request.AllowAutoRedirect = $false
+            $request.Timeout = 2000
+            $request.ReadWriteTimeout = 2000
+            try {
+                $response = $request.GetResponse()
+            } catch [System.Net.WebException] {
+                $response = $_.Exception.Response
+            }
+            if ($response) {
+                $status = [int]$response.StatusCode
+                $location = $response.Headers['Location']
+                if (-not $Redirect -and $status -ge 200 -and $status -lt 300) {
+                    $reader = [System.IO.StreamReader]::new($response.GetResponseStream())
+                    try { $content = $reader.ReadToEnd() } finally { $reader.Dispose() }
+                }
+                $response.Close()
+            }
+        } catch {
+            if ($response) { $response.Close() }
+        }
+
+        if ($Redirect) {
+            if ($status -ge 300 -and $status -lt 400 -and $location) { return }
+        } elseif ($status -ge 200 -and $status -lt 300 -and $content.Contains($Marker)) {
+            return
+        }
+        Start-Sleep -Seconds 1
+    }
+    $kind = if ($Redirect) { 'is not redirecting' } else { 'is not responding correctly' }
+    Write-Warn "$Name portal route $kind`: $url"
+}
+
 function Start-StockObs {
     Write-Step 'Starting services'
     foreach ($name in $Services) { Start-ScheduledTask -TaskName "$TaskPrefix$name" }
@@ -362,6 +414,11 @@ function Start-StockObs {
     Wait-Ready home 'http://127.0.0.1:8081/healthz'
     Wait-Ready openbb 'http://127.0.0.1:6900/'
     Wait-Ready portal "http://127.0.0.1:$($S.Port)/healthz"
+    Test-PortalRoute -Name home -Path '/' -Marker 'Stock Observability Platform'
+    Test-PortalRoute -Name Grafana -Path '/grafana/api/health' -Marker '"database"'
+    Test-PortalRoute -Name Prometheus -Path '/prometheus/-/ready' -Marker 'Prometheus Server is Ready.'
+    Test-PortalRoute -Name Alertmanager -Path '/alertmanager/-/ready' -Marker 'OK'
+    Test-PortalRoute -Name 'Kite login' -Path '/exporter/login' -Redirect
 }
 
 function Remove-Vendor([string[]]$Keep) {

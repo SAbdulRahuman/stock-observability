@@ -7,3 +7,4 @@ secrets/
 !deploy/native/manifest.env
 .vscode/
 .idea/
+/aws/
