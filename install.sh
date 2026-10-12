@@ -2,7 +2,7 @@
 # Stock Observability native installer for Linux (x86_64), per user: no root, no Docker.
 #
 #   curl -fsSL https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.sh | bash
-#   curl -fsSL .../install.sh | bash -s -- --version v0.1.0
+#   curl -fsSL .../install.sh | bash -s -- --version v0.1.1
 #   curl -fsSL .../install.sh | bash -s -- --uninstall [--purge]
 #
 # Connect your Zerodha Kite account in Settings → Data Sources afterwards, or pass
@@ -105,7 +105,7 @@ kite_credentials() {
 	local file=$CONF_DIR/kite_credentials.json old_secret=$CONF_DIR/kite_api_secret secret=${KITE_API_SECRET:-}
 	umask 077
 	mkdir -p "$CONF_DIR"
-	# Releases before 0.2.0 kept the key in stockobs.env and the secret in kite_api_secret.
+	# The v0.1.0 installer kept the key in stockobs.env and the secret in kite_api_secret.
 	if [[ -z $KITE_KEY && -z $secret && ! -f $file && -s $old_secret && -f $CONF_DIR/stockobs.env ]]; then
 		local old_key
 		old_key=$(sed -n 's/^KITE_API_KEY=//p' "$CONF_DIR/stockobs.env")

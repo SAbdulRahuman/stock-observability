@@ -1,7 +1,7 @@
 # Stock Observability native installer for Windows (x64), per user: no admin, no Docker.
 #
 #   irm https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.ps1 | iex
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.ps1))) -Version v0.1.0
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.ps1))) -Version v0.1.1
 #   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/SAbdulRahuman/stock-observability/main/install.ps1))) -Uninstall [-Purge]
 #
 # Connect your Zerodha Kite account in Settings > Data Sources afterwards, or pass -KiteApiKey /
@@ -92,7 +92,7 @@ function Resolve-Settings {
     $credFile = Join-Path $ConfDir 'kite_credentials.json'
     $oldSecret = Join-Path $ConfDir 'kite_api_secret'
     $S.KiteSecret = $env:KITE_API_SECRET
-    # Releases before 0.2.0 kept the key in settings.json and the secret in kite_api_secret.
+    # The v0.1.0 installer kept the key in settings.json and the secret in kite_api_secret.
     if (-not $S.KiteApiKey -and -not $S.KiteSecret -and -not (Test-Path -LiteralPath $credFile) -and $saved -and $saved.KiteApiKey -and (Test-Path -LiteralPath $oldSecret)) {
         Write-Step "Moving Kite credentials to $credFile"
         $S.KiteApiKey = $saved.KiteApiKey
