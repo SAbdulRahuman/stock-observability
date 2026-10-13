@@ -267,6 +267,7 @@ groups:
     interval: 1m
     rules:
       # StockPredictorStale
+      #   Clearance: Quant Lab is reachable and run age is 5m or less, or market hours end; a removed scrape target has no `up` series.
       #   What:  Fires when the Quant Lab is down (model="all") or a model's last successful run is older than 5 minutes
       #          during market hours; value is 0 (down) or the age of the last run in seconds.
       #   How:   label_replace(up{job="stock_quantlab"} == 0, "model", "all") or
@@ -286,6 +287,7 @@ groups:
           summary: "Quant Lab model {{ $labels.model }} is stale"
           description: "The Quant Lab is down or model {{ $labels.model }} has not completed a run for more than 5 minutes; forecasts and option analytics are frozen."
       # StockPredictorSlow
+      #   Clearance: The model's inference duration falls to 30s or less; a missing scrape series is unavailable telemetry.
       #   What:  Fires when one Quant Lab model run (options or ar1) takes more than 30 s; value = run duration in seconds.
       #   How:   max by (model) (stock_prediction_inference_duration_seconds) > 30, for: 10m; no market-hours gate.
       #   Debug: stock_prediction_inference_duration_seconds by model; large option chains or a slow Prometheus API make
@@ -298,6 +300,7 @@ groups:
           summary: "Quant Lab model {{ $labels.model }} takes {{ $value | printf \"%.0f\" }}s per run"
           description: "A Quant Lab run takes more than 30 seconds; the 60-second refresh falls behind."
       # PredictionModelUnderperformsNaive
+      #   Clearance: Median 1d Theil U returns to 1 or less; missing score history is unavailable, while the score may persist after close.
       #   What:  Fires when a model's median Theil U over the last day is above 1, i.e. it is worse than the random walk.
       #   How:   model:theil_u_1d:median > 1, for: 1h (about 4 evaluations of the 15m score group).
       #   Debug: model:theil_u_1d:median and stock:forecast_theil_u_1d:ratio. Needs scored forecasts (quantlab running,

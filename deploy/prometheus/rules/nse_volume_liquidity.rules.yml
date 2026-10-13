@@ -191,6 +191,7 @@ groups:
     interval: 15s
     rules:
       # StockLiquidityDrain
+      #   Clearance: Depth recovers to 25% of its 1h average or spread falls to 2x its 1h mean or less, or the market closes; absent book data is unavailable.
       #   What:  Fires (warning) when an equity's top-5 depth falls below 25% of its 1h average while its spread is more
       #          than twice its 1h mean, for 2 minutes in session. Value = depth ratio (shown as %).
       #   How:   stock:depth_vs_1h:ratio{instrument_type="EQ"} < 0.25 and stock_orderbook_spread_bps >

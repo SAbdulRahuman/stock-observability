@@ -166,6 +166,7 @@ groups:
     interval: 15s
     rules:
       # StockRSIDivergence
+      #   Clearance: Neither RSI/price divergence branch matches or the market closes; indicator warm-up/missing data is unavailable.
       #   What:  Fires when an equity prints a new 30-minute price extreme but Wilder RSI fails to confirm it:
       #          direction=bearish at a 30m high with RSI > 60 but >= 10 points below its own 30m max;
       #          direction=bullish at a 30m low with RSI < 40 but >= 10 above its 30m min. $value = Wilder RSI.
@@ -200,6 +201,7 @@ groups:
           effectiveness: '{{ with printf `alert:hit_rate_5d:ratio{alertname="StockRSIDivergence",direction=%q,horizon="15m"}` $labels.direction | query }}15m hit rate over the last 5 days: {{ . | first | value | humanizePercentage }}{{ else }}No history yet{{ end }}'
           link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"
       # StockMomentumExhaustion
+      #   Clearance: Any required RSI, stochastic, MACD, or volume-delta condition ceases to match, or the market closes.
       #   What:  Fires when an equity is stretched and momentum starts to fade: direction=bearish when overbought
       #          (RSI > 70, %K > 80) with a falling MACD histogram and net selling; direction=bullish mirrors
       #          (RSI < 30, %K < 20, rising histogram, net buying). $value = Cutler RSI.

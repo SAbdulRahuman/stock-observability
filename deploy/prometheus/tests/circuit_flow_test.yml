@@ -25,13 +25,13 @@ tests:
       - series: 'stock_circuit_lower_limit_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '90x40'
       - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '100x4 99x10 100x20'
+        values: '100x4 99x10 100x12 99x14'
       - series: 'stock_circuit_upper_limit_price{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
         values: '110x40'
       - series: 'stock_circuit_lower_limit_price{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
         values: '100x40'
       - series: 'stock_last_price{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
-        values: '100x4 101x36'
+        values: '100x4 101x20 100x16'
     alert_rule_test:
       - eval_time: 3m
         alertname: StockNearUpperCircuit
@@ -58,6 +58,16 @@ tests:
               description: NSE:INFY is locked at its upper circuit; trading is one-sided.
       - eval_time: 5m
         alertname: StockNearUpperCircuit
+      - eval_time: 7m30s
+        alertname: StockCircuitHit
+        exp_alerts:
+          - exp_labels: {<<: *zzz, band: lower, severity: critical, category: circuit, layer: incident}
+            exp_annotations:
+              summary: ZZZ hit its lower circuit at 100
+              description: NSE:ZZZ is locked at its lower circuit; trading is one-sided.
+      - eval_time: 7m30s
+        alertname: StockNearLowerCircuit
+        exp_alerts: []
 
   - name: order book imbalance
     interval: 15s
@@ -65,7 +75,7 @@ tests:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
         values: '1x40'
       - series: 'stock_total_buy_quantity{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '3500x40'
+        values: '3500x20 1000x20'
       - series: 'stock_total_sell_quantity{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '1000x40'
     alert_rule_test:
@@ -78,6 +88,9 @@ tests:
             exp_annotations:
               summary: INFY order book buy/sell ratio is 3.50
               description: Pending buy versus sell quantity for NSE:INFY has been heavily one-sided for 2 minutes.
+      - eval_time: 6m
+        alertname: StockOrderImbalance
+        exp_alerts: []
 
   - name: volume surge versus hourly average
     interval: 15s
@@ -85,7 +98,7 @@ tests:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
         values: '1x300'
       - series: 'stock_day_volume_shares{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '0+1000x280 290000+25000x20'
+        values: '0+1000x280 290000+25000x20 790000+100x20'
     alert_rule_test:
       - eval_time: 65m
         alertname: StockVolumeSurge
@@ -96,6 +109,9 @@ tests:
             exp_annotations:
               summary: "INFY volume surge: 100k shares in 1 minute"
               description: NSE:INFY traded more than 5x its average one-minute volume over the last hour.
+      - eval_time: 80m
+        alertname: StockVolumeSurge
+        exp_alerts: []
 
   - name: high volatility of one-minute returns
     interval: 1m
@@ -105,7 +121,7 @@ tests:
       - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '1x30'
       - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100'
+        values: '100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100x10'
     alert_rule_test:
       - eval_time: 20m
         alertname: StockHighVolatility
@@ -114,3 +130,6 @@ tests:
             exp_annotations:
               summary: INFY 5m realized volatility is 1.97%
               description: The 5-minute unannualized standard deviation of overlapping one-minute returns for NSE:INFY is at least 1%.
+      - eval_time: 30m
+        alertname: StockHighVolatility
+        exp_alerts: []

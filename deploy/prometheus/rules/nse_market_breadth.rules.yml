@@ -77,6 +77,7 @@ groups:
     interval: 15s
     rules:
       # SectorRotation
+      #   Clearance: Relative strength returns to [-2, 2] percentage points or the session gate ends; missing benchmark data is unavailable.
       #   What:  Fires (info) per sector when it has out- (direction="bullish") or under-performed ("bearish") NIFTY 50
       #          by more than 2 percentage points for 10 minutes in session. Value = relative strength in pp.
       #   How:   label_replace(sector:relative_strength:percent > 2, "direction", "bullish") or (... < -2, "bearish"),
@@ -98,6 +99,7 @@ groups:
           description: "The average day change of NIFTY 200 stocks in {{ $labels.sector }} has differed from NIFTY 50 by more than 2 percentage points for 10 minutes."
 
       # MarketBreadthStress {direction=bearish}
+      #   Clearance: TRIN falls to 2 or less, above-VWAP breadth rises to 20% or more, or the market closes; absent inputs are unavailable.
       #   What:  Market-wide selling stress (warning): heavy volume in decliners (TRIN > 2) and fewer than 20% of tracked
       #          equities above VWAP, for 10 minutes in session. Value = TRIN.
       #   How:   market:trin:ratio > 2 and on() market:above_vwap:ratio < 0.2 and on() stock_market_open == 1; `for: 10m`;
@@ -115,6 +117,7 @@ groups:
           summary: "Market breadth stress: TRIN {{ $value | printf \"%.2f\" }}"
           description: "TRIN is above 2 and fewer than 20% of tracked equities trade above VWAP; selling is broad and volume-heavy."
       # MarketBreadthStress {direction=bullish}
+      #   Clearance: TRIN rises to 0.5 or more, above-VWAP breadth falls to 80% or less, or the market closes; absent inputs are unavailable.
       #   What:  Market-wide buying euphoria (info): TRIN < 0.5 and more than 80% of tracked equities above VWAP, for
       #          10 minutes in session. Value = TRIN.
       #   How:   market:trin:ratio < 0.5 and on() market:above_vwap:ratio > 0.8 and on() stock_market_open == 1;
@@ -132,6 +135,7 @@ groups:
           description: "TRIN is below 0.5 and more than 80% of tracked equities trade above VWAP; buying is broad and volume-heavy."
 
       # MarketCircuitCluster
+      #   Clearance: Lower-circuit count falls below 20 and upper-circuit count below 40, or the market closes; missing counts are unavailable.
       #   What:  Fires (warning) when at least 20 tracked equities sit at their lower circuit or at least 40 at their
       #          upper circuit for 1 minute in session; one alert series per band. Value = number of stocks.
       #   How:   market:circuit_hits:count{band="lower"} >= 20 or market:circuit_hits:count{band="upper"} >= 40, and

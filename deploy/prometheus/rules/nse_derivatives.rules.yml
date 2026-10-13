@@ -120,6 +120,8 @@ groups:
       #          contract's own change vs previous close), labelled by nested label_replace; market open; for: 5m.
       #   Debug: stock:oi_change:percent and stock_change_percent for the contract. Silent on the first session (no OI
       #          baseline), without derivatives, or when the market is closed.
+      #   Clearance: OI change returns to [-10%, 10%], price change to [-1%, 1%], or the market closes; missing inputs
+      #              also remove the alert series but indicate unavailable data, not a confirmed market recovery.
       # Price-OI matrix on the contract: price up + OI up = long build-up, down + up = short build-up,
       # up + down = short covering, down + down = long unwinding.
       - alert: StockOIBuildup
@@ -141,6 +143,8 @@ groups:
       #          (extreme=low); value = PCR. Extremes are often read contrarian.
       #   How:   label_replace(underlying:pcr_oi:ratio > 1.5, "extreme", "high") or (< 0.5, "low"); market open; for: 15m.
       #   Debug: underlying:pcr_oi:ratio. Far expiries with thin OI can sit at extremes; silent without options.
+      #   Clearance: PCR returns to [0.5, 1.5] or the market closes. Missing contracts or zero call OI remove the input
+      #              series and mean the ratio is unavailable, not that positioning is neutral.
       - alert: PCRExtreme
         expr: |
           (
@@ -160,6 +164,8 @@ groups:
       #          label_replace(underlying:cost_of_carry:percent > 25, "basis", "rich"); market open; for: 15m.
       #   Debug: underlying:futures_premium:percent, underlying:cost_of_carry:percent. "rich" cannot fire in the last half
       #          day before expiry (carry guard); a stale future price (illiquid far month) can trigger it.
+      #   Clearance: Premium rises to at least -0.5% and cost of carry falls to at most 25%, or the market closes.
+      #              Missing spot/future data removes the series and is unavailable, not a confirmed normal basis.
       - alert: FuturesBasisAnomaly
         expr: |
           (

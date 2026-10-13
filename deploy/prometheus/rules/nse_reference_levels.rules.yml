@@ -36,6 +36,7 @@ groups:
     interval: 15s
     rules:
       # Stock52WeekBreakout
+      #   Clearance: Price returns inside the 52-week range, relative volume falls to 1.5x or less, or the market closes; then `keep_firing_for: 30m` applies.
       #   What:  Fires when a core equity trades above its 52-week high (direction=bullish) or below its 52-week low
       #          (bearish) on more than 1.5x relative volume; value = last price.
       #   How:   stock_last_price{tier="core", instrument_type="EQ"} > stock_52w_high_price (or < low) and
@@ -65,6 +66,7 @@ groups:
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} is trading beyond its 52-week {{ if eq $labels.direction \"bullish\" }}high{{ else }}low{{ end }} on more than 1.5x relative volume."
           effectiveness: '{{ with printf `alert:hit_rate_5d:ratio{alertname="Stock52WeekBreakout",direction=%q,horizon="15m"}` $labels.direction | query }}15m hit rate over the last 5 days: {{ . | first | value | humanizePercentage }}{{ else }}No history yet{{ end }}'
       # StockGoldenDeathCross
+      #   Clearance: The exporter cross flag becomes absent/zero or the market closes; missing daily history is unavailable, not a new cross.
       #   What:  Fires all through the session after the daily 50-SMA crossed above (golden, direction=bullish) or below
       #          (death, bearish) the 200-SMA at the previous close; value = cross flag +1/-1.
       #   How:   stock_sma_50d_200d_cross{tier="core", instrument_type="EQ"} == 1 / == -1 (exporter sets it only on the

@@ -94,7 +94,7 @@ tests:
       - series: 'stock_market_seconds_to_close{job="stock_core",instance="se"}'
         values: '20000-60x20'
       - series: 'kpi:coverage:ratio{kpi="stock:rsi_14m:index"}'
-        values: '0.5x20'
+        values: '0.5x8 0.95x12'
       - series: 'kpi:coverage:ratio{kpi="stock:turnover:inr"}'
         values: '0.95x20'
     alert_rule_test:
@@ -107,6 +107,9 @@ tests:
             exp_annotations:
               summary: KPI stock:rsi_14m:index coverage is 50%
               description: Fewer than 90% of the instruments in scope have a fresh value for stock:rsi_14m:index for 5 minutes; dashboards and alerts built on it are incomplete.
+      - eval_time: 9m
+        alertname: KPIDataQualityDegraded
+        exp_alerts: []
 
   - name: no data-quality alert during warm-up or when closed
     interval: 1m

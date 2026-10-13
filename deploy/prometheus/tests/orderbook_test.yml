@@ -19,11 +19,11 @@ tests:
     interval: 15s
     input_series:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
-        values: '1x60'
+        values: '1x100'
       - series: 'stock_orderbook_spread_bps{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '2x20 80x40'
+        values: '2x20 80x40 2x40'
       - series: 'stock_orderbook_spread_bps{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '50x60'
+        values: '50x60 10x40'
     alert_rule_test:
       - eval_time: 6m
         alertname: StockWideSpread
@@ -43,6 +43,9 @@ tests:
             exp_annotations:
               summary: TCS bid-ask spread averages 50.0 bps
               description: The 5 minute average bid-ask spread of NSE:TCS is at least 50 bps; liquidity is thin.
+      - eval_time: 18m
+        alertname: StockWideSpread
+        exp_alerts: []
 
   - name: crossed order book only while the market is open
     interval: 15s
@@ -50,7 +53,7 @@ tests:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
         values: '0x8 1x30'
       - series: 'stock_orderbook_spread_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '-0.5x38'
+        values: '-0.5x16 0x22'
     alert_rule_test:
       - eval_time: 1m
         alertname: StockOrderBookCrossed
@@ -61,6 +64,9 @@ tests:
             exp_annotations:
               summary: INFY order book is crossed by -0.5
               description: Best bid of NSE:INFY has been above the best ask for 1 minute; the depth feed may be stale or corrupt.
+      - eval_time: 4m30s
+        alertname: StockOrderBookCrossed
+        exp_alerts: []
 
   - name: one-sided top 5 depth keeps its sign
     interval: 15s
@@ -68,9 +74,9 @@ tests:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
         values: '1x40'
       - series: 'stock_orderbook_imbalance_ratio{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '-0.9x40'
+        values: '-0.9x20 0x20'
       - series: 'stock_orderbook_imbalance_ratio{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '0.6x40'
+        values: '0.6x20 0x20'
     alert_rule_test:
       - eval_time: 1m
         alertname: StockOrderBookImbalance
@@ -85,3 +91,6 @@ tests:
             exp_annotations:
               summary: TCS top 5 depth imbalance is 0.60
               description: Quantity in the top 5 bid versus ask levels of NSE:TCS has been heavily one-sided for 3 minutes (1 = all bids, -1 = all asks).
+      - eval_time: 6m
+        alertname: StockOrderBookImbalance
+        exp_alerts: []

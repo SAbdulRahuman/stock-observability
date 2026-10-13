@@ -178,6 +178,7 @@ groups:
     interval: 30s
     rules:
       # StockRangeExpansion
+      #   Clearance: Range/ATR falls to 2 or less, relative volume falls to 2x or less, or the market closes; absent warm-up inputs are unavailable.
       #   What:  Fires for an equity having a wide-range day: today's range is > 2x its ATR(14) while it trades
       #          > 2x its usual volume for this time of day. $value is the range/ATR ratio.
       #   How:   stock:range_expansion:ratio{instrument_type="EQ"} > 2 and stock:relative_volume:ratio > 2 (label

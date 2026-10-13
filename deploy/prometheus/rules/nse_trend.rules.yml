@@ -137,6 +137,7 @@ groups:
       # Least-squares projection of the last 10 minutes, 15 minutes ahead; all EQ tiers, within 5% of the band.
       # The offset 9m guard requires a (nearly) full window, e.g. after a Prometheus restart.
       - alert: StockProjectedCircuitHit
+        # Clearance: Projection falls short of the valid circuit band, price is already at/beyond a band, the 10m sample guard fails, or the market closes.
         expr: |
           (
               label_replace(

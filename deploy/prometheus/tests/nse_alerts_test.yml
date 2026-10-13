@@ -18,7 +18,7 @@ tests:
     interval: 1m
     input_series:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
-        values: '1x30'
+        values: '1x60'
       - series: 'stock:session_high:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '100x15'
       - series: 'stock:session_low:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
@@ -26,7 +26,7 @@ tests:
       - series: 'stock:relative_volume:ratio{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '2x30'
       - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '99x16 105x14'
+        values: '99x16 105x3 99x41'
     alert_rule_test:
       - eval_time: 16m
         alertname: StockMultiSessionBreakout
@@ -39,6 +39,18 @@ tests:
               description: NSE:INFY is trading beyond its 20-session high on more than 1.5x relative volume.
               effectiveness: No history yet
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
+      - eval_time: 49m
+        alertname: StockMultiSessionBreakout
+        exp_alerts:
+          - exp_labels: {<<: *infy, direction: bullish, severity: info, category: price, layer: condition, condition: multi_session_breakout}
+            exp_annotations:
+              summary: INFY bullish 20-session breakout at 105
+              description: NSE:INFY is trading beyond its 20-session high on more than 1.5x relative volume.
+              effectiveness: No history yet
+              link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
+      - eval_time: 51m
+        alertname: StockMultiSessionBreakout
+        exp_alerts: []
 
   - name: no multi-session breakout with fewer than 15 sessions or low volume
     interval: 1m
@@ -144,7 +156,7 @@ tests:
     interval: 1m
     input_series:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
-        values: '1x10 0x10'
+        values: '1x20'
       - series: 'stock:atr_14d:points{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '4x20'
       - series: 'stock_high_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
@@ -152,7 +164,7 @@ tests:
       - series: 'stock_low_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '100x20'
       - series: 'stock:relative_volume:ratio{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '2.5x20'
+        values: '2.5x5 1.5x15'
       - series: 'stock:atr_14d:points{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
         values: '4x20'
       - series: 'stock_high_price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
@@ -175,17 +187,20 @@ tests:
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
       - eval_time: 15m
         alertname: StockRangeExpansion
+      - eval_time: 6m
+        alertname: StockRangeExpansion
+        exp_alerts: []
 
   # --- StockLiquidityDrain ----------------------------------------------------------------
   - name: liquidity drain needs both a depth drop and a wide spread
     interval: 1m
     input_series:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
-        values: '1x40 0x10'
+        values: '1x50'
       - series: 'stock:depth_vs_1h:ratio{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '1x30 0.2x20'
+        values: '1x30 0.2x5 1x15'
       - series: 'stock_orderbook_spread_bps{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '5x30 15x20'
+        values: '5x30 15x5 5x15'
       - series: 'stock:orderbook_spread_5m_avg:bps{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '5x50'
       - series: 'stock:depth_vs_1h:ratio{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
@@ -208,6 +223,9 @@ tests:
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
       - eval_time: 45m
         alertname: StockLiquidityDrain
+      - eval_time: 38m
+        alertname: StockLiquidityDrain
+        exp_alerts: []
 
   # --- StockProjectedCircuitHit -----------------------------------------------------------
   - name: projected circuit hit, skipping instruments already at the band
@@ -293,24 +311,24 @@ tests:
     interval: 1m
     input_series:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
-        values: '1x30'
+        values: '1x40'
       - series: 'stock:rsi_14m:index{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '75x30'
+        values: '75x40'
       - series: 'stock:stochastic_k_14m:percent{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '85x30'
+        values: '85x40'
       - series: 'stock:macd_histogram:price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '0+1x15 14-1x14'
+        values: '0+1x15 14-1x14 0x10'
       - series: 'stock:volume_delta_1h:ratio{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '-0.2x30'
+        values: '-0.2x40'
       # Same oscillators but volume still supports the move.
       - series: 'stock:rsi_14m:index{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '75x30'
+        values: '75x40'
       - series: 'stock:stochastic_k_14m:percent{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '85x30'
+        values: '85x40'
       - series: 'stock:macd_histogram:price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '0+1x15 14-1x14'
+        values: '0+1x15 14-1x14 0x10'
       - series: 'stock:volume_delta_1h:ratio{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '0.2x30'
+        values: '0.2x40'
       # Ledger history: only the matching direction and the 15m horizon are quoted.
       - series: 'alert:hit_rate_5d:ratio{alertname="StockMomentumExhaustion",direction="bearish",horizon="15m"}'
         values: '0.625x30'
@@ -330,6 +348,9 @@ tests:
               description: NSE:INFY is overbought on RSI(14) and %K, its MACD histogram is turning and volume delta opposes the move.
               effectiveness: '15m hit rate over the last 5 days: 62.5%'
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
+      - eval_time: 32m
+        alertname: StockMomentumExhaustion
+        exp_alerts: []
 
   - name: momentum exhaustion is silent while the market is closed
     interval: 1m
@@ -353,11 +374,11 @@ tests:
     interval: 1m
     input_series:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
-        values: '1x10 0x10'
+        values: '1x20'
       - series: 'stock:volume_delta_1h:ratio{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '-0.7x20'
       - series: 'stock:microprice_deviation:bps{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '-0.5x20'
+        values: '-0.5x4 0x16'
       - series: 'stock_orderbook_imbalance_ratio{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '-0.4x20'
       - series: 'stock:volume_delta_1h:ratio{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
@@ -378,6 +399,9 @@ tests:
               description: Tick-rule volume delta, microprice and top-5 depth imbalance of NSE:INFY all point down.
               effectiveness: No history yet
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
+      - eval_time: 6m
+        alertname: StockOrderFlowPressure
+        exp_alerts: []
       - eval_time: 15m
         alertname: StockOrderFlowPressure
 
@@ -386,11 +410,11 @@ tests:
     interval: 1m
     input_series:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
-        values: '1x20 0x10'
+        values: '1x30'
       - series: 'stock_change_percent{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
         values: '0.5x30'
       - series: 'stock_change_percent{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '3x30'
+        values: '3x13 1x17'
       - series: 'stock_change_percent{job="stock_core",instance="se",exchange="NSE",symbol="SBIN",sector="Financial Services",instrument_type="EQ",tier="core"}'
         values: '2x30'
       - series: 'stock_change_percent{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
@@ -405,6 +429,9 @@ tests:
             exp_annotations:
               summary: IT outperforms NIFTY 50 by 2.50 pp
               description: The average day change of NIFTY 200 stocks in IT has differed from NIFTY 50 by more than 2 percentage points for 10 minutes.
+      - eval_time: 15m
+        alertname: SectorRotation
+        exp_alerts: []
       - eval_time: 25m
         alertname: SectorRotation
 
@@ -415,9 +442,9 @@ tests:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
         values: '1x60'
       - series: 'market:trin:ratio'
-        values: '2.5x20 1x10 0.4x30'
+        values: '2.5x20 1x10 0.4x16 0.6x14'
       - series: 'market:above_vwap:ratio'
-        values: '0.15x20 0.5x10 0.85x30'
+        values: '0.15x20 0.5x10 0.85x16 0.75x14'
     alert_rule_test:
       - eval_time: 9m
         alertname: MarketBreadthStress
@@ -437,6 +464,9 @@ tests:
             exp_annotations:
               summary: "Market breadth euphoria: TRIN 0.40"
               description: TRIN is below 0.5 and more than 80% of tracked equities trade above VWAP; buying is broad and volume-heavy.
+      - eval_time: 51m
+        alertname: MarketBreadthStress
+        exp_alerts: []
 
   - name: high TRIN alone is not breadth stress, nor when closed
     interval: 1m
@@ -458,7 +488,7 @@ tests:
     interval: 1m
     input_series:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
-        values: '1x5 0x5'
+        values: '1x10'
       - series: 'stock_last_price{job="stock_broad",instance="se",exchange="NSE",symbol="L01",sector="unknown",instrument_type="EQ",tier="broad"}'
         values: '90x10'
       - series: 'stock_circuit_lower_limit_price{job="stock_broad",instance="se",exchange="NSE",symbol="L01",sector="unknown",instrument_type="EQ",tier="broad"}'
@@ -537,7 +567,7 @@ tests:
         values: '90x10'
       # The 20th equity reaches its lower band at 1m.
       - series: 'stock_last_price{job="stock_broad",instance="se",exchange="NSE",symbol="L20",sector="unknown",instrument_type="EQ",tier="broad"}'
-        values: '91 90x9'
+        values: '91 90x3 91x6'
       - series: 'stock_circuit_lower_limit_price{job="stock_broad",instance="se",exchange="NSE",symbol="L20",sector="unknown",instrument_type="EQ",tier="broad"}'
         values: '90x10'
     alert_rule_test:
@@ -551,6 +581,9 @@ tests:
             exp_annotations:
               summary: 20 equities locked at their lower circuit
               description: A cluster of tracked NSE equities is at the lower price band; expect one-sided liquidity across the market.
+      - eval_time: 6m
+        alertname: MarketCircuitCluster
+        exp_alerts: []
       - eval_time: 8m
         alertname: MarketCircuitCluster
 
@@ -563,7 +596,7 @@ tests:
       - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '100+0.1x40'
       - series: 'stock:rsi_wilder_14m:index{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '80x9 65x30'
+        values: '80x9 65x5 75x26'
       - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
         values: '100+0.1x40'
       - series: 'stock:rsi_wilder_14m:index{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
@@ -580,6 +613,9 @@ tests:
               description: NSE:INFY made a new 30-minute high while Wilder RSI(14) stayed more than 10 points from its own 30-minute extreme.
               effectiveness: No history yet
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
+      - eval_time: 16m
+        alertname: StockRSIDivergence
+        exp_alerts: []
 
   - name: RSI divergence is silent while the market is closed
     interval: 1m

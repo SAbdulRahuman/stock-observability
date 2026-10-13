@@ -97,6 +97,7 @@ groups:
     interval: 15s
     rules:
       # StockMultiSessionBreakout
+      #   Clearance: Price returns within the prior 20-session range, relative volume falls to 1.5x or less, or the market closes; then `keep_firing_for: 30m` applies.
       #   What:  Fires (info) when a core equity trades above its ~20-session high (direction="bullish") or below its
       #          ~20-session low ("bearish") on more than 1.5x relative volume. Value = last price.
       #   How:   bullish: stock_last_price{core, EQ} > max_over_time(stock:session_high:price[28d]) and
@@ -133,6 +134,7 @@ groups:
           link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"
 
       # StockOpeningRangeBreakout
+      #   Clearance: The fresh-cross condition expires or the session/time gate ends; `keep_firing_for: 15m` delays resolution after the expression clears.
       #   What:  Fires (info) in the minute a core equity first crosses above its 09:15-09:30 opening-range high
       #          (direction="bullish") or below its low ("bearish") on more than 1.5x relative volume. Value = last price.
       #   How:   bullish: C > ignoring(bound) last_over_time(stock:opening_range:price{bound="high"}[6h15m]) unless

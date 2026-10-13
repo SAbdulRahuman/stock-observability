@@ -100,7 +100,7 @@ tests:
       - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="NIFTY 50",sector="Index",instrument_type="INDEX",tier="core"}'
         values: '25000x30'
       - series: 'stock_last_price{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCTFUT",sector="Index",instrument_type="FUT",tier="core"}'
-        values: '24800x30'
+        values: '24800x16 25000x14'
       - series: 'stock_instrument_info{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCTFUT",sector="Index",instrument_type="FUT",tier="core",underlying="NIFTY",expiry="2026-10-27"}'
         values: '1x30'
       - series: 'stock_instrument_info{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT25000CE",sector="Index",instrument_type="CE",tier="core",underlying="NIFTY",expiry="2026-10-27",strike="25000"}'
@@ -110,7 +110,7 @@ tests:
       - series: 'stock_instrument_info{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT25000PE",sector="Index",instrument_type="PE",tier="core",underlying="NIFTY",expiry="2026-10-27",strike="25000"}'
         values: '1x30'
       - series: 'stock_open_interest{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCT25000PE",sector="Index",instrument_type="PE",tier="core"}'
-        values: '4000x30'
+        values: '4000x16 2000x14'
     alert_rule_test:
       - eval_time: 14m
         alertname: PCRExtreme
@@ -129,6 +129,12 @@ tests:
             exp_annotations:
               summary: NIFTY 2026-10-27 futures at a discount basis
               description: The NIFTY future (expiry 2026-10-27) trades more than 0.5% below spot for 15 minutes.
+      - eval_time: 17m
+        alertname: PCRExtreme
+        exp_alerts: []
+      - eval_time: 17m
+        alertname: FuturesBasisAnomaly
+        exp_alerts: []
       - eval_time: 25m
         alertname: PCRExtreme
         exp_alerts: []
@@ -148,9 +154,9 @@ tests:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
         values: '0x2009 1x40'
       - series: 'stock_open_interest{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCTFUT",sector="Index",instrument_type="FUT",tier="core"}'
-        values: '1000x2009 1200x40'
+        values: '1000x2009 1200x35 1000x5'
       - series: 'stock_change_percent{job="stock_core",instance="se",exchange="NFO",symbol="NIFTY26OCTFUT",sector="Index",instrument_type="FUT",tier="core"}'
-        values: '0x2009 2x40'
+        values: '0x2009 2x35 0x5'
     promql_expr_test:
       - expr: stock:oi_change:percent
         eval_time: 30h
@@ -171,3 +177,6 @@ tests:
             exp_annotations:
               summary: NIFTY26OCTFUT long_buildup (OI +20.0%)
               description: Open interest of NFO:NIFTY26OCTFUT changed by more than 10% from the previous session while the price moved more than 1%.
+      - eval_time: 34h6m
+        alertname: StockOIBuildup
+        exp_alerts: []

@@ -210,6 +210,7 @@ groups:
     interval: 5s
     rules:
       # StockOrderBookWall
+      #   Clearance: Wall ratio falls to 5x or less, same-level notional falls below INR 50 lakh, or the market closes; missing depth is unavailable.
       #   What:  Fires per instrument/side/level when one top-5 level holds more than 5x the mean quantity of the other
       #          levels on its side AND at least INR 50 lakh notional, for 1 minute during the session (info).
       #   How:   stock:depth_wall:ratio{instrument_type="EQ"} > 5 and stock_depth_price * stock_depth_quantity
@@ -232,6 +233,7 @@ groups:
           effectiveness: '{{ with printf `alert:forward_return_5d:percent{alertname="StockOrderBookWall",side=%q,horizon="15m"}` $labels.side | query }}Mean 15m return after this alert over the last 5 days: {{ . | first | value | printf "%.2f" }}%{{ else }}No history yet{{ end }}'
           link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"
       # StockOrderFlowPressure
+      #   Clearance: Volume delta, microprice, and top-5 imbalance no longer agree on direction, or the market closes; missing depth is unavailable.
       #   What:  Fires when traded flow, the touch and the top-5 book all lean the same way for 2 minutes in session:
       #          direction="bullish" (buyers dominant) or "bearish" (sellers dominant). Value = 1h volume delta.
       #   How:   bullish: stock:volume_delta_1h:ratio > 0.6 and stock:microprice_deviation:bps > 0 and

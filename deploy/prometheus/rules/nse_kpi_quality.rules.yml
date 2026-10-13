@@ -353,6 +353,7 @@ groups:
     interval: 1m
     rules:
       # KPIDataQualityDegraded
+      #   Clearance: Coverage returns to 90% or more, the active-session gate ends, or coverage becomes absent; absence is unknown quality.
       #   What:  warning that a KPI has a fresh value for fewer than 90% of the instruments in its scope for 5 minutes
       #          during the session; one alert per kpi label. Dashboards/alerts built on that KPI are incomplete.
       #   How:   kpi:coverage:ratio < 0.9 and on() stock_market_open == 1 and on() stock_market_seconds_to_close < 20700.

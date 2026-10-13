@@ -50,7 +50,7 @@ tests:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
         values: '1x40'
       - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '100x20 96x20'
+        values: '100x20 96x20 100x20'
     alert_rule_test:
       - eval_time: 6m
         alertname: StockPriceSharpDrop
@@ -60,6 +60,9 @@ tests:
               summary: INFY 5m return -4.00%
               description: NSE:INFY (IT) fell more than 3% within five minutes.
               link: https://www.nseindia.com/get-quotes/equity?symbol=INFY
+      - eval_time: 10m30s
+        alertname: StockPriceSharpDrop
+        exp_alerts: []
 
   - name: intraday drawdown from day high
     interval: 15s
@@ -69,7 +72,7 @@ tests:
       - series: 'stock_high_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '110x40'
       - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '110x10 103x30'
+        values: '110x10 103x20 110x20'
     alert_rule_test:
       - eval_time: 3m
         alertname: StockIntradayDrawdown
@@ -80,6 +83,9 @@ tests:
             exp_annotations:
               summary: INFY drawdown from day high -6.36%
               description: NSE:INFY has given up at least 5% from today's high.
+      - eval_time: 8m30s
+        alertname: StockIntradayDrawdown
+        exp_alerts: []
 
   - name: gap open only in the first 15 minutes
     interval: 15s
@@ -111,7 +117,7 @@ tests:
       - series: 'stock_average_traded_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '100x40'
       - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '100x4 102x36'
+        values: '100x4 102x20 100x16'
     alert_rule_test:
       - eval_time: 2m
         alertname: StockVWAPDeviation
@@ -122,6 +128,9 @@ tests:
             exp_annotations:
               summary: INFY is 2.00% away from VWAP
               description: NSE:INFY has traded at least 2% away from its volume weighted average price for 3 minutes.
+      - eval_time: 7m
+        alertname: StockVWAPDeviation
+        exp_alerts: []
 
   - name: bullish 5m/30m moving average crossover
     interval: 15s
@@ -140,3 +149,13 @@ tests:
             exp_annotations:
               summary: INFY bullish 5m/30m moving average crossover
               description: The 5 minute average price of NSE:INFY crossed its 30 minute average (bullish).
+      - eval_time: 35m
+        alertname: StockMACrossover
+        exp_alerts:
+          - exp_labels: {<<: *infy, direction: bullish, severity: info, category: price, layer: condition}
+            exp_annotations:
+              summary: INFY bullish 5m/30m moving average crossover
+              description: The 5 minute average price of NSE:INFY crossed its 30 minute average (bullish).
+      - eval_time: 37m
+        alertname: StockMACrossover
+        exp_alerts: []

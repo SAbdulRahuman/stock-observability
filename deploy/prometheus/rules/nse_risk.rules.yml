@@ -131,6 +131,7 @@ groups:
       - record: portfolio:day_return:percent
         expr: portfolio:day_change:sum / ((portfolio:holding_value:sum - portfolio:day_change:sum) > 0) * 100
       # PortfolioVaRBreach
+      #   Clearance: Today's portfolio loss returns to or below the historical VaR threshold, or the market closes; missing portfolio/VaR inputs are unavailable.
       #   What:  Fires when today's portfolio loss is larger than its historical 1-day VaR(95); value = loss in percent.
       #   How:   -portfolio:day_return:percent > portfolio:var_95_1d:percent, and on() stock_market_open == 1, for: 5m.
       #   Debug: portfolio:day_return:percent and portfolio:var_95_1d:percent. Silent before 20 EOD portfolio snapshots,
@@ -258,6 +259,7 @@ groups:
     interval: 1m
     rules:
       # StockAbnormalReturn
+      #   Clearance: Residual returns inside the +/-3 sigma band, the 60-residual warm-up/count guard fails, or the market closes.
       #   What:  Fires (direction=bullish/bearish) when a core equity's 15m abnormal return exceeds 3 standard deviations
       #          of its own residuals over the last day; value = abnormal return in percent.
       #   How:   label_replace(x > 3 * stddev_over_time(x[1d]), "direction", "bullish") or the < -3 sigma side as bearish,
@@ -281,6 +283,7 @@ groups:
           description: "The 15-minute return of {{ $labels.exchange }}:{{ $labels.symbol }} deviates from its 60-minute market model by more than 3 standard deviations of the residual."
           effectiveness: '{{ with printf `alert:hit_rate_5d:ratio{alertname="StockAbnormalReturn",direction=%q,horizon="15m"}` $labels.direction | query }}15m hit rate over the last 5 days: {{ . | first | value | humanizePercentage }}{{ else }}No history yet{{ end }}'
       # MarketImpliedMoveExceeded
+      #   Clearance: Absolute index move returns to twice the valid implied-move threshold or the market closes; missing VIX/price data is unavailable.
       #   What:  Fires when NIFTY 50 has moved (either way) more than twice the VIX-implied 1-day standard deviation from
       #          the previous close; value = absolute move in points.
       #   How:   abs(max(NIFTY 50 last) - max(NIFTY 50 previous close)) > on() 2 * market:implied_move:points{horizon="1d"};

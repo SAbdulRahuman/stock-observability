@@ -249,6 +249,7 @@ groups:
     interval: 1m
     rules:
       # MarketRegimeChange
+      #   Clearance: The current regime appears in the 15m-offset series (event window expires); absent regime data is unavailable.
       #   What:  Fires when the market regime differs from the one 15 minutes ago; label `regime` is the new
       #          regime. Stays active up to 15m (until the offset catches up), then resolves.
       #   How:   market:regime:info unless market:regime:info offset 15m (matches on all labels incl. regime),
@@ -267,6 +268,7 @@ groups:
           summary: "Market regime is now {{ $labels.regime }}"
           description: "The NSE market regime changed to {{ $labels.regime }} within the last 15 minutes (precedence-ordered heuristic from breadth, momentum, volatility, liquidity and trend scores)."
       # MarketStressIncident
+      #   Clearance: Stress score falls to 70 or less or the market closes; missing component scores remove the alert as unavailable.
       #   What:  Fires when the market stress score stays above 70 for 5 minutes during the session. $value is
       #          the stress score.
       #   How:   market:stress_score:index > 70 and on() stock_market_open == 1; for: 5m.
