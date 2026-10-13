@@ -34,18 +34,18 @@ tests:
       - eval_time: 2m15s
         alertname: StockPriceDataInvalid
         exp_alerts:
-          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: INVALID, sector: IT, instrument_type: EQ, tier: core, severity: critical, category: data_quality, layer: incident}
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: INVALID, sector: IT, instrument_type: EQ, tier: core, severity: critical, category: quality, layer: incident, incident: data_quality}
             exp_annotations:
               summary: Missing or non-positive last price for INVALID
               description: No valid positive stock_last_price is available for NSE:INVALID during the active session.
-          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: MISSING, sector: IT, instrument_type: EQ, tier: core, severity: critical, category: data_quality, layer: incident}
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: MISSING, sector: IT, instrument_type: EQ, tier: core, severity: critical, category: quality, layer: incident, incident: data_quality}
             exp_annotations:
               summary: Missing or non-positive last price for MISSING
               description: No valid positive stock_last_price is available for NSE:MISSING during the active session.
       - eval_time: 3m
         alertname: StockPriceDataInvalid
         exp_alerts:
-          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: MISSING, sector: IT, instrument_type: EQ, tier: core, severity: critical, category: data_quality, layer: incident}
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: MISSING, sector: IT, instrument_type: EQ, tier: core, severity: critical, category: quality, layer: incident, incident: data_quality}
             exp_annotations:
               summary: Missing or non-positive last price for MISSING
               description: No valid positive stock_last_price is available for NSE:MISSING during the active session.
@@ -61,7 +61,7 @@ tests:
       - eval_time: 3m
         alertname: StockTickStale
         exp_alerts:
-          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core, severity: warning, category: data_freshness, layer: condition}
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core, severity: warning, category: infra, layer: incident}
             exp_annotations:
               summary: INFY has received no tick for 121s
               description: NSE:INFY has no recent tick during the active market session.
@@ -87,11 +87,11 @@ tests:
       - eval_time: 8m
         alertname: StockSignificantPriceMovement
         exp_alerts:
-          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: DOWN, sector: IT, instrument_type: EQ, tier: core, direction: down, severity: warning, category: market_movement, layer: condition}
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: DOWN, sector: IT, instrument_type: EQ, tier: core, direction: down, severity: warning, category: price, layer: condition}
             exp_annotations:
               summary: DOWN down 5m return -2.00%
               description: NSE:DOWN moved at least 2% over five minutes. This is an observation, not a prediction or trading recommendation.
-          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: UP, sector: IT, instrument_type: EQ, tier: core, direction: up, severity: warning, category: market_movement, layer: condition}
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: UP, sector: IT, instrument_type: EQ, tier: core, direction: up, severity: warning, category: price, layer: condition}
             exp_annotations:
               summary: UP up 5m return 2.00%
               description: NSE:UP moved at least 2% over five minutes. This is an observation, not a prediction or trading recommendation.
@@ -123,14 +123,14 @@ tests:
       - eval_time: 5m30s
         alertname: StockRelativeVolumeHigh
         exp_alerts:
-          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: VOL, sector: IT, instrument_type: EQ, tier: core, severity: warning, category: volume_anomaly, layer: condition}
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: VOL, sector: IT, instrument_type: EQ, tier: core, severity: warning, category: flow, layer: condition}
             exp_annotations:
               summary: VOL relative volume is 3.00x
               description: NSE:VOL volume is at least 3x its time-adjusted 14-session baseline.
       - eval_time: 8m
         alertname: StockPriceVolumeSurge
         exp_alerts:
-          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: SURGE, sector: IT, instrument_type: EQ, tier: core, severity: warning, category: market_movement, layer: condition}
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: SURGE, sector: IT, instrument_type: EQ, tier: core, severity: warning, category: flow, layer: condition}
             exp_annotations:
               summary: SURGE 5m move and relative-volume surge
               description: NSE:SURGE moved at least 2% over five minutes while trading at least 2x its time-adjusted volume baseline.

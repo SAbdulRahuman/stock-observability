@@ -62,7 +62,7 @@ groups:
           and on(job, instance, exchange, symbol, sector, instrument_type, tier) stock_tick_age_seconds < 60
           and on() stock_market_open == 1
         for: 2m
-        labels: {severity: warning, category: market_movement, layer: condition}
+        labels: {severity: warning, category: price, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} {{ $labels.direction }} 5m return {{ $value | printf \"%.2f\" }}%"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} moved at least 2% over five minutes. This is an observation, not a prediction or trading recommendation."
@@ -246,7 +246,7 @@ groups:
           and on(job, instance, exchange, symbol, sector, instrument_type, tier) stock_tick_age_seconds < 60
           and on() stock_market_open == 1
         for: 3m
-        labels: {severity: warning, category: volume_anomaly, layer: condition}
+        labels: {severity: warning, category: flow, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} relative volume is {{ $value | printf \"%.2f\" }}x"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} volume is at least 3x its time-adjusted 14-session baseline."
@@ -263,7 +263,7 @@ groups:
           and on(job, instance, exchange, symbol, sector, instrument_type, tier) stock_tick_age_seconds < 60
           and on() stock_market_open == 1
         for: 2m
-        labels: {severity: warning, category: market_movement, layer: condition}
+        labels: {severity: warning, category: flow, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} 5m move and relative-volume surge"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} moved at least 2% over five minutes while trading at least 2x its time-adjusted volume baseline."
@@ -546,7 +546,7 @@ groups:
           stock_tick_age_seconds{instrument_type="EQ"} > 120
           and on() stock_market_open == 1
         for: 2m
-        labels: {severity: warning, category: data_freshness, layer: condition}
+        labels: {severity: warning, category: infra, layer: incident}
         annotations:
           summary: "{{ $labels.symbol }} has received no tick for {{ $value | humanize }}s"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} has no recent tick during the active market session."
@@ -569,7 +569,7 @@ groups:
           )
           and on() stock_market_open == 1
         for: 1m
-        labels: {severity: critical, category: data_quality, layer: incident}
+        labels: {severity: critical, category: quality, layer: incident, incident: data_quality}
         annotations:
           summary: "Missing or non-positive last price for {{ $labels.symbol }}"
           description: "No valid positive stock_last_price is available for {{ $labels.exchange }}:{{ $labels.symbol }} during the active session."
