@@ -36,6 +36,18 @@ scrape_configs:
     scrape_protocols: [PrometheusProto, OpenMetricsText1.0.0, PrometheusText0.0.4]
     params:
       tier: [core]
+      exclude[]: [daily]
+    static_configs:
+      - targets: ["127.0.0.1:9101"]
+
+  - job_name: stock_daily
+    scrape_interval: 60s
+    scrape_timeout: 10s
+    sample_limit: 15000
+    label_limit: 16
+    params:
+      tier: [core]
+      collect[]: [daily]
     static_configs:
       - targets: ["127.0.0.1:9101"]
 

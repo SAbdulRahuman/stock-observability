@@ -41,6 +41,11 @@ cases=(
   'market-incident|alertname=MarketBreadthStress category=market severity=warning layer=incident incident=breadth_stress direction=bearish'
   'market-incident|alertname=MarketCircuitCluster category=market severity=warning layer=incident incident=circuit_cluster band=lower'
   'market-incident|alertname=KPIDataQualityDegraded category=quality severity=warning layer=incident incident=kpi_data_quality kpi=stock:rsi_14m:index'
+  # Daily forecasts (SF-1xx) and their verdicts: own receiver, ahead of market-digest; data quality stays an incident.
+  'stock-forecast|alertname=ForecastStockBullishTrendConfirmed category=forecast severity=info layer=condition condition=daily_trend rule_id=SF-101 technique=trend direction=bullish horizon=20d exchange=NSE symbol=INFY'
+  'stock-forecast|alertname=ForecastStockSignalConfluence category=forecast severity=info layer=condition condition=forecast_confluence rule_id=SF-129 direction=bearish horizon=5d exchange=NSE symbol=INFY'
+  'stock-forecast|alertname=ForecastStockOutcomeHit category=forecast severity=info layer=outcome outcome=hit rule_id=SF-101 direction=bullish horizon=20d exchange=NSE symbol=INFY'
+  'market-incident|alertname=ForecastStockInputsStale category=quality severity=warning layer=incident incident=forecast_inputs rule_id=SF-DQ-1 exchange=NSE symbol=INFY'
   # Base alerts with a layer label keep their routes.
   'stock-market|alertname=StockPriceSpikeUp category=price severity=warning layer=condition exchange=NSE symbol=INFY'
   'stock-info|alertname=StockGapOpen category=price severity=info layer=condition exchange=NSE symbol=INFY'

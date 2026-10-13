@@ -1,0 +1,1149 @@
+# Daily stock forecast rules (stock-observability-proposal/PrometheusRules/Stock_forecast_Prometheus_Rules.md).
+# Inputs: the exporter `daily` collector (job stock_daily, 60s) computed from daily candles, plus
+# stock_sma_50d_price (stock_core), stock:alpha_20d:percent (nse_risk) and Quant Lab ar1_daily.
+# Values change once per completed session; rules are not gated on market hours.
+#   signal layer  stock:forecast_signal:value{rule_id, technique, direction, horizon} = condition of each SF rule
+#   alerts        Forecast<StockName> read their signal (SF-101..129), verdicts ForecastStockOutcome* (SF-OUT)
+groups:
+  - name: nse_forecast
+    interval: 1m
+    rules:
+      # stock:sma_spread_20_50d:percent
+      #   What:  Gap between the 20- and 50-session daily SMAs in percent; > 0 = short average above the long one.
+      #   How:   (stock_sma_20d_price / on(exchange, symbol) group_left() (stock_sma_50d_price > 0) - 1) * 100.
+      #   Debug: stock_sma_20d_price (stock_daily), stock_sma_50d_price (stock_core). Empty with < 50 daily closes.
+      - record: stock:sma_spread_20_50d:percent
+        expr: (stock_sma_20d_price / on(exchange, symbol) group_left() (stock_sma_50d_price > 0) - 1) * 100
+      # stock:realized_vol_ratio_10d_60d:ratio
+      #   What:  10-session realized volatility divided by the 60-session baseline (2 = twice as volatile).
+      #   How:   stock_realized_vol_10d_percent / (stock_realized_vol_60d_percent > 0), one-to-one.
+      #   Debug: both inputs come from the daily collector; empty with < 61 closes or a flat history.
+      - record: stock:realized_vol_ratio_10d_60d:ratio
+        expr: stock_realized_vol_10d_percent / (stock_realized_vol_60d_percent > 0)
+      # stock:relative_return_20d_nifty:percent
+      #   What:  20-session return of a core equity minus that of NIFTY 50, in percentage points.
+      #   How:   EQ return - on() group_left() NIFTY 50 return, kept only when both refer to the same session
+      #          (equal stock_daily_session_timestamp_seconds).
+      #   Debug: stock_daily_return_20d_percent{symbol="NIFTY 50"}; empty when the benchmark is missing or older.
+      - record: stock:relative_return_20d_nifty:percent
+        expr: |
+          (
+              stock_daily_return_20d_percent{instrument_type="EQ"}
+            - on() group_left()
+              stock_daily_return_20d_percent{instrument_type="INDEX", symbol="NIFTY 50"}
+          )
+          and on(exchange, symbol)
+          (
+              stock_daily_session_timestamp_seconds{instrument_type="EQ"}
+            == on() group_left()
+              stock_daily_session_timestamp_seconds{instrument_type="INDEX", symbol="NIFTY 50"}
+          )
+      # stock:momentum_6_1:percent
+      #   What:  6-1 momentum of core equities whose daily session is current (input of SF-121 ranks).
+      #   How:   stock_daily_return_126_21d_percent{EQ} and on(exchange, symbol) session lag == 0.
+      #   Debug: needs 127 daily closes; stale instruments are excluded so ranks use one session.
+      - record: stock:momentum_6_1:percent
+        expr: |
+          stock_daily_return_126_21d_percent{instrument_type="EQ"}
+          and on(exchange, symbol) stock_daily_session_lag_sessions == 0
+      # stock:sector_relative_return_20d:percent
+      #   What:  20-session return minus the median of the stock's sector, in percentage points (SF-122).
+      #   How:   return - on(sector) group_left() quantile by (sector) (0.5, return of current instruments), kept for
+      #          current instruments in sectors with >= 5 current members and a non-empty sector label.
+      #   Debug: count by (sector) (stock_daily_return_20d_percent{instrument_type="EQ"}).
+      - record: stock:sector_relative_return_20d:percent
+        expr: |
+          (
+              stock_daily_return_20d_percent{instrument_type="EQ", sector!=""}
+            - on(sector) group_left()
+              quantile by (sector) (0.5,
+                  stock_daily_return_20d_percent{instrument_type="EQ", sector!=""}
+                and on(exchange, symbol) stock_daily_session_lag_sessions == 0
+              )
+          )
+          and on(exchange, symbol) stock_daily_session_lag_sessions == 0
+          and on(sector)
+            count by (sector) (
+                stock_daily_return_20d_percent{instrument_type="EQ", sector!=""}
+              and on(exchange, symbol) stock_daily_session_lag_sessions == 0
+            ) >= 5
+      # stock:ewma_vol_forecast_ratio:ratio
+      #   What:  EWMA one-step volatility forecast divided by the 60-session realized volatility (SF-127).
+      #   How:   stock_daily_ewma_vol_forecast_percent{EQ} / on(exchange, symbol) group_left() (stock_realized_vol_60d_percent > 0).
+      #   Debug: empty with < 61 daily closes.
+      - record: stock:ewma_vol_forecast_ratio:ratio
+        expr: |
+          stock_daily_ewma_vol_forecast_percent{instrument_type="EQ"}
+          / on(exchange, symbol) group_left() (stock_realized_vol_60d_percent > 0)
+      # stock:daily_feature:zscore {feature=...}
+      #   What:  Cross-sectional z-score of an SF-126 feature among current core equities, clamped to +-3.
+      #   How:   (x - avg(x)) / stddev(x) over instruments with session lag 0; one rule per feature.
+      #   Debug: absent when every instrument has the same value (stddev 0) or the input is missing.
+      - record: stock:daily_feature:zscore
+        labels: {feature: return_5d}
+        expr: |
+          clamp(
+              (
+                  stock_daily_return_5d_percent{instrument_type="EQ"}
+                - on() group_left() avg(stock_daily_return_5d_percent{instrument_type="EQ"} and on(exchange, symbol) stock_daily_session_lag_sessions == 0)
+              )
+            / on() group_left() (stddev(stock_daily_return_5d_percent{instrument_type="EQ"} and on(exchange, symbol) stock_daily_session_lag_sessions == 0) > 0),
+            -3, 3
+          )
+          and on(exchange, symbol) stock_daily_session_lag_sessions == 0
+      - record: stock:daily_feature:zscore
+        labels: {feature: rsi_14d}
+        expr: |
+          clamp(
+              (
+                  stock_rsi_14d_index{instrument_type="EQ"}
+                - on() group_left() avg(stock_rsi_14d_index{instrument_type="EQ"} and on(exchange, symbol) stock_daily_session_lag_sessions == 0)
+              )
+            / on() group_left() (stddev(stock_rsi_14d_index{instrument_type="EQ"} and on(exchange, symbol) stock_daily_session_lag_sessions == 0) > 0),
+            -3, 3
+          )
+          and on(exchange, symbol) stock_daily_session_lag_sessions == 0
+      - record: stock:daily_feature:zscore
+        labels: {feature: relative_volume_20d}
+        expr: |
+          clamp(
+              (
+                  stock_daily_relative_volume_20d_ratio{instrument_type="EQ"}
+                - on() group_left() avg(stock_daily_relative_volume_20d_ratio{instrument_type="EQ"} and on(exchange, symbol) stock_daily_session_lag_sessions == 0)
+              )
+            / on() group_left() (stddev(stock_daily_relative_volume_20d_ratio{instrument_type="EQ"} and on(exchange, symbol) stock_daily_session_lag_sessions == 0) > 0),
+            -3, 3
+          )
+          and on(exchange, symbol) stock_daily_session_lag_sessions == 0
+      - record: stock:daily_feature:zscore
+        labels: {feature: vol_ratio_10d_60d}
+        expr: |
+          clamp(
+              (
+                  stock:realized_vol_ratio_10d_60d:ratio{instrument_type="EQ"}
+                - on() group_left() avg(stock:realized_vol_ratio_10d_60d:ratio{instrument_type="EQ"} and on(exchange, symbol) stock_daily_session_lag_sessions == 0)
+              )
+            / on() group_left() (stddev(stock:realized_vol_ratio_10d_60d:ratio{instrument_type="EQ"} and on(exchange, symbol) stock_daily_session_lag_sessions == 0) > 0),
+            -3, 3
+          )
+          and on(exchange, symbol) stock_daily_session_lag_sessions == 0
+      - record: stock:daily_feature:zscore
+        labels: {feature: relative_return_20d}
+        expr: |
+          clamp(
+              (
+                  stock:relative_return_20d_nifty:percent
+                - on() group_left() avg(stock:relative_return_20d_nifty:percent and on(exchange, symbol) stock_daily_session_lag_sessions == 0)
+              )
+            / on() group_left() (stddev(stock:relative_return_20d_nifty:percent and on(exchange, symbol) stock_daily_session_lag_sessions == 0) > 0),
+            -3, 3
+          )
+          and on(exchange, symbol) stock_daily_session_lag_sessions == 0
+      # stock:prob_up_5d:ratio
+      #   What:  Logistic probability (0-1) that the stock beats NIFTY 50 over the next 5 sessions (SF-126).
+      #   How:   1 / (1 + exp(-(b + sum_f w_f z_f))) with w/b from the forecastref.py textfile
+      #          (stock_forecast_model_weight/intercept{model="logit_5d"}); all 5 features required.
+      #   Debug: stock_forecast_model_info; empty until weights are published or when a feature is missing.
+      - record: stock:prob_up_5d:ratio
+        expr: |
+          1 / (1 + exp(-(
+              sum by (exchange, symbol, sector, instrument_type, tier) (
+                  stock:daily_feature:zscore
+                * on(feature) group_left() max by (feature) (stock_forecast_model_weight{model="logit_5d"})
+              )
+            + on() group_left() max(stock_forecast_model_intercept{model="logit_5d"})
+          )))
+          and on(exchange, symbol) count by (exchange, symbol) (stock:daily_feature:zscore) == 5
+
+  - name: nse_forecast_state
+    interval: 1m
+    rules:
+      # stock:forecast_state:bool {signal=...}
+      #   What:  Hysteresis state (1 or absent) of the rules with different fire and clear thresholds.
+      #   How:   (x beyond the fire threshold) or (x within the clear threshold and the state was 1 in the last 30m);
+      #          30m is longer than an exporter restart and shorter than the gap between two sessions.
+      #   Debug: the input of each state; a Prometheus outage > 30m restarts the state from the fire threshold.
+      - record: stock:forecast_state:bool
+        labels: {signal: vol_expansion}
+        expr: |
+          (stock:realized_vol_ratio_10d_60d:ratio > 2) * 0 + 1
+          or
+            ((stock:realized_vol_ratio_10d_60d:ratio >= 1.5) * 0 + 1
+              and on(exchange, symbol) last_over_time(stock:forecast_state:bool{signal="vol_expansion"}[30m]))
+      - record: stock:forecast_state:bool
+        labels: {signal: vol_compression}
+        expr: |
+          (stock:realized_vol_ratio_10d_60d:ratio < 0.5) * 0 + 1
+          or
+            ((stock:realized_vol_ratio_10d_60d:ratio <= 0.7) * 0 + 1
+              and on(exchange, symbol) last_over_time(stock:forecast_state:bool{signal="vol_compression"}[30m]))
+      - record: stock:forecast_state:bool
+        labels: {signal: rs_outperformance}
+        expr: |
+          (stock:relative_return_20d_nifty:percent > 3) * 0 + 1
+          or
+            ((stock:relative_return_20d_nifty:percent >= 1) * 0 + 1
+              and on(exchange, symbol) last_over_time(stock:forecast_state:bool{signal="rs_outperformance"}[30m]))
+      - record: stock:forecast_state:bool
+        labels: {signal: rs_underperformance}
+        expr: |
+          (stock:relative_return_20d_nifty:percent < -3) * 0 + 1
+          or
+            ((stock:relative_return_20d_nifty:percent <= -1) * 0 + 1
+              and on(exchange, symbol) last_over_time(stock:forecast_state:bool{signal="rs_underperformance"}[30m]))
+      - record: stock:forecast_state:bool
+        labels: {signal: adx_trend}
+        expr: |
+          (stock_adx_14d_index{instrument_type="EQ"} > 25) * 0 + 1
+          or
+            ((stock_adx_14d_index{instrument_type="EQ"} >= 20) * 0 + 1
+              and on(exchange, symbol) last_over_time(stock:forecast_state:bool{signal="adx_trend"}[30m]))
+      - record: stock:forecast_state:bool
+        labels: {signal: zscore_low}
+        expr: |
+          (stock_daily_close_zscore_20d_sigma{instrument_type="EQ"} <= -2) * 0 + 1
+          or
+            ((stock_daily_close_zscore_20d_sigma{instrument_type="EQ"} < -1) * 0 + 1
+              and on(exchange, symbol) last_over_time(stock:forecast_state:bool{signal="zscore_low"}[30m]))
+      - record: stock:forecast_state:bool
+        labels: {signal: zscore_high}
+        expr: |
+          (stock_daily_close_zscore_20d_sigma{instrument_type="EQ"} >= 2) * 0 + 1
+          or
+            ((stock_daily_close_zscore_20d_sigma{instrument_type="EQ"} > 1) * 0 + 1
+              and on(exchange, symbol) last_over_time(stock:forecast_state:bool{signal="zscore_high"}[30m]))
+      - record: stock:forecast_state:bool
+        labels: {signal: momentum_top}
+        expr: |
+          (stock:momentum_6_1:percent > on() group_left() quantile(0.9, stock:momentum_6_1:percent)) * 0 + 1
+          or
+            ((stock:momentum_6_1:percent > on() group_left() quantile(0.8, stock:momentum_6_1:percent)) * 0 + 1
+              and on(exchange, symbol) last_over_time(stock:forecast_state:bool{signal="momentum_top"}[30m]))
+      - record: stock:forecast_state:bool
+        labels: {signal: momentum_bottom}
+        expr: |
+          (stock:momentum_6_1:percent < on() group_left() quantile(0.1, stock:momentum_6_1:percent)) * 0 + 1
+          or
+            ((stock:momentum_6_1:percent < on() group_left() quantile(0.2, stock:momentum_6_1:percent)) * 0 + 1
+              and on(exchange, symbol) last_over_time(stock:forecast_state:bool{signal="momentum_bottom"}[30m]))
+      - record: stock:forecast_state:bool
+        labels: {signal: sector_leader}
+        expr: |
+          (stock:sector_relative_return_20d:percent > 3) * 0 + 1
+          or
+            ((stock:sector_relative_return_20d:percent >= 1) * 0 + 1
+              and on(exchange, symbol) last_over_time(stock:forecast_state:bool{signal="sector_leader"}[30m]))
+      - record: stock:forecast_state:bool
+        labels: {signal: sector_laggard}
+        expr: |
+          (stock:sector_relative_return_20d:percent < -3) * 0 + 1
+          or
+            ((stock:sector_relative_return_20d:percent <= -1) * 0 + 1
+              and on(exchange, symbol) last_over_time(stock:forecast_state:bool{signal="sector_laggard"}[30m]))
+      - record: stock:forecast_state:bool
+        labels: {signal: alpha_high}
+        expr: |
+          (last_over_time(stock:alpha_20d:percent{instrument_type="EQ"}[35m]) > 30) * 0 + 1
+          or
+            ((last_over_time(stock:alpha_20d:percent{instrument_type="EQ"}[35m]) >= 10) * 0 + 1
+              and on(exchange, symbol) last_over_time(stock:forecast_state:bool{signal="alpha_high"}[30m]))
+      - record: stock:forecast_state:bool
+        labels: {signal: prob_up_high}
+        expr: |
+          (stock:prob_up_5d:ratio > 0.6) * 0 + 1
+          or
+            ((stock:prob_up_5d:ratio >= 0.55) * 0 + 1
+              and on(exchange, symbol) last_over_time(stock:forecast_state:bool{signal="prob_up_high"}[30m]))
+      - record: stock:forecast_state:bool
+        labels: {signal: prob_up_low}
+        expr: |
+          (stock:prob_up_5d:ratio < 0.4) * 0 + 1
+          or
+            ((stock:prob_up_5d:ratio <= 0.45) * 0 + 1
+              and on(exchange, symbol) last_over_time(stock:forecast_state:bool{signal="prob_up_low"}[30m]))
+      - record: stock:forecast_state:bool
+        labels: {signal: ewma_vol_spike}
+        expr: |
+          (stock:ewma_vol_forecast_ratio:ratio > 1.5) * 0 + 1
+          or
+            ((stock:ewma_vol_forecast_ratio:ratio >= 1.2) * 0 + 1
+              and on(exchange, symbol) last_over_time(stock:forecast_state:bool{signal="ewma_vol_spike"}[30m]))
+
+  - name: nse_forecast_signals
+    interval: 1m
+    rules:
+      # stock:forecast_signal:value {rule_id, technique, direction, horizon}
+      #   What:  Condition of each SF rule, valued with its measured value; read by the alerts, SF-129 and the verdicts.
+      #   How:   one recording rule per rule and direction (PRD §10); static labels identify the rule.
+      #   Debug: query the rule's inputs listed in its PRD section; absent inputs give no signal.
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-101, technique: trend, direction: bullish, horizon: 5d}
+        expr: |
+          (stock_daily_close_price{instrument_type="EQ"} > on(exchange, symbol) group_left() stock_sma_20d_price)
+          and on(exchange, symbol) (stock_sma_20d_price > on(exchange, symbol) stock_sma_50d_price)
+          and on(exchange, symbol) stock_daily_trend_streak_sessions{direction="bullish"} >= 2
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-102, technique: trend, direction: bearish, horizon: 5d}
+        expr: |
+          (stock_daily_close_price{instrument_type="EQ"} < on(exchange, symbol) group_left() stock_sma_20d_price)
+          and on(exchange, symbol) (stock_sma_20d_price < on(exchange, symbol) stock_sma_50d_price)
+          and on(exchange, symbol) stock_daily_trend_streak_sessions{direction="bearish"} >= 2
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-103, technique: momentum, direction: bullish, horizon: 3d}
+        expr: stock_daily_return_5d_percent{instrument_type="EQ"} > 3 and on(exchange, symbol) stock_rsi_14d_index > 60
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-104, technique: momentum, direction: bearish, horizon: 3d}
+        expr: stock_daily_return_5d_percent{instrument_type="EQ"} < -3 and on(exchange, symbol) stock_rsi_14d_index < 40
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-105, technique: trend, direction: bullish, horizon: 20d}
+        expr: stock_daily_signal_age_sessions{signal="sma_20d_50d_cross", direction="bullish", instrument_type="EQ"} <= 4
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-106, technique: trend, direction: bearish, horizon: 20d}
+        expr: stock_daily_signal_age_sessions{signal="sma_20d_50d_cross", direction="bearish", instrument_type="EQ"} <= 4
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-107, technique: flow, direction: bullish, horizon: 3d}
+        expr: stock_daily_return_1d_percent{instrument_type="EQ"} > 2 and on(exchange, symbol) stock_daily_relative_volume_20d_ratio > 1.5
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-108, technique: flow, direction: bearish, horizon: 3d}
+        expr: stock_daily_return_1d_percent{instrument_type="EQ"} < -2 and on(exchange, symbol) stock_daily_relative_volume_20d_ratio > 1.5
+      # direction comes from the event series.
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-109, technique: momentum, horizon: 5d}
+        expr: stock_daily_signal_age_sessions{signal="rsi_divergence", instrument_type="EQ"} <= 4
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-110, technique: mean_reversion, direction: bullish, horizon: 5d}
+        expr: |
+          stock_daily_signal_age_sessions{signal="rsi_oversold_exit", instrument_type="EQ"} <= 4
+          and on(exchange, symbol) (stock_rsi_14d_index >= 30) <= 40
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-111, technique: mean_reversion, direction: bearish, horizon: 5d}
+        expr: |
+          stock_daily_signal_age_sessions{signal="rsi_overbought_exit", instrument_type="EQ"} <= 4
+          and on(exchange, symbol) (stock_rsi_14d_index >= 60) <= 70
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-112, technique: volatility, direction: neutral, horizon: 5d}
+        expr: |
+          stock:realized_vol_ratio_10d_60d:ratio{instrument_type="EQ"}
+          and on(exchange, symbol) stock:forecast_state:bool{signal="vol_expansion"}
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-113, technique: volatility, direction: neutral, horizon: 5d}
+        expr: |
+          stock:realized_vol_ratio_10d_60d:ratio{instrument_type="EQ"}
+          and on(exchange, symbol) stock:forecast_state:bool{signal="vol_compression"}
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-114, technique: relative_strength, direction: bullish, horizon: 20d}
+        expr: stock:relative_return_20d_nifty:percent and on(exchange, symbol) stock:forecast_state:bool{signal="rs_outperformance"}
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-115, technique: relative_strength, direction: bearish, horizon: 20d}
+        expr: stock:relative_return_20d_nifty:percent and on(exchange, symbol) stock:forecast_state:bool{signal="rs_underperformance"}
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-116, technique: trend, direction: bullish, horizon: 5d}
+        expr: |
+          stock_daily_signal_age_sessions{signal="macd_cross", direction="bullish", instrument_type="EQ"} <= 4
+          and on(exchange, symbol) stock_daily_macd_histogram_price > 0
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-116, technique: trend, direction: bearish, horizon: 5d}
+        expr: |
+          stock_daily_signal_age_sessions{signal="macd_cross", direction="bearish", instrument_type="EQ"} <= 4
+          and on(exchange, symbol) stock_daily_macd_histogram_price < 0
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-117, technique: trend, direction: bullish, horizon: 5d}
+        expr: |
+          stock_adx_14d_index{instrument_type="EQ"}
+          and on(exchange, symbol) stock:forecast_state:bool{signal="adx_trend"}
+          and on(exchange, symbol) (stock_di_plus_14d_index > stock_di_minus_14d_index)
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-117, technique: trend, direction: bearish, horizon: 5d}
+        expr: |
+          stock_adx_14d_index{instrument_type="EQ"}
+          and on(exchange, symbol) stock:forecast_state:bool{signal="adx_trend"}
+          and on(exchange, symbol) (stock_di_plus_14d_index < stock_di_minus_14d_index)
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-118, technique: trend, direction: bullish, horizon: 5d}
+        expr: stock_daily_trend_slope_20d_percent{instrument_type="EQ"} >= 30 and on(exchange, symbol) stock_daily_trend_r2_20d_ratio >= 0.7
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-118, technique: trend, direction: bearish, horizon: 5d}
+        expr: stock_daily_trend_slope_20d_percent{instrument_type="EQ"} <= -30 and on(exchange, symbol) stock_daily_trend_r2_20d_ratio >= 0.7
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-119, technique: mean_reversion, direction: bullish, horizon: 5d}
+        expr: stock_daily_close_zscore_20d_sigma{instrument_type="EQ"} and on(exchange, symbol) stock:forecast_state:bool{signal="zscore_low"}
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-119, technique: mean_reversion, direction: bearish, horizon: 5d}
+        expr: stock_daily_close_zscore_20d_sigma{instrument_type="EQ"} and on(exchange, symbol) stock:forecast_state:bool{signal="zscore_high"}
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-120, technique: volatility, direction: neutral, horizon: 5d}
+        expr: stock_daily_squeeze_ratio{instrument_type="EQ"} < 1
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-121, technique: relative_strength, direction: bullish, horizon: 20d}
+        expr: |
+          stock:momentum_6_1:percent
+          and on(exchange, symbol) stock:forecast_state:bool{signal="momentum_top"}
+          and on() count(stock:momentum_6_1:percent) >= 50
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-121, technique: relative_strength, direction: bearish, horizon: 20d}
+        expr: |
+          stock:momentum_6_1:percent
+          and on(exchange, symbol) stock:forecast_state:bool{signal="momentum_bottom"}
+          and on() count(stock:momentum_6_1:percent) >= 50
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-122, technique: relative_strength, direction: bullish, horizon: 20d}
+        expr: stock:sector_relative_return_20d:percent and on(exchange, symbol) stock:forecast_state:bool{signal="sector_leader"}
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-122, technique: relative_strength, direction: bearish, horizon: 20d}
+        expr: stock:sector_relative_return_20d:percent and on(exchange, symbol) stock:forecast_state:bool{signal="sector_laggard"}
+      # stock:alpha_20d:percent is written every 30m by nse_risk_daily, hence last_over_time.
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-123, technique: relative_strength, direction: bullish, horizon: 20d}
+        expr: |
+          last_over_time(stock:alpha_20d:percent{instrument_type="EQ"}[35m])
+          and on(exchange, symbol) stock:forecast_state:bool{signal="alpha_high"}
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-124, technique: flow, direction: bullish, horizon: 5d}
+        expr: stock_daily_obv_slope_20d_ratio{instrument_type="EQ"} > 0.1 and on(exchange, symbol) abs(stock_daily_return_20d_percent) <= 2
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-124, technique: flow, direction: bearish, horizon: 5d}
+        expr: stock_daily_obv_slope_20d_ratio{instrument_type="EQ"} < -0.1 and on(exchange, symbol) abs(stock_daily_return_20d_percent) <= 2
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-125, technique: model, direction: bullish, horizon: 5d}
+        expr: |
+          stock_prediction_expected_return_percent{model="ar1_daily", horizon="5d"}
+          / (stock_prediction_volatility_percent{model="ar1_daily", horizon="5d"} > 0) > 1
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-125, technique: model, direction: bearish, horizon: 5d}
+        expr: |
+          stock_prediction_expected_return_percent{model="ar1_daily", horizon="5d"}
+          / (stock_prediction_volatility_percent{model="ar1_daily", horizon="5d"} > 0) < -1
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-126, technique: model, direction: bullish, horizon: 5d}
+        expr: stock:prob_up_5d:ratio and on(exchange, symbol) stock:forecast_state:bool{signal="prob_up_high"}
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-126, technique: model, direction: bearish, horizon: 5d}
+        expr: stock:prob_up_5d:ratio and on(exchange, symbol) stock:forecast_state:bool{signal="prob_up_low"}
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-127, technique: volatility, direction: neutral, horizon: 5d}
+        expr: stock:ewma_vol_forecast_ratio:ratio and on(exchange, symbol) stock:forecast_state:bool{signal="ewma_vol_spike"}
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-128, technique: pattern, direction: bullish, horizon: 3d}
+        expr: |
+          stock_daily_signal_age_sessions{signal="engulfing", direction="bullish", instrument_type="EQ"} == 0
+          and on(exchange, symbol) (stock_sma_20d_price < on(exchange, symbol) stock_sma_50d_price)
+          and on(exchange, symbol) stock_daily_relative_volume_20d_ratio > 1.2
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-128, technique: pattern, direction: bearish, horizon: 3d}
+        expr: |
+          stock_daily_signal_age_sessions{signal="engulfing", direction="bearish", instrument_type="EQ"} == 0
+          and on(exchange, symbol) (stock_sma_20d_price > on(exchange, symbol) stock_sma_50d_price)
+          and on(exchange, symbol) stock_daily_relative_volume_20d_ratio > 1.2
+
+  - name: nse_forecast_confluence
+    interval: 1m
+    rules:
+      # stock:forecast_confluence:count {direction}
+      #   What:  Number of distinct techniques with an active signal in the direction for an instrument (SF-129).
+      #   How:   count by (exchange, symbol) (count by (exchange, symbol, technique) (signals of the direction)),
+      #          volatility and confluence excluded; grouped by exchange and symbol only (Quant Lab has fewer labels).
+      #   Debug: stock:forecast_signal:value{symbol="X"} by technique.
+      - record: stock:forecast_confluence:count
+        labels: {direction: bullish}
+        expr: |
+          count by (exchange, symbol) (
+            count by (exchange, symbol, technique) (stock:forecast_signal:value{direction="bullish", technique!~"volatility|confluence"})
+          )
+      - record: stock:forecast_confluence:count
+        labels: {direction: bearish}
+        expr: |
+          count by (exchange, symbol) (
+            count by (exchange, symbol, technique) (stock:forecast_signal:value{direction="bearish", technique!~"volatility|confluence"})
+          )
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-129, technique: confluence, direction: bullish, horizon: 5d}
+        expr: |
+          stock:forecast_confluence:count{direction="bullish"} >= 3
+          unless on(exchange, symbol) stock:forecast_signal:value{direction="bearish", technique!~"volatility|confluence"}
+      - record: stock:forecast_signal:value
+        labels: {rule_id: SF-129, technique: confluence, direction: bearish, horizon: 5d}
+        expr: |
+          stock:forecast_confluence:count{direction="bearish"} >= 3
+          unless on(exchange, symbol) stock:forecast_signal:value{direction="bullish", technique!~"volatility|confluence"}
+
+  - name: nse_forecast_alerts
+    interval: 1m
+    rules:
+      # ForecastStockBullishTrendConfirmed
+      #   Clearance: The latest completed session breaks close > SMA20 > SMA50 (streak resets); then keep_firing_for 15m.
+      #   What:  SF-101, close above SMA20 above SMA50 for at least two completed sessions; value = close.
+      #   How:   stock:forecast_signal:value{rule_id="SF-101"} (nse_forecast_signals).
+      #   Debug: stock_daily_close_price, stock_sma_20d_price, stock_sma_50d_price, stock_daily_trend_streak_sessions.
+      - alert: ForecastStockBullishTrendConfirmed
+        expr: stock:forecast_signal:value{rule_id="SF-101"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_trend}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} bullish trend: close above SMA20 above SMA50"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} closed at {{ $value }} above its 20- and 50-session averages for at least 2 sessions; evaluated over the next {{ $labels.horizon }}. Consistent with an uptrend; not a guarantee or a recommendation."
+          clearance: "Clears when a completed session breaks the close > SMA20 > SMA50 alignment."
+          effectiveness: &effectiveness '{{ with printf `forecast:hit_rate_60d:ratio{rule_id=%q,direction=%q}` $labels.rule_id $labels.direction | query }}Live 60-day hit rate: {{ . | first | value | humanizePercentage }}{{ else }}Not evaluated yet{{ end }}'
+          dashboard: &dashboard "/grafana/d/nse-forecast?var-symbol={{ $labels.symbol }}"
+      # ForecastStockBearishTrendConfirmed
+      #   Clearance: The latest completed session breaks close < SMA20 < SMA50; then keep_firing_for 15m.
+      #   What:  SF-102, close below SMA20 below SMA50 for at least two completed sessions; value = close.
+      #   How:   stock:forecast_signal:value{rule_id="SF-102"}.
+      #   Debug: as SF-101.
+      - alert: ForecastStockBearishTrendConfirmed
+        expr: stock:forecast_signal:value{rule_id="SF-102"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_trend}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} bearish trend: close below SMA20 below SMA50"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} closed at {{ $value }} below its 20- and 50-session averages for at least 2 sessions; evaluated over the next {{ $labels.horizon }}. Consistent with a downtrend; not a guarantee or a recommendation."
+          clearance: "Clears when a completed session breaks the close < SMA20 < SMA50 alignment."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockBullishMomentumSurge
+      #   Clearance: A later session has a 5-session return <= 3% or RSI <= 60; then keep_firing_for 15m.
+      #   What:  SF-103, 5-session return above +3% with daily RSI(14) above 60; value = 5-session return.
+      #   How:   stock:forecast_signal:value{rule_id="SF-103"}.
+      #   Debug: stock_daily_return_5d_percent, stock_rsi_14d_index (needs 100 closes).
+      - alert: ForecastStockBullishMomentumSurge
+        expr: stock:forecast_signal:value{rule_id="SF-103"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_momentum_surge}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} momentum surge: {{ $value | printf \"%+.1f\" }}% in 5 sessions"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} gained more than 3% over 5 sessions with RSI above 60; evaluated over the next {{ $labels.horizon }}. Can continue or occur late in a move; not a price target or a recommendation."
+          clearance: "Clears when the 5-session return falls to 3% or RSI to 60 on a completed session."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockBearishMomentumSurge
+      #   Clearance: A later session has a 5-session return >= -3% or RSI >= 40; then keep_firing_for 15m.
+      #   What:  SF-104, 5-session return below -3% with daily RSI(14) below 40; value = 5-session return.
+      #   How:   stock:forecast_signal:value{rule_id="SF-104"}.
+      #   Debug: as SF-103.
+      - alert: ForecastStockBearishMomentumSurge
+        expr: stock:forecast_signal:value{rule_id="SF-104"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_momentum_surge}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} downside momentum: {{ $value | printf \"%+.1f\" }}% in 5 sessions"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} lost more than 3% over 5 sessions with RSI below 40; evaluated over the next {{ $labels.horizon }}. A sharp fall can also rebound; not a recommendation."
+          clearance: "Clears when the 5-session return rises to -3% or RSI to 40 on a completed session."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockSMA20Over50Cross
+      #   Clearance: Event older than 4 sessions, or a bearish cross replaces it; then keep_firing_for 15m.
+      #   What:  SF-105, the 20-session SMA crossed above the 50-session SMA within the last 5 sessions; value = age.
+      #   How:   stock:forecast_signal:value{rule_id="SF-105"} from stock_daily_signal_age_sessions{signal="sma_20d_50d_cross"}.
+      #   Debug: stock:sma_spread_20_50d:percent; the 50/200 golden cross is StockGoldenDeathCross.
+      - alert: ForecastStockSMA20Over50Cross
+        expr: stock:forecast_signal:value{rule_id="SF-105"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: sma_20_50d_cross}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} SMA20 crossed above SMA50 {{ $value }} session(s) ago"
+          description: "The 20-session average of {{ $labels.exchange }}:{{ $labels.symbol }} crossed above its 50-session average; evaluated over the next {{ $labels.horizon }}. A positive change in trend structure; not a guarantee or a recommendation."
+          clearance: "Clears 5 sessions after the cross, or at an opposite cross."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockSMA20Under50Cross
+      #   Clearance: Event older than 4 sessions, or a bullish cross replaces it; then keep_firing_for 15m.
+      #   What:  SF-106, the 20-session SMA crossed below the 50-session SMA within the last 5 sessions; value = age.
+      #   How:   stock:forecast_signal:value{rule_id="SF-106"}.
+      #   Debug: as SF-105.
+      - alert: ForecastStockSMA20Under50Cross
+        expr: stock:forecast_signal:value{rule_id="SF-106"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: sma_20_50d_cross}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} SMA20 crossed below SMA50 {{ $value }} session(s) ago"
+          description: "The 20-session average of {{ $labels.exchange }}:{{ $labels.symbol }} crossed below its 50-session average; evaluated over the next {{ $labels.horizon }}. Weakening trend structure, often after part of a decline; not a recommendation."
+          clearance: "Clears 5 sessions after the cross, or at an opposite cross."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockVolumeBreakoutBullish
+      #   Clearance: One-session event; clears at the next refresh unless the next session qualifies; keep_firing_for 15m.
+      #   What:  SF-107, session return above +2% on more than 1.5x the 20-session average volume; value = return.
+      #   How:   stock:forecast_signal:value{rule_id="SF-107"}.
+      #   Debug: stock_daily_return_1d_percent, stock_daily_relative_volume_20d_ratio.
+      - alert: ForecastStockVolumeBreakoutBullish
+        expr: stock:forecast_signal:value{rule_id="SF-107"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_volume_breakout}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} rose {{ $value | printf \"%+.1f\" }}% on high volume"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} rose more than 2% in the last session on more than 1.5x its usual volume; evaluated over the next {{ $labels.horizon }}. Volume shows participation, not continuation; not a recommendation."
+          clearance: "Clears at the next completed session unless it qualifies again."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockVolumeBreakdownBearish
+      #   Clearance: One-session event; clears at the next refresh unless the next session qualifies; keep_firing_for 15m.
+      #   What:  SF-108, session return below -2% on more than 1.5x the 20-session average volume; value = return.
+      #   How:   stock:forecast_signal:value{rule_id="SF-108"}.
+      #   Debug: as SF-107.
+      - alert: ForecastStockVolumeBreakdownBearish
+        expr: stock:forecast_signal:value{rule_id="SF-108"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_volume_breakout}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} fell {{ $value | printf \"%+.1f\" }}% on high volume"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} fell more than 2% in the last session on more than 1.5x its usual volume; evaluated over the next {{ $labels.horizon }}. Consistent with selling pressure; not a recommendation."
+          clearance: "Clears at the next completed session unless it qualifies again."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockDailyRSIDivergence
+      #   Clearance: Event older than 4 sessions, or a newer non-diverging pivot invalidates it; keep_firing_for 15m.
+      #   What:  SF-109, price made a higher high (lower low) that daily RSI did not confirm; direction from the event.
+      #   How:   stock:forecast_signal:value{rule_id="SF-109"} from stock_daily_signal_age_sessions{signal="rsi_divergence"}.
+      #   Debug: pivots use 3 sessions each side and are confirmed 3 sessions later (PRD §7.9).
+      - alert: ForecastStockDailyRSIDivergence
+        expr: stock:forecast_signal:value{rule_id="SF-109"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_rsi_divergence}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} {{ $labels.direction }} RSI divergence"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} made a new price extreme that daily RSI did not confirm ({{ $value }} session(s) ago); evaluated over the next {{ $labels.horizon }}. Momentum may be fading; not a guaranteed reversal."
+          clearance: "Clears 5 sessions after confirmation, or when a newer pivot invalidates it."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockOversoldReboundWatch
+      #   Clearance: RSI above 40, back below 30, or event older than 4 sessions; then keep_firing_for 15m.
+      #   What:  SF-110, daily RSI rose back above 30 within the last 5 sessions and is still at most 40; value = age.
+      #   How:   stock:forecast_signal:value{rule_id="SF-110"}.
+      #   Debug: stock_rsi_14d_index, stock_daily_signal_age_sessions{signal="rsi_oversold_exit"}.
+      - alert: ForecastStockOversoldReboundWatch
+        expr: stock:forecast_signal:value{rule_id="SF-110"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_rsi_extreme_exit}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} RSI left the oversold zone"
+          description: "Daily RSI of {{ $labels.exchange }}:{{ $labels.symbol }} recovered above 30 {{ $value }} session(s) ago; evaluated over the next {{ $labels.horizon }}. Momentum may be improving; a lasting uptrend is not established."
+          clearance: "Clears when RSI rises above 40, falls back below 30, or after 5 sessions."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockOverboughtReversalWatch
+      #   Clearance: RSI below 60, back above 70, or event older than 4 sessions; then keep_firing_for 15m.
+      #   What:  SF-111, daily RSI fell back below 70 within the last 5 sessions and is still at least 60; value = age.
+      #   How:   stock:forecast_signal:value{rule_id="SF-111"}.
+      #   Debug: stock_rsi_14d_index, stock_daily_signal_age_sessions{signal="rsi_overbought_exit"}.
+      - alert: ForecastStockOverboughtReversalWatch
+        expr: stock:forecast_signal:value{rule_id="SF-111"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_rsi_extreme_exit}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} RSI left the overbought zone"
+          description: "Daily RSI of {{ $labels.exchange }}:{{ $labels.symbol }} fell back below 70 {{ $value }} session(s) ago; evaluated over the next {{ $labels.horizon }}. Momentum may be cooling; a major decline is not established."
+          clearance: "Clears when RSI falls below 60, rises back above 70, or after 5 sessions."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockVolatilityExpansion
+      #   Clearance: Volatility ratio falls below 1.5 on a completed session (hysteresis state cleared); keep_firing_for 15m.
+      #   What:  SF-112, 10-session realized volatility above twice the 60-session baseline (non-directional).
+      #   How:   stock:forecast_signal:value{rule_id="SF-112"}; state enters above 2 and holds while >= 1.5.
+      #   Debug: stock:forecast_state:bool{signal="vol_expansion"}, stock_daily_session_lag_sessions.
+      - alert: ForecastStockVolatilityExpansion
+        expr: stock:forecast_signal:value{rule_id="SF-112"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_volatility_regime}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} daily volatility is {{ $value | printf \"%.1f\" }}x its 60-session baseline"
+          description: "10-session realized volatility of {{ $labels.exchange }}:{{ $labels.symbol }} is more than twice its 60-session baseline. Higher uncertainty over the next {{ $labels.horizon }}, not a direction. Not a recommendation."
+          clearance: "Clears when the ratio falls below 1.5 on a completed session."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockVolatilityCompression
+      #   Clearance: Volatility ratio rises above 0.7 on a completed session; then keep_firing_for 15m.
+      #   What:  SF-113, 10-session realized volatility below half the 60-session baseline (non-directional).
+      #   How:   stock:forecast_signal:value{rule_id="SF-113"}; state enters below 0.5 and holds while <= 0.7.
+      #   Debug: stock:forecast_state:bool{signal="vol_compression"}.
+      - alert: ForecastStockVolatilityCompression
+        expr: stock:forecast_signal:value{rule_id="SF-113"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_volatility_regime}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} daily volatility is {{ $value | printf \"%.2f\" }}x its 60-session baseline"
+          description: "10-session realized volatility of {{ $labels.exchange }}:{{ $labels.symbol }} is below half its 60-session baseline: a quieter regime. Says nothing about the direction of a later move."
+          clearance: "Clears when the ratio rises above 0.7 on a completed session."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockRelativeStrengthOutperformance
+      #   Clearance: 20-session return vs NIFTY 50 falls below +1 pp; then keep_firing_for 15m.
+      #   What:  SF-114, 20-session return more than 3 pp above NIFTY 50; value = relative return.
+      #   How:   stock:forecast_signal:value{rule_id="SF-114"}; state rs_outperformance.
+      #   Debug: stock:relative_return_20d_nifty:percent; empty when the benchmark session differs.
+      - alert: ForecastStockRelativeStrengthOutperformance
+        expr: stock:forecast_signal:value{rule_id="SF-114"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_relative_strength}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} beat NIFTY 50 by {{ $value | printf \"%+.1f\" }} pp over 20 sessions"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} outperformed NIFTY 50 over 20 sessions; evaluated over the next {{ $labels.horizon }}. Relative strength is not necessarily a positive return."
+          clearance: "Clears when the relative return falls below +1 percentage point."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockRelativeStrengthUnderperformance
+      #   Clearance: 20-session return vs NIFTY 50 rises above -1 pp; then keep_firing_for 15m.
+      #   What:  SF-115, 20-session return more than 3 pp below NIFTY 50; value = relative return.
+      #   How:   stock:forecast_signal:value{rule_id="SF-115"}; state rs_underperformance.
+      #   Debug: as SF-114.
+      - alert: ForecastStockRelativeStrengthUnderperformance
+        expr: stock:forecast_signal:value{rule_id="SF-115"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_relative_strength}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} trailed NIFTY 50 by {{ $value | printf \"%+.1f\" }} pp over 20 sessions"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} underperformed NIFTY 50 over 20 sessions; evaluated over the next {{ $labels.horizon }}. Relative weakness is not necessarily a negative return."
+          clearance: "Clears when the relative return rises above -1 percentage point."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockDailyMACDCross
+      #   Clearance: Event older than 4 sessions, histogram changes sign again, or an opposite cross; keep_firing_for 15m.
+      #   What:  SF-116, daily MACD(12,26) crossed its 9-session signal line within 5 sessions; direction from the cross.
+      #   How:   stock:forecast_signal:value{rule_id="SF-116"}.
+      #   Debug: stock_daily_macd_histogram_price, stock_daily_signal_age_sessions{signal="macd_cross"}.
+      - alert: ForecastStockDailyMACDCross
+        expr: stock:forecast_signal:value{rule_id="SF-116"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_macd_cross}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} {{ $labels.direction }} daily MACD cross"
+          description: "Daily MACD of {{ $labels.exchange }}:{{ $labels.symbol }} crossed its signal line {{ $value }} session(s) ago; evaluated over the next {{ $labels.horizon }}. MACD lags and gives false crosses in sideways markets."
+          clearance: "Clears 5 sessions after the cross, when the histogram changes sign again, or at an opposite cross."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockDailyADXTrend
+      #   Clearance: ADX below 20 on a completed session, or the DI lines cross (direction switches); keep_firing_for 15m.
+      #   What:  SF-117, daily ADX(14) above 25 (held while >= 20) with +DI/-DI giving the direction; value = ADX.
+      #   How:   stock:forecast_signal:value{rule_id="SF-117"}; state adx_trend.
+      #   Debug: stock_adx_14d_index, stock_di_plus_14d_index, stock_di_minus_14d_index.
+      - alert: ForecastStockDailyADXTrend
+        expr: stock:forecast_signal:value{rule_id="SF-117"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_adx_trend}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} strong {{ $labels.direction }} trend, ADX {{ $value | printf \"%.0f\" }}"
+          description: "Daily ADX of {{ $labels.exchange }}:{{ $labels.symbol }} marks a strong trend; evaluated over the next {{ $labels.horizon }}. ADX is smoothed and can stay high late in a trend."
+          clearance: "Clears when ADX falls below 20; switches direction when the DI lines cross."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockRegressionTrend
+      #   Clearance: Slope magnitude below 30 or R² below 0.7 on a later session; then keep_firing_for 15m.
+      #   What:  SF-118, 20-session ln(close) regression slope beyond +-30%/yr with R² >= 0.7; value = slope.
+      #   How:   stock:forecast_signal:value{rule_id="SF-118"}.
+      #   Debug: stock_daily_trend_slope_20d_percent, stock_daily_trend_r2_20d_ratio.
+      - alert: ForecastStockRegressionTrend
+        expr: stock:forecast_signal:value{rule_id="SF-118"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_regression_trend}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} orderly {{ $labels.direction }} trend, {{ $value | printf \"%+.0f\" }}%/yr"
+          description: "A straight line fits the last 20 sessions of {{ $labels.exchange }}:{{ $labels.symbol }} well (R² >= 0.7); evaluated over the next {{ $labels.horizon }}. A fitted line describes the past only."
+          clearance: "Clears when the slope magnitude falls below 30%/yr or R² below 0.7."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockMeanReversionStretch
+      #   Clearance: |z| falls to 1 or below on a completed session; then keep_firing_for 15m.
+      #   What:  SF-119 (contrarian), close at least 2 standard deviations from its 20-session average; value = z.
+      #   How:   stock:forecast_signal:value{rule_id="SF-119"}; states zscore_low (bullish) / zscore_high (bearish).
+      #   Debug: stock_daily_close_zscore_20d_sigma.
+      - alert: ForecastStockMeanReversionStretch
+        expr: stock:forecast_signal:value{rule_id="SF-119"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_mean_reversion}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} stretched {{ $value | printf \"%+.1f\" }} sigma from its 20-session average"
+          description: "Mean reversion expects the gap of {{ $labels.exchange }}:{{ $labels.symbol }} to narrow ({{ $labels.direction }}) over the next {{ $labels.horizon }}. Trend rules may point the other way; strong trends can stay stretched."
+          clearance: "Clears when the close is within 1 standard deviation of its 20-session average."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockVolatilitySqueeze
+      #   Clearance: Squeeze ratio 1 or more on a later session (squeeze released); then keep_firing_for 15m.
+      #   What:  SF-120, Bollinger(20,2) bands inside Keltner(20,1.5) channels (non-directional); value = ratio.
+      #   How:   stock:forecast_signal:value{rule_id="SF-120"}.
+      #   Debug: stock_daily_squeeze_ratio.
+      - alert: ForecastStockVolatilitySqueeze
+        expr: stock:forecast_signal:value{rule_id="SF-120"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_volatility_squeeze}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} volatility squeeze (ratio {{ $value | printf \"%.2f\" }})"
+          description: "Closes of {{ $labels.exchange }}:{{ $labels.symbol }} are unusually tight relative to the daily range; this often precedes a larger move, in either direction."
+          clearance: "Clears when the squeeze ratio returns to 1 or more."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockMomentumRank
+      #   Clearance: Leaves the top (bottom) 20% of the universe, or fewer than 50 stocks are ranked; keep_firing_for 15m.
+      #   What:  SF-121, 6-1 momentum in the top (bullish) or bottom (bearish) 10% of current core equities.
+      #   How:   stock:forecast_signal:value{rule_id="SF-121"}; states momentum_top / momentum_bottom.
+      #   Debug: stock:momentum_6_1:percent, quantile(0.9, stock:momentum_6_1:percent).
+      - alert: ForecastStockMomentumRank
+        expr: stock:forecast_signal:value{rule_id="SF-121"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: momentum_rank}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} {{ if eq $labels.direction \"bullish\" }}top{{ else }}bottom{{ end }} decile of 6-1 momentum ({{ $value | printf \"%+.0f\" }}%)"
+          description: "Ranked against other core stocks, {{ $labels.exchange }}:{{ $labels.symbol }} has extreme 6-1 momentum; evaluated over the next {{ $labels.horizon }}. The rank is relative and can coexist with a falling price."
+          clearance: "Clears when the stock leaves the top (or bottom) 20%."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockSectorRelativeStrength
+      #   Clearance: Difference to the sector median returns inside +-1 pp, or the sector has < 5 members; keep_firing_for 15m.
+      #   What:  SF-122, 20-session return more than 3 pp above (below) the sector median.
+      #   How:   stock:forecast_signal:value{rule_id="SF-122"}; states sector_leader / sector_laggard.
+      #   Debug: stock:sector_relative_return_20d:percent.
+      - alert: ForecastStockSectorRelativeStrength
+        expr: stock:forecast_signal:value{rule_id="SF-122"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: sector_relative_strength}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} {{ $value | printf \"%+.1f\" }} pp vs its sector median"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} {{ if eq $labels.direction \"bullish\" }}leads{{ else }}trails{{ end }} its sector ({{ $labels.sector }}) over 20 sessions; evaluated over the next {{ $labels.horizon }}."
+          clearance: "Clears when the difference returns inside +-1 percentage point."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockRiskAdjustedOutperformance
+      #   Clearance: Annualised alpha falls below 10; then keep_firing_for 15m.
+      #   What:  SF-123, 20-session Jensen's alpha above 30%/yr (held while >= 10); value = alpha.
+      #   How:   stock:forecast_signal:value{rule_id="SF-123"}; input stock:alpha_20d:percent (nse_risk, EOD snapshots).
+      #   Debug: stock:beta_nifty_20d:ratio (>= 15 sessions), stock_risk_free_rate_ratio textfile.
+      - alert: ForecastStockRiskAdjustedOutperformance
+        expr: stock:forecast_signal:value{rule_id="SF-123"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: risk_adjusted_alpha}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} alpha {{ $value | printf \"%+.0f\" }}%/yr vs NIFTY 50"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} returned more than its beta to NIFTY 50 explains; evaluated over the next {{ $labels.horizon }}. 20-session alpha is noisy."
+          clearance: "Clears when alpha falls below 10%/yr."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockVolumeFlowDivergence
+      #   Clearance: OBV slope back inside +-0.1 or the 20-session return leaves +-2%; then keep_firing_for 15m.
+      #   What:  SF-124, on-balance volume trending while price is flat (accumulation / distribution); value = slope.
+      #   How:   stock:forecast_signal:value{rule_id="SF-124"}.
+      #   Debug: stock_daily_obv_slope_20d_ratio, stock_daily_return_20d_percent.
+      - alert: ForecastStockVolumeFlowDivergence
+        expr: stock:forecast_signal:value{rule_id="SF-124"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_volume_flow}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} {{ if eq $labels.direction \"bullish\" }}accumulation{{ else }}distribution{{ end }} on flat price"
+          description: "Volume of {{ $labels.exchange }}:{{ $labels.symbol }} flows {{ if eq $labels.direction \"bullish\" }}into up{{ else }}into down{{ end }} sessions while price moved less than 2% in 20 sessions; evaluated over the next {{ $labels.horizon }}."
+          clearance: "Clears when the OBV slope returns inside +-0.1 or price leaves the +-2% range."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockModelReturnForecast
+      #   Clearance: |expected return / sigma| at most 1 after a later Quant Lab run; then keep_firing_for 15m.
+      #   What:  SF-125, Quant Lab ar1_daily forecasts a 5-session return beyond 1 sigma; value = t.
+      #   How:   stock:forecast_signal:value{rule_id="SF-125"}.
+      #   Debug: stock_prediction_*{model="ar1_daily"}; silent while Quant Lab is disabled.
+      - alert: ForecastStockModelReturnForecast
+        expr: stock:forecast_signal:value{rule_id="SF-125"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: model_forecast_return}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} AR(1) 5-session forecast t = {{ $value | printf \"%+.1f\" }}"
+          description: "A simple time-series model expects a 5-session return of {{ $labels.exchange }}:{{ $labels.symbol }} beyond its own uncertainty. Daily returns have little autocorrelation, so such forecasts are usually weak."
+          clearance: "Clears when the forecast falls within 1 standard deviation."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockModelProbability
+      #   Clearance: p crosses its hold threshold (0.55 / 0.45), a feature is missing, or weights are withdrawn.
+      #   What:  SF-126, logistic probability of beating NIFTY 50 over 5 sessions above 0.6 (bullish) or below 0.4.
+      #   How:   stock:forecast_signal:value{rule_id="SF-126"}; states prob_up_high / prob_up_low.
+      #   Debug: stock:prob_up_5d:ratio, stock:daily_feature:zscore, stock_forecast_model_weight.
+      - alert: ForecastStockModelProbability
+        expr: stock:forecast_signal:value{rule_id="SF-126"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: model_prob_up}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} P(beat NIFTY 50 in 5 sessions) = {{ $value | humanizePercentage }}"
+          description: "A logistic model fitted on past sessions scores {{ $labels.exchange }}:{{ $labels.symbol }}; the probability is only as good as its out-of-sample calibration."
+          clearance: "Clears when the probability crosses 0.55 (bullish) or 0.45 (bearish)."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockVolatilityForecastSpike
+      #   Clearance: EWMA forecast ratio below 1.2; then keep_firing_for 15m.
+      #   What:  SF-127, EWMA one-step volatility forecast above 1.5x the 60-session realized volatility; value = ratio.
+      #   How:   stock:forecast_signal:value{rule_id="SF-127"}; state ewma_vol_spike.
+      #   Debug: stock_daily_ewma_vol_forecast_percent, stock_realized_vol_60d_percent.
+      - alert: ForecastStockVolatilityForecastSpike
+        expr: stock:forecast_signal:value{rule_id="SF-127"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: volatility_forecast}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} forecast volatility {{ $value | printf \"%.1f\" }}x baseline"
+          description: "The EWMA volatility forecast of {{ $labels.exchange }}:{{ $labels.symbol }} jumped after recent large moves. It forecasts the size of moves, not their direction."
+          clearance: "Clears when the ratio falls below 1.2."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockPatternInContext
+      #   Clearance: One-session event; clears at the next refresh (event age 1); keep_firing_for 15m.
+      #   What:  SF-128, engulfing candle on the latest session against the prior trend and on > 1.2x volume.
+      #   How:   stock:forecast_signal:value{rule_id="SF-128"}.
+      #   Debug: stock_daily_signal_age_sessions{signal="engulfing"}, stock:sma_spread_20_50d:percent.
+      - alert: ForecastStockPatternInContext
+        expr: stock:forecast_signal:value{rule_id="SF-128"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: daily_pattern_context}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} {{ $labels.direction }} engulfing against the trend"
+          description: "The last completed candle of {{ $labels.exchange }}:{{ $labels.symbol }} engulfed the previous one, against the prior trend and on above-average volume; evaluated over the next {{ $labels.horizon }}. Pattern evidence is weak on its own."
+          clearance: "Clears at the next completed session."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+      # ForecastStockSignalConfluence
+      #   Clearance: Fewer than 3 techniques agree, or an opposite signal appears; then keep_firing_for 15m.
+      #   What:  SF-129, at least 3 distinct techniques signal the same direction and none the opposite; value = count.
+      #   How:   stock:forecast_signal:value{rule_id="SF-129"} (nse_forecast_confluence).
+      #   Debug: stock:forecast_confluence:count, stock:forecast_signal:value{symbol="X"} by technique.
+      - alert: ForecastStockSignalConfluence
+        expr: stock:forecast_signal:value{rule_id="SF-129"}
+        for: 5m
+        keep_firing_for: 15m
+        labels: {severity: info, category: forecast, layer: condition, condition: forecast_confluence}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }}] {{ $labels.symbol }} {{ $value }} techniques agree ({{ $labels.direction }})"
+          description: "Several kinds of evidence point the same way for {{ $labels.exchange }}:{{ $labels.symbol }}; evaluated over the next {{ $labels.horizon }}. They share one price history and stay correlated."
+          clearance: "Clears when fewer than 3 techniques agree or an opposite signal appears."
+          effectiveness: *effectiveness
+          dashboard: *dashboard
+
+  - name: nse_forecast_outcome
+    interval: 1m
+    rules:
+      # stock:forecast_activation:session
+      #   What:  Session number at the start of a forecast; one sample per forecast episode (PRD §14.10).
+      #   How:   first minute of a stock:forecast_signal:value series, valued with stock_daily_session_index; skipped
+      #          when an activation for the same rule, direction and symbol already exists for this session.
+      #   Debug: stock:forecast_signal:value and stock_daily_session_index for the symbol.
+      - record: stock:forecast_activation:session
+        expr: |
+          (
+              (stock:forecast_signal:value unless stock:forecast_signal:value offset 1m) * 0
+            + on(exchange, symbol) group_left() stock_daily_session_index
+          )
+          unless on(exchange, symbol, rule_id, direction)
+            (
+                last_over_time(stock:forecast_activation:session[35d])
+              == on(exchange, symbol) group_left() stock_daily_session_index
+            )
+      # stock:forecast_activation:price / stock:forecast_activation_benchmark:price
+      #   What:  Stock and NIFTY 50 close at the start of a forecast (single samples, read with last_over_time).
+      #   How:   activation * 0 + close, written in the same evaluation as the activation.
+      #   Debug: stock_daily_close_price{symbol="NIFTY 50"}.
+      - record: stock:forecast_activation:price
+        expr: stock:forecast_activation:session * 0 + on(exchange, symbol) group_left() stock_daily_close_price
+      - record: stock:forecast_activation_benchmark:price
+        expr: stock:forecast_activation:session * 0 + on() group_left() max(stock_daily_close_price{symbol="NIFTY 50"})
+      # stock:forecast_activation_baseline:percent
+      #   What:  Volatility baseline at the start of a non-directional forecast (60-session; 20-session for SF-120).
+      #   How:   activation * 0 + stock_realized_vol_60d_percent (or _20d_), same evaluation as the activation.
+      #   Debug: stock_realized_vol_60d_percent, stock_realized_vol_20d_percent.
+      - record: stock:forecast_activation_baseline:percent
+        expr: |
+          (
+              stock:forecast_activation:session{rule_id=~"SF-112|SF-113|SF-127"} * 0
+            + on(exchange, symbol) group_left() stock_realized_vol_60d_percent
+          )
+          or
+          (
+              stock:forecast_activation:session{rule_id="SF-120"} * 0
+            + on(exchange, symbol) group_left() stock_realized_vol_20d_percent
+          )
+      # stock:forecast_age:sessions
+      #   What:  Completed sessions since a forecast started (0 in its first session).
+      #   How:   stock_daily_session_index - on(exchange, symbol) group_right() last_over_time(activation[35d]).
+      #   Debug: activations older than 35 days are no longer read.
+      - record: stock:forecast_age:sessions
+        expr: |
+          stock_daily_session_index
+          - on(exchange, symbol) group_right() last_over_time(stock:forecast_activation:session[35d])
+      # stock:forecast_progress:excess_percent
+      #   What:  Return since the forecast started minus NIFTY 50's return over the same sessions, in pp.
+      #   How:   (close / start close - 1) * 100 - (NIFTY close / NIFTY start close - 1) * 100.
+      #   Debug: stock:forecast_activation:price, stock:forecast_activation_benchmark:price.
+      - record: stock:forecast_progress:excess_percent
+        expr: |
+          (
+                stock_daily_close_price{instrument_type="EQ"}
+              / on(exchange, symbol) group_right() last_over_time(stock:forecast_activation:price[35d])
+              - 1
+            ) * 100
+          - (
+                max(stock_daily_close_price{symbol="NIFTY 50"})
+              / on() group_right() last_over_time(stock:forecast_activation_benchmark:price[35d])
+              - 1
+            ) * 100
+      # stock:forecast_outcome:excess_percent {horizon}
+      #   What:  Excess return at the forecast horizon; present for the whole maturity session.
+      #   How:   progress where age == horizon in sessions (3d, 5d, 20d).
+      #   Debug: stock:forecast_age:sessions.
+      - record: stock:forecast_outcome:excess_percent
+        expr: |
+          (stock:forecast_progress:excess_percent{horizon="3d"} and stock:forecast_age:sessions{horizon="3d"} == 3)
+          or (stock:forecast_progress:excess_percent{horizon="5d"} and stock:forecast_age:sessions{horizon="5d"} == 5)
+          or (stock:forecast_progress:excess_percent{horizon="20d"} and stock:forecast_age:sessions{horizon="20d"} == 20)
+      # stock:forecast_outcome:hit
+      #   What:  Verdict at the horizon: 1 = the market moved as forecast, 0 = it did not (PRD §14.10).
+      #   How:   directional: excess return > 0 (bullish) or < 0 (bearish); volatility rules: 5-session realized
+      #          volatility above (SF-112/120/127) or below (SF-113) the baseline recorded at the start.
+      #   Debug: stock:forecast_outcome:excess_percent, stock:forecast_activation_baseline:percent.
+      - record: stock:forecast_outcome:hit
+        expr: |
+          (stock:forecast_outcome:excess_percent{direction="bullish"} > bool 0)
+          or (stock:forecast_outcome:excess_percent{direction="bearish"} < bool 0)
+          or (
+              (
+                  stock_realized_vol_5d_percent
+                > bool on(exchange, symbol) group_right()
+                  last_over_time(stock:forecast_activation_baseline:percent{rule_id=~"SF-112|SF-120|SF-127"}[35d])
+              )
+              and stock:forecast_age:sessions{horizon="5d"} == 5
+            )
+          or (
+              (
+                  stock_realized_vol_5d_percent
+                < bool on(exchange, symbol) group_right()
+                  last_over_time(stock:forecast_activation_baseline:percent{rule_id="SF-113"}[35d])
+              )
+              and stock:forecast_age:sessions{horizon="5d"} == 5
+            )
+      # stock:forecast_outcome_event:hit
+      #   What:  One sample per verdict (the first minute of a stock:forecast_outcome:hit series), for counting.
+      #   How:   stock:forecast_outcome:hit unless stock:forecast_outcome:hit offset 1m.
+      #   Debug: compare with stock:forecast_outcome:hit.
+      - record: stock:forecast_outcome_event:hit
+        expr: stock:forecast_outcome:hit unless stock:forecast_outcome:hit offset 1m
+      # ForecastStockOutcomeHit
+      #   Clearance: Lasts one session; clears at the next candle refresh, when the forecast age passes its horizon.
+      #   What:  SF-OUT-1, a forecast reached its horizon and the market moved as forecast.
+      #   How:   stock:forecast_outcome:hit == 1; the excess return is in stock:forecast_outcome:excess_percent.
+      #   Debug: stock:forecast_age:sessions, stock:forecast_activation:price for the symbol and rule_id.
+      - alert: ForecastStockOutcomeHit
+        expr: stock:forecast_outcome:hit == 1
+        labels: {severity: info, category: forecast, layer: outcome, outcome: hit}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }} outcome] {{ $labels.symbol }} {{ $labels.direction }} {{ $labels.horizon }}: HIT"
+          description: '{{ with printf `stock:forecast_outcome:excess_percent{symbol=%q,rule_id=%q,direction=%q}` $labels.symbol $labels.rule_id $labels.direction | query }}Return vs NIFTY 50 since the forecast started: {{ . | first | value | printf "%+.2f" }} percentage points. {{ end }}One outcome does not show that the rule works; see the hit rate over many forecasts.'
+          dashboard: *dashboard
+      # ForecastStockOutcomeMiss
+      #   Clearance: Lasts one session; clears at the next candle refresh, when the forecast age passes its horizon.
+      #   What:  SF-OUT-2, a forecast reached its horizon and the market did not move as forecast.
+      #   How:   stock:forecast_outcome:hit == 0.
+      #   Debug: as ForecastStockOutcomeHit.
+      - alert: ForecastStockOutcomeMiss
+        expr: stock:forecast_outcome:hit == 0
+        labels: {severity: info, category: forecast, layer: outcome, outcome: miss}
+        annotations:
+          summary: "[Forecast {{ $labels.rule_id }} outcome] {{ $labels.symbol }} {{ $labels.direction }} {{ $labels.horizon }}: MISS"
+          description: '{{ with printf `stock:forecast_outcome:excess_percent{symbol=%q,rule_id=%q,direction=%q}` $labels.symbol $labels.rule_id $labels.direction | query }}Return vs NIFTY 50 since the forecast started: {{ . | first | value | printf "%+.2f" }} percentage points. {{ end }}A single miss does not show that the rule is wrong; see the hit rate over many forecasts.'
+          dashboard: *dashboard
+
+  - name: nse_forecast_outcome_60d
+    interval: 15m
+    rules:
+      # forecast:outcomes_60d:count / forecast:hit_rate_60d:ratio
+      #   What:  Live verdict count and hit rate per rule, direction and horizon over the last 60 days.
+      #   How:   count_over_time / sum_over_time of stock:forecast_outcome_event:hit[60d]; rate needs >= 5 verdicts.
+      #   Debug: not corrected for the base rate or for multiple testing; the offline replay is authoritative.
+      - record: forecast:outcomes_60d:count
+        expr: sum by (rule_id, direction, horizon) (count_over_time(stock:forecast_outcome_event:hit[60d]))
+      - record: forecast:hit_rate_60d:ratio
+        expr: |
+          sum by (rule_id, direction, horizon) (sum_over_time(stock:forecast_outcome_event:hit[60d]))
+          / (forecast:outcomes_60d:count >= 5)
+
+  - name: nse_forecast_quality
+    interval: 1m
+    rules:
+      # ForecastStockInputsStale
+      #   Clearance: The exporter loads the expected session (lag 0); a missing series is covered by SF-DQ-5.
+      #   What:  SF-DQ-1, the latest daily candle of a core equity is older than the expected completed session.
+      #   How:   stock_daily_session_lag_sessions{instrument_type="EQ"} > 0 for 15m; the exporter expects a session
+      #          --collector.daily.session-delay (18h) after its close.
+      #   Debug: stock_daily_session_timestamp_seconds, stock_kite_api_requests_total{endpoint="historical"}.
+      - alert: ForecastStockInputsStale
+        expr: stock_daily_session_lag_sessions{instrument_type="EQ"} > 0
+        for: 15m
+        labels: {severity: warning, category: quality, layer: incident, incident: forecast_inputs, rule_id: SF-DQ-1}
+        annotations:
+          summary: "[Forecast SF-DQ-1] {{ $labels.symbol }} daily candles are {{ $value }} session(s) behind"
+          description: "Forecast inputs of {{ $labels.exchange }}:{{ $labels.symbol }} describe an older session; forecast notifications for it are inhibited."
+      # ForecastStockHistoryInsufficient
+      #   Clearance: 100 or more valid daily candles are loaded.
+      #   What:  SF-DQ-2, fewer than 100 daily candles (RSI/MACD/ADX warm-up), e.g. a recent listing.
+      #   How:   stock_daily_history_sessions{instrument_type="EQ"} < 100 for 30m.
+      #   Debug: stock_daily_history_sessions.
+      - alert: ForecastStockHistoryInsufficient
+        expr: stock_daily_history_sessions{instrument_type="EQ"} < 100
+        for: 30m
+        labels: {severity: info, category: quality, layer: incident, incident: forecast_history, rule_id: SF-DQ-2}
+        annotations:
+          summary: "[Forecast SF-DQ-2] {{ $labels.symbol }} has only {{ $value }} daily candles"
+          description: "Indicators that need a longer history are absent for {{ $labels.exchange }}:{{ $labels.symbol }}, so the rules using them cannot fire."
+      # ForecastStockInputsInvalid
+      #   Clearance: The candles pass validation again.
+      #   What:  SF-DQ-3, the daily candles failed validation (non-positive price, high < low, unordered dates).
+      #   How:   stock_daily_inputs_valid == 0 for 5m.
+      #   Debug: the exporter publishes no indicators for the instrument while this fires.
+      - alert: ForecastStockInputsInvalid
+        expr: stock_daily_inputs_valid == 0
+        for: 5m
+        labels: {severity: warning, category: quality, layer: incident, incident: forecast_inputs, rule_id: SF-DQ-3}
+        annotations:
+          summary: "[Forecast SF-DQ-3] invalid daily candles for {{ $labels.symbol }}"
+          description: "Daily candles of {{ $labels.exchange }}:{{ $labels.symbol }} failed validation; forecast indicators are not published."
+      # ForecastStockBenchmarkMissing
+      #   Clearance: NIFTY 50 daily inputs are present and current.
+      #   What:  SF-DQ-4, the NIFTY 50 daily series is missing or behind, so relative-strength rules cannot run.
+      #   How:   absent(stock_daily_return_20d_percent{symbol="NIFTY 50"}) or its session lag > 0, for 15m.
+      #   Debug: stock_daily_session_lag_sessions{symbol="NIFTY 50"}.
+      - alert: ForecastStockBenchmarkMissing
+        expr: |
+          absent(stock_daily_return_20d_percent{symbol="NIFTY 50"})
+          or stock_daily_session_lag_sessions{symbol="NIFTY 50"} > 0
+        for: 15m
+        labels: {severity: warning, category: quality, layer: incident, incident: forecast_benchmark, rule_id: SF-DQ-4}
+        annotations:
+          summary: "[Forecast SF-DQ-4] NIFTY 50 daily benchmark missing or stale"
+          description: "Relative-strength and benchmark-relative forecasts are unavailable until NIFTY 50 daily candles are current."
+      # ForecastStockCoverageLow
+      #   Clearance: 90% or more of the core equities have daily inputs.
+      #   What:  SF-DQ-5, the daily candle load failed for much of the universe (e.g. no Kite historical add-on).
+      #   How:   count(stock_daily_close_price{EQ}) / count(stock_tick_age_seconds{core, EQ}) < 0.9 for 30m.
+      #   Debug: stock_kite_api_requests_total{endpoint="historical"}, KiteAPIErrors.
+      - alert: ForecastStockCoverageLow
+        expr: |
+          (count(stock_daily_close_price{instrument_type="EQ"}) or vector(0))
+          / count(stock_tick_age_seconds{tier="core", instrument_type="EQ"}) < 0.9
+        for: 30m
+        labels: {severity: warning, category: quality, layer: incident, incident: forecast_coverage, rule_id: SF-DQ-5}
+        annotations:
+          summary: "[Forecast SF-DQ-5] only {{ $value | humanizePercentage }} of core equities have daily forecast inputs"
+          description: "The daily candle load is failing for much of the core universe; most forecast rules are silent."

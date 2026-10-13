@@ -56,11 +56,12 @@ func simHandler(t testing.TB, broad int) *handler {
 	st := store.New()
 	st.SetInstruments(wl.Synthetic(broad))
 	h := store.NewHealth("sim", "full")
-	s := sim.New(sim.Config{Seed: 1, Interval: time.Second, Holdings: 5}, st, h, loc)
+	cal := market.NewCalendar(loc, holidays, false)
+	s := sim.New(sim.Config{Seed: 1, Interval: time.Second, Holdings: 5, IsTradingDay: cal.IsTradingDay}, st, h, loc)
 	for i := range 60 {
 		s.Step(now.Add(time.Duration(i-60) * time.Second))
 	}
-	deps := collector.Deps{Store: st, Health: h, Calendar: market.NewCalendar(loc, holidays, false), Now: func() time.Time { return now }}
+	deps := collector.Deps{Store: st, Health: h, Calendar: cal, Now: func() time.Time { return now }}
 	hd, err := newHandler(deps, false, 0, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
@@ -126,9 +127,10 @@ func TestHandlerTiersAndFilters(t *testing.T) {
 }
 
 // TestCoreTierSampleBudget documents the expected ingestion rate of the default watchlist.
+// The daily collector is excluded from the 1s stock_core job and scraped by stock_daily instead.
 func TestCoreTierSampleBudget(t *testing.T) {
 	h := simHandler(t, 0)
-	_, core := scrape(t, h, "tier=core")
+	_, core := scrape(t, h, "tier=core&exclude[]=daily")
 	total := 0
 	for _, n := range core {
 		total += n
@@ -137,6 +139,31 @@ func TestCoreTierSampleBudget(t *testing.T) {
 	// ~3,000 quote/circuit samples plus ~10,000 depth/orderbook samples; stock_core sample_limit is 20,000.
 	if total < 11000 || total > 15000 {
 		t.Fatalf("core tier produces %d samples per scrape, expected ~13000 (1s scrape budget)", total)
+	}
+}
+
+// TestDailySampleBudget checks the stock_daily job (collect[]=daily, 60s) and that the
+// synthetic history yields the inputs of the forecast rules.
+func TestDailySampleBudget(t *testing.T) {
+	h := simHandler(t, 0)
+	_, d := scrape(t, h, "tier=core&collect[]=daily")
+	total := 0
+	for _, n := range d {
+		total += n
+	}
+	t.Logf("daily collector: %d samples per scrape", total)
+	if total > 9000 {
+		t.Fatalf("daily collector produces %d samples per scrape, budget 9000", total)
+	}
+	for _, m := range []string{"stock_daily_close_price", "stock_sma_20d_price", "stock_rsi_14d_index", "stock_realized_vol_60d_percent",
+		"stock_daily_return_126_21d_percent", "stock_adx_14d_index", "stock_daily_signal_age_sessions", "stock_daily_trend_streak_sessions",
+		"stock_daily_session_index", "stock_daily_session_lag_sessions", "stock_daily_relative_volume_20d_ratio"} {
+		if d[m] == 0 {
+			t.Errorf("%s missing from daily scrape", m)
+		}
+	}
+	if d["stock_daily_close_price"] != d["stock_daily_history_sessions"] {
+		t.Errorf("invalid synthetic history: %d valid of %d", d["stock_daily_close_price"], d["stock_daily_history_sessions"])
 	}
 }
 

@@ -263,7 +263,8 @@ func start(ctx context.Context, o options, b *bootstrap.Bootstrap) (collector.De
 		}
 		st.SetInstruments(ins)
 		deps.Health.SetSession(true, time.Time{})
-		s := sim.New(sim.Config{Seed: o.simSeed, Interval: o.simInterval, EventProbability: o.simEventProb, Holdings: o.simHoldings}, st, deps.Health, loc)
+		s := sim.New(sim.Config{Seed: o.simSeed, Interval: o.simInterval, EventProbability: o.simEventProb, Holdings: o.simHoldings,
+			IsTradingDay: deps.Calendar.IsTradingDay}, st, deps.Health, loc)
 		go s.Run(ctx)
 		b.Logger.Warn("Running with SIMULATED market data", "instruments", len(st.Instruments()))
 	case "kite":

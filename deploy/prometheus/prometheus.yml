@@ -2,6 +2,7 @@
 #
 # Ingestion budget (default watchlist, see stock_exporter/examples/watchlist.yml):
 #   stock_core  : NIFTY 200 + indices, all collectors incl. depth/orderbook, 1s -> ~13,000 samples/s
+#   stock_daily : daily candle indicators of the core tier (forecast rules), 60s -> ~7,000 samples/min
 #   stock_broad : every other NSE EQ symbol, quote+circuit, 5s -> ~6,000 samples/s
 global:
   scrape_interval: 15s
@@ -35,6 +36,19 @@ scrape_configs:
     scrape_protocols: [PrometheusProto, OpenMetricsText1.0.0, PrometheusText0.0.4]
     params:
       tier: [core]
+      exclude[]: [daily]
+    static_configs:
+      - targets: ["stock_exporter:9101"]
+
+  # Completed-session indicators for the forecast rules (nse_forecast.rules.yml); change once per session.
+  - job_name: stock_daily
+    scrape_interval: 60s
+    scrape_timeout: 10s
+    sample_limit: 15000
+    label_limit: 16
+    params:
+      tier: [core]
+      collect[]: [daily]
     static_configs:
       - targets: ["stock_exporter:9101"]
 

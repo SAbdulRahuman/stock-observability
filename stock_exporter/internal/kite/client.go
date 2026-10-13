@@ -24,6 +24,7 @@ import (
 
 	kiteconnect "github.com/zerodha/gokiteconnect/v4"
 
+	"github.com/seenimo/stock_exporter/internal/daily"
 	"github.com/seenimo/stock_exporter/internal/store"
 	"github.com/seenimo/stock_exporter/internal/watchlist"
 )
@@ -194,11 +195,17 @@ func (c *Client) RefreshReference(ctx context.Context, st *store.Store, now time
 			continue
 		}
 		highs, lows, closes := make([]float64, len(candles)), make([]float64, len(candles)), make([]float64, len(candles))
+		days := make([]daily.Candle, len(candles))
 		for i, k := range candles {
 			highs[i], lows[i], closes[i] = k.High, k.Low, k.Close
+			y, m, d := k.Date.Date()
+			days[i] = daily.Candle{Date: time.Date(y, m, d, 0, 0, 0, 0, k.Date.Location()), Open: k.Open, High: k.High, Low: k.Low, Close: k.Close, Volume: float64(k.Volume)}
 		}
 		if r, ok := store.NewReference(highs, lows, closes, now); ok {
 			st.UpdateReference(in.Token, r)
+		}
+		if len(days) > 0 {
+			st.UpdateDaily(in.Token, daily.Compute(days, in.Type == store.TypeEquity))
 		}
 	}
 	return errors.Join(errs...)

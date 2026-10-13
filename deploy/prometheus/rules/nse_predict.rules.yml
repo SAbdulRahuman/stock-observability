@@ -267,25 +267,28 @@ groups:
     interval: 1m
     rules:
       # StockPredictorStale
-      #   Clearance: Quant Lab is reachable and run age is 5m or less, or market hours end; a removed scrape target has no `up` series.
+      #   Clearance: Quant Lab is reachable and run age is within its limit, or market hours end; a removed scrape target has no `up` series.
       #   What:  Fires when the Quant Lab is down (model="all") or a model's last successful run is older than 5 minutes
-      #          during market hours; value is 0 (down) or the age of the last run in seconds.
+      #          (40 minutes for ar1_daily, which runs every 30 minutes) during market hours; value is 0 (down) or the
+      #          age of the last run in seconds.
       #   How:   label_replace(up{job="stock_quantlab"} == 0, "model", "all") or
-      #          time() - max by (model) (stock_prediction_last_run_timestamp_seconds) > 300; and on() market open; for: 2m.
+      #          time() - max by (model) (stock_prediction_last_run_timestamp_seconds) > 300 (2400 for ar1_daily);
+      #          and on() market open; for: 2m.
       #   Debug: up{job="stock_quantlab"}, time() - stock_prediction_last_run_timestamp_seconds, quantlab logs ("failed:").
       #          Does not fire if the scrape job is absent entirely (no `up` series) or the market is closed.
       - alert: StockPredictorStale
         expr: |
           (
               label_replace(up{job="stock_quantlab"} == 0, "model", "all", "", "")
-            or time() - max by (model) (stock_prediction_last_run_timestamp_seconds) > 300
+            or time() - max by (model) (stock_prediction_last_run_timestamp_seconds{model!="ar1_daily"}) > 300
+            or time() - max by (model) (stock_prediction_last_run_timestamp_seconds{model="ar1_daily"}) > 2400
           )
           and on() stock_market_open == 1
         for: 2m
         labels: {severity: warning, category: prediction, layer: incident, incident: predictor_stale}
         annotations:
           summary: "Quant Lab model {{ $labels.model }} is stale"
-          description: "The Quant Lab is down or model {{ $labels.model }} has not completed a run for more than 5 minutes; forecasts and option analytics are frozen."
+          description: "The Quant Lab is down or model {{ $labels.model }} has not completed a run within its schedule (5 minutes; 40 for ar1_daily); forecasts and option analytics are frozen."
       # StockPredictorSlow
       #   Clearance: The model's inference duration falls to 30s or less; a missing scrape series is unavailable telemetry.
       #   What:  Fires when one Quant Lab model run (options or ar1) takes more than 30 s; value = run duration in seconds.

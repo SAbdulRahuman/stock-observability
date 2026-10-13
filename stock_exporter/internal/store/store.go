@@ -19,6 +19,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/seenimo/stock_exporter/internal/daily"
 )
 
 // Instrument types used in the instrument_type label.
@@ -108,6 +110,8 @@ type Entry struct {
 	HasCircuit   bool
 	Reference    Reference
 	HasReference bool
+	Daily        daily.Indicators
+	HasDaily     bool
 }
 
 // Reference holds levels derived from up to one year of daily candles.
@@ -163,6 +167,7 @@ type Store struct {
 	quotes      map[uint32]Quote
 	circuits    map[uint32]Circuit
 	refs        map[uint32]Reference
+	daily       map[uint32]daily.Indicators
 	portfolio   Portfolio
 	hasPortf    bool
 	createdAt   time.Time
@@ -175,6 +180,7 @@ func New() *Store {
 		quotes:      map[uint32]Quote{},
 		circuits:    map[uint32]Circuit{},
 		refs:        map[uint32]Reference{},
+		daily:       map[uint32]daily.Indicators{},
 		createdAt:   time.Now(),
 	}
 }
@@ -204,6 +210,11 @@ func (s *Store) SetInstruments(ins []Instrument) {
 	for t := range s.refs {
 		if _, ok := next[t]; !ok {
 			delete(s.refs, t)
+		}
+	}
+	for t := range s.daily {
+		if _, ok := next[t]; !ok {
+			delete(s.daily, t)
 		}
 	}
 }
@@ -268,6 +279,17 @@ func (s *Store) UpdateReference(token uint32, r Reference) bool {
 	return true
 }
 
+// UpdateDaily stores the completed-session indicators. Unknown tokens are ignored.
+func (s *Store) UpdateDaily(token uint32, d daily.Indicators) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.instruments[token]; !ok {
+		return false
+	}
+	s.daily[token] = d
+	return true
+}
+
 // Snapshot returns all instruments with their latest state, sorted by exchange and symbol.
 func (s *Store) Snapshot() []Entry {
 	s.mu.RLock()
@@ -276,7 +298,8 @@ func (s *Store) Snapshot() []Entry {
 		q, hq := s.quotes[t]
 		c, hc := s.circuits[t]
 		r, hr := s.refs[t]
-		out = append(out, Entry{Instrument: i, Quote: q, HasQuote: hq, Circuit: c, HasCircuit: hc, Reference: r, HasReference: hr})
+		d, hd := s.daily[t]
+		out = append(out, Entry{Instrument: i, Quote: q, HasQuote: hq, Circuit: c, HasCircuit: hc, Reference: r, HasReference: hr, Daily: d, HasDaily: hd})
 	}
 	s.mu.RUnlock()
 	sort.Slice(out, func(a, b int) bool {

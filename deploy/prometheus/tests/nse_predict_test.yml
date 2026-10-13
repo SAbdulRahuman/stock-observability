@@ -107,7 +107,7 @@ tests:
           - exp_labels: {model: ar1, severity: warning, category: prediction, layer: incident, incident: predictor_stale}
             exp_annotations:
               summary: Quant Lab model ar1 is stale
-              description: The Quant Lab is down or model ar1 has not completed a run for more than 5 minutes; forecasts and option analytics are frozen.
+              description: The Quant Lab is down or model ar1 has not completed a run within its schedule (5 minutes; 40 for ar1_daily); forecasts and option analytics are frozen.
       - eval_time: 59m
         alertname: PredictionModelUnderperformsNaive
         exp_alerts: []

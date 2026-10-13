@@ -27,12 +27,13 @@ groups:
       #          like severity. Activation = pending -> firing transition (after `for:`), not the pending start.
       #          direction/band/side are empty for alerts that do not set them.
       #   Debug: query ALERTS{layer="condition", symbol="X"}. Market-wide alerts (no symbol label) and non-condition
-      #          layers (incident, quality) are excluded by design.
+      #          layers (incident, quality) are excluded by design, as are daily forecasts (category="forecast"),
+      #          which nse_forecast.rules.yml judges at their own horizons.
       - record: stock:alert_activation:bool
         expr: |
           max by (alertname, exchange, symbol, direction, band, side) (
-              ALERTS{layer="condition", alertstate="firing", symbol!=""}
-            unless ALERTS{layer="condition", alertstate="firing"} offset 1m
+              ALERTS{layer="condition", alertstate="firing", symbol!="", category!="forecast"}
+            unless ALERTS{layer="condition", alertstate="firing", category!="forecast"} offset 1m
           )
 
       # Signals, per horizon: sum of outcomes, directional hits, number of outcomes.

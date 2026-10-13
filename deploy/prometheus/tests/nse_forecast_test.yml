@@ -1,0 +1,165 @@
+# promtool test rules prometheus/tests/nse_forecast_test.yml
+# Daily forecast rules (Stock_forecast_Prometheus_Rules.md). One "session" lasts 10 minutes in these tests:
+# stock_daily_session_index steps by 1 every 10 samples.
+rule_files:
+  - ../rules/nse_forecast.rules.yml
+
+evaluation_interval: 1m
+
+group_eval_order:
+  - nse_forecast
+  - nse_forecast_state
+  - nse_forecast_signals
+  - nse_forecast_confluence
+  - nse_forecast_alerts
+  - nse_forecast_outcome
+  - nse_forecast_outcome_60d
+  - nse_forecast_quality
+
+tests:
+  - name: SF-101 trend, SF-103 momentum, SF-107 flow and SF-129 confluence
+    interval: 1m
+    input_series:
+      - series: 'stock_daily_close_price{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1100x20'
+      - series: 'stock_sma_20d_price{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1050x20'
+      - series: 'stock_sma_50d_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1000x20'
+      - series: 'stock_daily_trend_streak_sessions{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",direction="bullish"}'
+        values: '3x20'
+      - series: 'stock_daily_return_5d_percent{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '4x20'
+      - series: 'stock_rsi_14d_index{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '65x20'
+      - series: 'stock_daily_return_1d_percent{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '2.5x20'
+      - series: 'stock_daily_relative_volume_20d_ratio{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1.8x20'
+    promql_expr_test:
+      - expr: stock:sma_spread_20_50d:percent
+        eval_time: 1m
+        exp_samples:
+          - labels: 'stock:sma_spread_20_50d:percent{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+            value: 5.000000000000004
+      - expr: stock:forecast_signal:value{rule_id="SF-101"}
+        eval_time: 1m
+        exp_samples:
+          - labels: 'stock:forecast_signal:value{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",rule_id="SF-101",technique="trend",direction="bullish",horizon="5d"}'
+            value: 1100
+      - expr: stock:forecast_confluence:count
+        eval_time: 1m
+        exp_samples:
+          - labels: 'stock:forecast_confluence:count{exchange="NSE",symbol="INFY",direction="bullish"}'
+            value: 3
+      - expr: stock:forecast_signal:value{rule_id="SF-129"}
+        eval_time: 1m
+        exp_samples:
+          - labels: 'stock:forecast_signal:value{exchange="NSE",symbol="INFY",rule_id="SF-129",technique="confluence",direction="bullish",horizon="5d"}'
+            value: 3
+      - expr: stock:forecast_signal:value{direction="bearish"}
+        eval_time: 1m
+        exp_samples: []
+
+  - name: SF-112 hysteresis fires above 2, holds down to 1.5 and clears below
+    interval: 1m
+    input_series:
+      # ratio 2.5 (0-4m), 1.8 (5-9m), 1.4 (10m-); TCS stays at 1.8 and never fires.
+      - series: 'stock_realized_vol_10d_percent{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '50x4 36x4 28x10'
+      - series: 'stock_realized_vol_60d_percent{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '20x20'
+      - series: 'stock_realized_vol_10d_percent{job="stock_daily",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '36x20'
+      - series: 'stock_realized_vol_60d_percent{job="stock_daily",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '20x20'
+    promql_expr_test:
+      - expr: stock:forecast_signal:value{rule_id="SF-112"}
+        eval_time: 2m
+        exp_samples:
+          - labels: 'stock:forecast_signal:value{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",rule_id="SF-112",technique="volatility",direction="neutral",horizon="5d"}'
+            value: 2.5
+      - expr: stock:forecast_signal:value{rule_id="SF-112"}
+        eval_time: 7m
+        exp_samples:
+          - labels: 'stock:forecast_signal:value{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",rule_id="SF-112",technique="volatility",direction="neutral",horizon="5d"}'
+            value: 1.8
+      - expr: stock:forecast_signal:value{rule_id="SF-112"}
+        eval_time: 12m
+        exp_samples: []
+
+  - name: SF-103 forecast is judged a hit after 3 sessions, against NIFTY 50
+    interval: 1m
+    input_series:
+      - series: 'stock_daily_session_index{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100x9 101x9 102x9 103x9 104x9'
+      - series: 'stock_daily_session_index{job="stock_daily",instance="se",exchange="NSE",symbol="NIFTY 50",sector="",instrument_type="INDEX",tier="core"}'
+        values: '100x9 101x9 102x9 103x9 104x9'
+      - series: 'stock_daily_close_price{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1000x9 1010x9 1020x9 1050x9 1060x9'
+      - series: 'stock_daily_close_price{job="stock_daily",instance="se",exchange="NSE",symbol="NIFTY 50",sector="",instrument_type="INDEX",tier="core"}'
+        values: '20000x29 20200x19'
+      - series: 'stock_daily_return_5d_percent{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '4x49'
+      - series: 'stock_rsi_14d_index{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '65x49'
+    promql_expr_test:
+      - expr: stock:forecast_activation:session
+        eval_time: 0m
+        exp_samples:
+          - labels: 'stock:forecast_activation:session{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",rule_id="SF-103",technique="momentum",direction="bullish",horizon="3d"}'
+            value: 100
+      # One activation per episode.
+      - expr: stock:forecast_activation:session
+        eval_time: 5m
+        exp_samples: []
+      - expr: stock:forecast_age:sessions
+        eval_time: 25m
+        exp_samples:
+          - labels: 'stock:forecast_age:sessions{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",rule_id="SF-103",technique="momentum",direction="bullish",horizon="3d"}'
+            value: 2
+      - expr: stock:forecast_outcome:hit
+        eval_time: 25m
+        exp_samples: []
+      # (1050 / 1000 - 1) * 100 - (20200 / 20000 - 1) * 100 = 5 - 1
+      - expr: abs(stock:forecast_outcome:excess_percent - 4) < bool 1e-9
+        eval_time: 30m
+        exp_samples:
+          - labels: '{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",rule_id="SF-103",technique="momentum",direction="bullish",horizon="3d"}'
+            value: 1
+      - expr: stock:forecast_outcome:hit
+        eval_time: 35m
+        exp_samples:
+          - labels: 'stock:forecast_outcome:hit{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core",rule_id="SF-103",technique="momentum",direction="bullish",horizon="3d"}'
+            value: 1
+      # The verdict is counted once and lasts one session.
+      - expr: forecast:outcomes_60d:count
+        eval_time: 45m
+        exp_samples:
+          - labels: 'forecast:outcomes_60d:count{rule_id="SF-103",direction="bullish",horizon="3d"}'
+            value: 1
+      - expr: stock:forecast_outcome:hit
+        eval_time: 45m
+        exp_samples: []
+
+  - name: data quality
+    interval: 1m
+    input_series:
+      - series: 'stock_daily_inputs_valid{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '0x10'
+      - series: 'stock_daily_session_lag_sessions{job="stock_daily",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: ForecastStockInputsInvalid
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: ForecastStockInputsInvalid
+        exp_alerts:
+          - exp_labels: {job: stock_daily, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core, severity: warning, category: quality, layer: incident, incident: forecast_inputs, rule_id: SF-DQ-3}
+            exp_annotations:
+              summary: '[Forecast SF-DQ-3] invalid daily candles for INFY'
+              description: 'Daily candles of NSE:INFY failed validation; forecast indicators are not published.'
+      - eval_time: 10m
+        alertname: ForecastStockInputsStale
+        exp_alerts: []

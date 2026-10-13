@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seenimo/stock_exporter/internal/daily"
 	"github.com/seenimo/stock_exporter/internal/store"
 )
 
@@ -33,6 +34,8 @@ type Config struct {
 	Interval         time.Duration
 	EventProbability float64
 	Holdings         int
+	// IsTradingDay selects the dates of the synthetic daily history; nil means weekdays.
+	IsTradingDay func(time.Time) bool
 }
 
 type state struct {
@@ -72,6 +75,9 @@ type Simulator struct {
 // New creates a simulator for the instruments currently in the store.
 func New(cfg Config, st *store.Store, health *store.Health, loc *time.Location) *Simulator {
 	s := &Simulator{cfg: cfg, st: st, health: health, loc: loc, rng: rand.New(rand.NewSource(cfg.Seed)), states: map[uint32]*state{}}
+	if s.cfg.IsTradingDay == nil {
+		s.cfg.IsTradingDay = func(t time.Time) bool { return t.Weekday() != time.Saturday && t.Weekday() != time.Sunday }
+	}
 	spots := map[string]uint32{}
 	var derivatives []uint32
 	for _, in := range st.Instruments() {
@@ -286,20 +292,17 @@ func (s *Simulator) rollover(x *state, day string, now time.Time) {
 		s.st.UpdateCircuit(x.in.Token, store.Circuit{Upper: round(x.prevClose * 1.1), Lower: round(x.prevClose * 0.9), UpdatedAt: now})
 	}
 	if x.in.Tier == store.TierCore && !x.in.IsDerivative() {
-		// Hash-based (not rng) so the tick sequence of existing seeds is unchanged; ~1 in 10
-		// instruments sits within 2% of its 52-week high.
-		u := func(salt string) float64 { return float64(hash(x.in.Symbol+day+salt)%1000) / 1000 }
-		cross := 0
-		if c := u("x"); c < 0.02 {
-			cross = 1
-		} else if c > 0.98 {
-			cross = -1
+		// Hash-seeded history (not s.rng) so the tick sequence of existing seeds is unchanged.
+		date, _ := time.ParseInLocation(time.DateOnly, day, s.loc)
+		candles := History(x.in, date, x.prevClose, s.cfg.IsTradingDay)
+		highs, lows, closes := make([]float64, len(candles)), make([]float64, len(candles)), make([]float64, len(candles))
+		for i, k := range candles {
+			highs[i], lows[i], closes[i] = k.High, k.Low, k.Close
 		}
-		s.st.UpdateReference(x.in.Token, store.Reference{
-			High52W: round(x.prevClose * (1.005 + 0.25*u("h"))), Low52W: round(x.prevClose * (0.95 - 0.25*u("l"))),
-			SMA50D: round(x.prevClose * (0.97 + 0.06*u("50"))), SMA200D: round(x.prevClose * (0.94 + 0.12*u("200"))),
-			Cross: cross, UpdatedAt: now,
-		})
+		if r, ok := store.NewReference(highs, lows, closes, now); ok {
+			s.st.UpdateReference(x.in.Token, r)
+		}
+		s.st.UpdateDaily(x.in.Token, daily.Compute(candles, x.in.Type == store.TypeEquity))
 	}
 }
 

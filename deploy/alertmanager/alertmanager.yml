@@ -45,6 +45,17 @@ route:
       active_time_intervals: [nse_session]
       mute_time_intervals: [nse_holidays]
 
+    # Daily forecast signals (SF-1xx) and their verdicts (SF-OUT): change at most once per session.
+    # Before market-digest, which would otherwise take their layer="condition" alerts.
+    - receiver: stock-forecast
+      matchers: ['category="forecast"']
+      group_by: [condition, direction, outcome]
+      group_wait: 1m
+      group_interval: 15m
+      repeat_interval: 24h
+      active_time_intervals: [nse_session]
+      mute_time_intervals: [nse_holidays]
+
     # NSE formula conditions (layer=condition with a `condition` label): a 15-minute digest
     # per category and condition. Base alerts carry no `condition` label and keep their routes.
     - receiver: market-digest
@@ -111,6 +122,18 @@ inhibit_rules:
   - source_matchers: ['severity="critical"', 'symbol=~".+"']
     target_matchers: ['severity=~"warning|info"']
     equal: [exchange, symbol]
+  # Daily forecast inputs are stale or invalid: hold forecast notifications for that instrument.
+  # `forecast` is deliberately not in the MarketDataStale rule: live ticks do not feed daily candles.
+  - source_matchers: ['alertname=~"ForecastStockInputsStale|ForecastStockInputsInvalid"']
+    target_matchers: ['category="forecast"']
+    equal: [exchange, symbol]
+  - source_matchers: ['alertname="ForecastStockBenchmarkMissing"']
+    target_matchers: ['rule_id=~"SF-11[45]"']
+  - source_matchers: ['alertname=~"StockExporterDown|KiteSessionInvalid"']
+    target_matchers: ['category="forecast"']
+  # Quant Lab down or ar1_daily stale: hold model-based return forecasts.
+  - source_matchers: ['alertname="StockPredictorStale"', 'model=~"all|ar1_daily"']
+    target_matchers: ['rule_id="SF-125"']
 
 receivers:
   - name: stock-default
@@ -122,6 +145,7 @@ receivers:
   - name: market-digest
   - name: market-incident
   - name: stock-prediction
+  - name: stock-forecast
 
 time_intervals:
   # Pre-open (09:00) through post-close (16:00) IST, Monday to Friday.
