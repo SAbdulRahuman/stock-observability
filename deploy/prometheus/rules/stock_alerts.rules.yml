@@ -1,4 +1,4 @@
-# Alerting rules for stock observability (28 alerts).
+# Alerting rules for stock observability (33 alerts).
 #
 # Conventions:
 #   severity: info | warning | critical     category: price | circuit | flow | market | portfolio | infra
@@ -47,57 +47,81 @@ groups:
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} ({{ $labels.sector }}) fell more than 3% within five minutes."
           link: "https://www.nseindia.com/get-quotes/equity?symbol={{ $labels.symbol | urlquery }}"
 
+      # Requirement: SO-105.
+      #   What:  A core equity moved at least 2% in either direction over five minutes; $value is return in percent.
+      #   How:   Absolute 5m return >= 2 for 2m, with a fresh tick and an active market session.
+      #   Debug: Query stock:return_5m:percent and stock_tick_age_seconds for the symbol. Missing/stale inputs are
+      #          handled by StockTickStale and KPIDataQualityDegraded, not treated as a normal return.
+      - alert: StockSignificantPriceMovement
+        expr: |
+          (
+            label_replace(stock:return_5m:percent{instrument_type="EQ", tier="core"} >= 2, "direction", "up", "", "")
+            or
+            label_replace(stock:return_5m:percent{instrument_type="EQ", tier="core"} <= -2, "direction", "down", "", "")
+          )
+          and on(job, instance, exchange, symbol, sector, instrument_type, tier) stock_tick_age_seconds < 60
+          and on() stock_market_open == 1
+        for: 2m
+        labels: {severity: warning, category: market_movement, layer: condition}
+        annotations:
+          summary: "{{ $labels.symbol }} {{ $labels.direction }} 5m return {{ $value | printf \"%.2f\" }}%"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} moved at least 2% over five minutes. This is an observation, not a prediction or trading recommendation."
+
       # StockIntradayDrawdown
-      #   What:  A NIFTY 200 stock trades more than 5% below today's high; $value is the (negative) drawdown in %.
-      #   How:   stock:intraday_drawdown:percent{instrument_type="EQ", tier="core"} < -5 and on() stock_market_open
+      # Requirement: SO-114.
+      #   What:  A NIFTY 200 stock trades at least 5% below today's high; $value is the (negative) drawdown in %.
+      #   How:   stock:intraday_drawdown:percent{instrument_type="EQ", tier="core"} <= -5 and on() stock_market_open
       #          == 1, every 5s; for: 1m.
       #   Debug: Query stock_high_price and stock_last_price for the symbol. Empty input while stock_high_price is 0.
       #          Inhibited by a critical alert (e.g. StockPriceSharpDrop) on the same symbol.
       - alert: StockIntradayDrawdown
         expr: |
-          stock:intraday_drawdown:percent{instrument_type="EQ", tier="core"} < -5
+          stock:intraday_drawdown:percent{instrument_type="EQ", tier="core"} <= -5
           and on() stock_market_open == 1
         for: 1m
         labels: {severity: warning, category: price, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} drawdown from day high {{ $value | printf \"%.2f\" }}%"
-          description: "{{ $labels.exchange }}:{{ $labels.symbol }} has given up more than 5% from today's high."
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} has given up at least 5% from today's high."
 
       # StockGapOpen
+      # Requirement: SO-109.
       #   What:  A NIFTY 200 stock opened more than 3% above or below the previous close; $value is the gap size in %
       #          (absolute, direction not shown).
-      #   How:   abs(stock:gap_open:percent{instrument_type="EQ", tier="core"}) > 3 (abs() keeps the labels, $value is
+      #   How:   abs(stock:gap_open:percent{instrument_type="EQ", tier="core"}) >= 3 (abs() keeps the labels, $value is
       #          the absolute gap), only while stock_market_seconds_to_close > 21600 (first 900s of the 22500s session,
-      #          09:15-09:30) and market open. No for:, so it fires on the first 5s evaluation and resolves at 09:30.
+      #          09:15-09:30) and market open; for: 1m. It resolves at 09:30 rather than waiting for the gap to revert.
       #   Debug: Query stock_open_price and stock_previous_close_price. Never fires after 09:30 by design. Info ->
       #          stock-info route (batched).
       - alert: StockGapOpen
         # Only during the first 15 minutes of the session (22500s session length).
         expr: |
-          abs(stock:gap_open:percent{instrument_type="EQ", tier="core"}) > 3
+          abs(stock:gap_open:percent{instrument_type="EQ", tier="core"}) >= 3
           and on() stock_market_seconds_to_close > 21600
           and on() stock_market_open == 1
+        for: 1m
         labels: {severity: info, category: price, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} opened with a {{ $value | printf \"%.2f\" }}% gap"
-          description: "{{ $labels.exchange }}:{{ $labels.symbol }} opened more than 3% away from the previous close."
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} opened at least 3% away from the previous close."
 
       # StockVWAPDeviation
-      #   What:  A NIFTY 200 stock has traded more than 2% away from its day VWAP for 2 minutes; $value is the
+      # Requirement: SO-108.
+      #   What:  A NIFTY 200 stock has traded at least 2% away from its day VWAP for 3 minutes; $value is the
       #          absolute deviation in percent (direction not shown).
-      #   How:   abs(stock:vwap_deviation:percent{instrument_type="EQ", tier="core"}) > 2 and on() stock_market_open
-      #          == 1, every 5s; for: 2m.
+      #   How:   abs(stock:vwap_deviation:percent{instrument_type="EQ", tier="core"}) >= 2 and on() stock_market_open
+      #          == 1, every 5s; for: 3m.
       #   Debug: Query stock_average_traded_price and stock:vwap_deviation:percent; input is empty when VWAP is 0
       #          (no trades yet). Info -> stock-info route.
       - alert: StockVWAPDeviation
         expr: |
-          abs(stock:vwap_deviation:percent{instrument_type="EQ", tier="core"}) > 2
+          abs(stock:vwap_deviation:percent{instrument_type="EQ", tier="core"}) >= 2
           and on() stock_market_open == 1
-        for: 2m
+        for: 3m
         labels: {severity: info, category: price, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} is {{ $value | printf \"%.2f\" }}% away from VWAP"
-          description: "{{ $labels.exchange }}:{{ $labels.symbol }} has traded more than 2% away from its volume weighted average price for 2 minutes."
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} has traded at least 2% away from its volume weighted average price for 3 minutes."
 
       # StockMACrossover
       #   What:  The 5-minute SMA crossed the 30-minute SMA within the last minute: direction="bullish" (crossed above)
@@ -132,31 +156,39 @@ groups:
     interval: 5s
     rules:
       # StockNearUpperCircuit
-      #   What:  Any tracked stock (core or broad) is within 2% below its upper circuit; $value = remaining room in %.
-      #   How:   0 < stock:upper_circuit_distance:percent < 2 and on() stock_market_open == 1, every 5s; for: 15s.
+      # Requirement: SO-106.
+      #   What:  Any tracked stock (core or broad) is within 1% below its upper circuit; $value = room as % of limit.
+      #   How:   A positive LTP is below a positive upper limit and (limit - LTP) / limit <= 1%; for: 1m.
       #          Distance 0 or negative (at/above the band) is left to StockCircuitHit.
       #   Debug: Query stock_circuit_upper_limit_price and stock_last_price; limits come from Kite REST (check
       #          KiteAPIErrors). Inhibited by StockCircuitHit and by critical alerts on the same exchange/symbol.
       - alert: StockNearUpperCircuit
         expr: |
-          stock:upper_circuit_distance:percent < 2 and stock:upper_circuit_distance:percent > 0
+          ((stock_circuit_upper_limit_price - stock_last_price) / stock_circuit_upper_limit_price * 100) <= 1
+          and stock_circuit_upper_limit_price > 0
+          and stock_last_price > 0
+          and stock_last_price < stock_circuit_upper_limit_price
           and on() stock_market_open == 1
-        for: 15s
+        for: 1m
         labels: {severity: warning, category: circuit, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} is {{ $value | printf \"%.2f\" }}% from its upper circuit"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} ({{ $labels.tier }} tier) is approaching its upper price band."
 
       # StockNearLowerCircuit
-      #   What:  Any tracked stock (core or broad) is within 2% above its lower circuit; $value = remaining room in %.
-      #   How:   0 < stock:lower_circuit_distance:percent < 2 and on() stock_market_open == 1, every 5s; for: 15s.
+      # Requirement: SO-107.
+      #   What:  Any tracked stock (core or broad) is within 1% above its lower circuit; $value = room as % of limit.
+      #   How:   A positive LTP is above a positive lower limit and (LTP - limit) / limit <= 1%; for: 1m.
       #   Debug: Query stock_circuit_lower_limit_price and stock_last_price. Inhibited by StockCircuitHit and by
       #          critical alerts on the same exchange/symbol.
       - alert: StockNearLowerCircuit
         expr: |
-          stock:lower_circuit_distance:percent < 2 and stock:lower_circuit_distance:percent > 0
+          ((stock_last_price - stock_circuit_lower_limit_price) / stock_circuit_lower_limit_price * 100) <= 1
+          and stock_circuit_lower_limit_price > 0
+          and stock_last_price > 0
+          and stock_last_price > stock_circuit_lower_limit_price
           and on() stock_market_open == 1
-        for: 15s
+        for: 1m
         labels: {severity: warning, category: circuit, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} is {{ $value | printf \"%.2f\" }}% from its lower circuit"
@@ -204,6 +236,38 @@ groups:
           summary: "{{ $labels.symbol }} volume surge: {{ $value | humanize }} shares in 1 minute"
           description: "{{ $labels.exchange }}:{{ $labels.symbol }} traded more than 5x its average one-minute volume over the last hour."
 
+      # Requirement: SO-110.
+      #   What:  A core equity trades at least 3x the time-adjusted 14-session volume baseline; $value is the ratio.
+      #   How:   stock:relative_volume:ratio >= 3 for 3m, while the market is open and the instrument tick is fresh.
+      #   Debug: The baseline needs five EOD snapshots and is available from 09:45; it assumes linear intraday volume.
+      - alert: StockRelativeVolumeHigh
+        expr: |
+          stock:relative_volume:ratio >= 3
+          and on(job, instance, exchange, symbol, sector, instrument_type, tier) stock_tick_age_seconds < 60
+          and on() stock_market_open == 1
+        for: 3m
+        labels: {severity: warning, category: volume_anomaly, layer: condition}
+        annotations:
+          summary: "{{ $labels.symbol }} relative volume is {{ $value | printf \"%.2f\" }}x"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} volume is at least 3x its time-adjusted 14-session baseline."
+
+      # Requirement: SO-115.
+      #   What:  A fresh core equity has both an absolute 5m return >= 2% and relative volume >= 2x.
+      #   How:   Join by exporter target and instrument identity; hold for 2m during the active session.
+      #   Debug: Return is in percentage points; relative volume uses the time-adjusted 14-session baseline and may
+      #          be absent until five EOD snapshots exist. This is not a prediction or trading recommendation.
+      - alert: StockPriceVolumeSurge
+        expr: |
+          abs(stock:return_5m:percent{instrument_type="EQ", tier="core"}) >= 2
+          and on(job, instance, exchange, symbol, sector, instrument_type, tier) stock:relative_volume:ratio >= 2
+          and on(job, instance, exchange, symbol, sector, instrument_type, tier) stock_tick_age_seconds < 60
+          and on() stock_market_open == 1
+        for: 2m
+        labels: {severity: warning, category: market_movement, layer: condition}
+        annotations:
+          summary: "{{ $labels.symbol }} 5m move and relative-volume surge"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} moved at least 2% over five minutes while trading at least 2x its time-adjusted volume baseline."
+
       # StockOrderImbalance
       #   What:  Pending buy vs sell quantity of a NIFTY 200 stock is heavily one-sided: more than 3x as many buys
       #          (> 3) or sells (< 0.33) for 2 minutes; $value is the buy/sell ratio.
@@ -222,38 +286,39 @@ groups:
           description: "Pending buy versus sell quantity for {{ $labels.exchange }}:{{ $labels.symbol }} has been heavily one-sided for 2 minutes."
 
       # StockHighVolatility
-      #   What:  The 15-minute standard deviation of a stock's rolling 1-minute return exceeds 0.5 percentage points;
-      #          $value is that stddev in %.
-      #   How:   stock:volatility_15m:percent{instrument_type="EQ"} > 0.5 (input is tier="core" only) and on()
-      #          stock_market_open == 1, every 15s; for: 1m.
-      #   Debug: Query stock:volatility_15m:percent and stock:return_1m:percent. Rarely fires in the first 15 minutes
-      #          because the window still holds flat pre-open returns.
+      # Requirement: SO-113.
+      #   What:  The 5-minute standard deviation of rolling 1-minute returns is at least 1 percentage point.
+      #   How:   stock:realized_volatility_5m:percent >= 1, with a fresh tick, every 15s; for: 5m.
+      #   Debug: This is an unannualized population standard deviation of overlapping 1m returns sampled every 5s;
+      #          see the recording rule for methodology and warm-up limitations.
       - alert: StockHighVolatility
         expr: |
-          stock:volatility_15m:percent{instrument_type="EQ"} > 0.5
+          stock:realized_volatility_5m:percent{instrument_type="EQ"} >= 1
+          and on(job, instance, exchange, symbol, sector, instrument_type, tier) stock_tick_age_seconds < 60
           and on() stock_market_open == 1
-        for: 1m
+        for: 5m
         labels: {severity: warning, category: flow, layer: condition}
         annotations:
-          summary: "{{ $labels.symbol }} 1m-return volatility is {{ $value | printf \"%.2f\" }}%"
-          description: "Standard deviation of one-minute returns of {{ $labels.exchange }}:{{ $labels.symbol }} over 15 minutes exceeds 0.5%."
+          summary: "{{ $labels.symbol }} 5m realized volatility is {{ $value | printf \"%.2f\" }}%"
+          description: "The 5-minute unannualized standard deviation of overlapping one-minute returns for {{ $labels.exchange }}:{{ $labels.symbol }} is at least 1%."
 
       # StockWideSpread
-      #   What:  The 5-minute average bid-ask spread of a NIFTY 200 stock exceeds 50 bps (0.5% of mid); liquidity
+      # Requirement: SO-111.
+      #   What:  The 5-minute average bid-ask spread of a NIFTY 200 stock is at least 50 bps (0.5% of mid); liquidity
       #          is thin. $value is the average spread in bps.
-      #   How:   stock:orderbook_spread_5m_avg:bps{instrument_type="EQ"} > 50 (input tier="core" only) and on()
+      #   How:   stock:orderbook_spread_5m_avg:bps{instrument_type="EQ"} >= 50 (input tier="core" only) and on()
       #          stock_market_open == 1, every 15s; for: 2m.
       #   Debug: Query stock_orderbook_spread_bps. No data without market depth (Kite ticker mode must be "full")
       #          or when one side of the book is empty; spikes right after 09:15 are common.
       - alert: StockWideSpread
         expr: |
-          stock:orderbook_spread_5m_avg:bps{instrument_type="EQ"} > 50
+          stock:orderbook_spread_5m_avg:bps{instrument_type="EQ"} >= 50
           and on() stock_market_open == 1
         for: 2m
         labels: {severity: warning, category: flow, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} bid-ask spread averages {{ $value | printf \"%.1f\" }} bps"
-          description: "The 5 minute average bid-ask spread of {{ $labels.exchange }}:{{ $labels.symbol }} exceeds 50 bps; liquidity is thin."
+          description: "The 5 minute average bid-ask spread of {{ $labels.exchange }}:{{ $labels.symbol }} is at least 50 bps; liquidity is thin."
 
       # StockOrderBookCrossed
       #   What:  Best bid has been above best ask for a minute, which a live continuous market should not show;
@@ -273,21 +338,22 @@ groups:
           description: "Best bid of {{ $labels.exchange }}:{{ $labels.symbol }} has been above the best ask for 1 minute; the depth feed may be stale or corrupt."
 
       # StockOrderBookImbalance
-      #   What:  Quantity in the top 5 depth levels has been at least 90/10 one-sided for 2 minutes; $value is the
+      # Requirement: SO-112.
+      #   What:  Quantity in the top 5 depth levels has been at least 80/20 one-sided for 3 minutes; $value is the
       #          1m-average imbalance (+1 = all bids, -1 = all asks).
-      #   How:   (stock:orderbook_imbalance_1m_avg:ratio > 0.8 or < -0.8) and on() stock_market_open == 1, every 15s;
-      #          for: 2m. |imbalance| > 0.8 means one side holds > 90% of the top-5 quantity. Input is core only.
+      #   How:   (stock:orderbook_imbalance_1m_avg:ratio >= 0.6 or <= -0.6) and on() stock_market_open == 1, every 15s;
+      #          for: 3m. |imbalance| >= 0.6 means one side holds at least 80% of the top-5 quantity. Input is core only.
       #   Debug: Query stock_orderbook_imbalance_ratio and stock_orderbook_quantity{side="bid|ask"}. Absent without
       #          depth data. Info -> stock-info route.
       - alert: StockOrderBookImbalance
         expr: |
-          (stock:orderbook_imbalance_1m_avg:ratio > 0.8 or stock:orderbook_imbalance_1m_avg:ratio < -0.8)
+          (stock:orderbook_imbalance_1m_avg:ratio >= 0.6 or stock:orderbook_imbalance_1m_avg:ratio <= -0.6)
           and on() stock_market_open == 1
-        for: 2m
+        for: 3m
         labels: {severity: info, category: flow, layer: condition}
         annotations:
           summary: "{{ $labels.symbol }} top 5 depth imbalance is {{ $value | printf \"%.2f\" }}"
-          description: "Quantity in the top 5 bid versus ask levels of {{ $labels.exchange }}:{{ $labels.symbol }} has been heavily one-sided for 2 minutes (1 = all bids, -1 = all asks)."
+          description: "Quantity in the top 5 bid versus ask levels of {{ $labels.exchange }}:{{ $labels.symbol }} has been heavily one-sided for 3 minutes (1 = all bids, -1 = all asks)."
 
   - name: stock_market
     interval: 5s
@@ -420,6 +486,7 @@ groups:
     interval: 15s
     rules:
       # StockExporterDown
+      # Requirement: SO-104 (target reachability; collection failures are separate from process availability).
       #   What:  Prometheus cannot scrape the stock_exporter core or broad job.
       #   How:   up{job=~"stock_core|stock_broad"} == 0, every 15s; for: 1m. No market-hours gate (fires 24x7).
       #   Debug: Check the Prometheus targets page and the exporter pod/container; a target removed from the config
@@ -453,6 +520,7 @@ groups:
           description: "No valid Kite access token. Open the exporter /login page and sign in to Kite to resume market data."
 
       # KiteWebSocketDisconnected
+      # Requirement: SO-101.
       #   What:  The exporter has instruments to subscribe but no connected market-data WebSocket during pre-open or
       #          the open session.
       #   How:   stock_feed_connections == 0 and stock_feed_subscribed_instruments > 0 (matched on job/instance) and
@@ -468,6 +536,43 @@ groups:
         annotations:
           summary: "Kite WebSocket feed disconnected"
           description: "stock_exporter has no connected market data WebSocket while the market is open."
+
+      # Requirement: SO-102.
+      #   What:  A configured equity has not received a tick for more than 120s during the active market session.
+      #   How:   stock_tick_age_seconds > 120 for 2m; one alert series per instrument. Market closure suppresses it.
+      #   Debug: Query stock_tick_age_seconds by symbol. MarketDataStale remains the aggregate critical feed alert.
+      - alert: StockTickStale
+        expr: |
+          stock_tick_age_seconds{instrument_type="EQ"} > 120
+          and on() stock_market_open == 1
+        for: 2m
+        labels: {severity: warning, category: data_freshness, layer: condition}
+        annotations:
+          summary: "{{ $labels.symbol }} has received no tick for {{ $value | humanize }}s"
+          description: "{{ $labels.exchange }}:{{ $labels.symbol }} has no recent tick during the active market session."
+
+      # Requirement: SO-103.
+      #   What:  An expected equity has no observed last-price series, or its observed last price is non-positive.
+      #   How:   stock_tick_age_seconds is the exporter inventory (emitted before a quote); compare it with
+      #          stock_last_price on the full instrument identity. Hold for 1m and gate on the active session.
+      #   Debug: A wholly unreachable target is covered by StockExporterDown. Invalid values should also be rejected
+      #          by the exporter; this rule detects them if emitted.
+      - alert: StockPriceDataInvalid
+        expr: |
+          (
+            (
+              stock_tick_age_seconds{instrument_type="EQ"}
+              unless on(job, instance, exchange, symbol, sector, instrument_type, tier)
+              stock_last_price{instrument_type="EQ"}
+            )
+            or stock_last_price{instrument_type="EQ"} <= 0
+          )
+          and on() stock_market_open == 1
+        for: 1m
+        labels: {severity: critical, category: data_quality, layer: incident}
+        annotations:
+          summary: "Missing or non-positive last price for {{ $labels.symbol }}"
+          description: "No valid positive stock_last_price is available for {{ $labels.exchange }}:{{ $labels.symbol }} during the active session."
 
       # MarketDataStale
       #   What:  More than 10% of core instruments (NIFTY 200 + indices) have had no tick for over 60s while the
@@ -502,6 +607,7 @@ groups:
           description: "Kite REST calls are failing or being rate limited; circuit limits or portfolio data may be stale."
 
       # StockScrapeUnhealthy
+      # Requirement: SO-104 (scrape pressure; distinct from target-down detection).
       #   What:  A stock_exporter scrape uses more than 80% of its timeout or of its sample_limit, so samples may soon
       #          be dropped; $value is the used fraction.
       #   How:   scrape_duration_seconds / scrape_timeout_seconds > 0.8 (core 900ms, broad 4s) or

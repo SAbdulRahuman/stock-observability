@@ -1,0 +1,83 @@
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
+server {
+    listen 8080;
+    server_name _;
+    server_tokens off;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+    location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+    }
+    location / {
+        return 308 https://$host${HTTPS_REDIRECT_PORT}$request_uri;
+    }
+}
+
+server {
+    listen 8443 ssl;
+    server_name _;
+    server_tokens off;
+    client_max_body_size 10m;
+
+    ssl_certificate /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_read_timeout 300s;
+
+    location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    location = /grafana { return 308 /grafana/; }
+    location /grafana/ {
+        resolver 127.0.0.11 valid=30s;
+        set $grafana grafana:3000;
+        proxy_pass http://$grafana;
+    }
+
+    location = /prometheus { return 308 /prometheus/; }
+    location /prometheus/ {
+        auth_basic "stock-observability";
+        auth_basic_user_file /etc/nginx/auth/htpasswd;
+        proxy_pass http://prometheus:9090;
+    }
+
+    location = /alertmanager { return 308 /alertmanager/; }
+    location /alertmanager/ {
+        auth_basic "stock-observability";
+        auth_basic_user_file /etc/nginx/auth/htpasswd;
+        proxy_pass http://alertmanager:9093;
+    }
+
+    location = /exporter/login {
+        auth_basic "stock-observability";
+        auth_basic_user_file /etc/nginx/auth/htpasswd;
+        proxy_pass http://stock_exporter:9101/login;
+    }
+    location = /exporter/kite/callback {
+        auth_basic "stock-observability";
+        auth_basic_user_file /etc/nginx/auth/htpasswd;
+        proxy_pass http://stock_exporter:9101/kite/callback;
+    }
+
+    location / {
+        proxy_pass http://stock_home:8080;
+    }
+}

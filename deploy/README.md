@@ -4,7 +4,7 @@ Stock market observability stack: **stock_exporter** (Zerodha Kite Connect feed)
 
 - Development/testing: OpenShift (OCP) lab cluster, namespace `abdul`, deployed with the Helm chart in [charts/stock-observability](charts/stock-observability).
 - Production: any Kubernetes cluster in the cloud, same chart with [values-cloud-prod.yaml](charts/stock-observability/values-cloud-prod.yaml).
-- Local: Docker Compose ([docker-compose.yml](docker-compose.yml)).
+- Local: Docker Compose user stack ([docker-compose.yml](docker-compose.yml)) or admin stack ([docker-compose.admin.yml](docker-compose.admin.yml)).
 
 ```mermaid
 flowchart LR
@@ -35,7 +35,7 @@ flowchart LR
 9. [Day-2 operations](#9-day-2-operations)
 10. [Production deployment (cloud Kubernetes)](#10-production-deployment-cloud-kubernetes)
 11. [Troubleshooting](#11-troubleshooting)
-12. [Local development with Docker Compose](#12-local-development-with-docker-compose)
+12. [Docker Compose deployments](#12-docker-compose-deployments)
 13. [Home page (stock-home)](#13-home-page-stock-home)
 
 ## 1. Repository layout
@@ -43,7 +43,8 @@ flowchart LR
 ```
 stock-observability/
 ├── Makefile                         # build, push, lint, deploy targets
-├── docker-compose.yml               # local stack
+├── docker-compose.yml               # user stock-observability stack
+├── docker-compose.admin.yml         # standalone admin stack + website
 ├── prometheus/
 │   ├── prometheus.yml               # compose-only Prometheus config
 │   ├── rules/*.rules.yml            # alert + recording rules (shared with Helm); nse_*.rules.yml = NSE KPIs
@@ -207,7 +208,7 @@ In the [Kite developer console](https://developers.kite.trade/), set the app's *
 https://stock-abdul.apps.ocp4poc.c4lab.local/exporter/kite/callback
 ```
 
-A Kite app allows only one redirect URL; use a separate Kite app for local Docker Compose (`http://127.0.0.1:9101/kite/callback`).
+A Kite app allows only one redirect URL. For Compose, use `https://<public-host>/exporter/kite/callback`; local user mode uses `https://localhost:8443/exporter/kite/callback`, and admin mode uses `https://demo.<your-domain>/exporter/kite/callback`. Use a separate Kite app when both deployments need different callback URLs.
 
 > No Kite credentials yet? Deploy with the simulator instead: add `--set stockExporter.feed.source=sim --set stockExporter.feed.forceOpen=true` to the deploy command.
 
@@ -466,16 +467,69 @@ Before deploying, set `externalURL`, `httpRoute.hostnames`, `httpRoute.parentRef
 | `helm upgrade`: `spec.selector: field is immutable` | A component's labels changed | `oc -n abdul delete deploy/<name>` then `make deploy-ocp` |
 | Grafana redirect loop / wrong links | `externalURL` does not match the Route host | Fix `externalURL` and `route.host` in the values file |
 
-## 12. Local development with Docker Compose
+## 12. Docker Compose deployments
+
+Compose provides two standalone files: the user stack has stock observability only, while the admin stack contains the iSee Ticks site, read-only demo, and the same observability services. Nginx is the only service published to the host. User defaults are ports `8080` and `8443`; admin defaults are `8081` and `8444`, so both stacks can coexist on one machine. Startup checks both ports and fails early if either is occupied. Override the corresponding `*_PORT` values in `.env` if needed.
+
+Prepare settings and secrets:
 
 ```bash
-make up-sim      # simulated feed, no Kite credentials
-make up          # live Kite feed (needs secrets/kite_api_secret and KITE_API_KEY)
-make down
-make check test  # validate config and run rule/route tests
+cp .env.example .env
+make init-secrets
 ```
 
-Local URLs: Prometheus http://127.0.0.1:9090, Alertmanager http://127.0.0.1:9093, exporter http://127.0.0.1:9101 (Kite login at `/login`).
+This creates a random portal password at `secrets/portal_password`, its APR1 hash for Nginx, and an empty Kite secret file. The `secrets/` directory is private to the current host user and ignored by Git. Get the portal password with `cat secrets/portal_password`; set `KITE_API_KEY` in `.env` and put the Kite API secret in `secrets/kite_api_secret`. Never put the Kite API secret in `.env`.
+
+### User stack
+
+```bash
+make up-sim      # simulator, no Kite credentials
+make down
+make up          # Kite feed
+```
+
+Open `https://localhost:8443/`; browsers will warn because the local certificate is self-signed and not publicly trusted. The simulator override disables Kite login.
+
+### Admin stack
+
+The admin deployment is self-contained in `docker-compose.admin.yml`. The site and demo use separate hostnames; the demo hostname must start with `demo.`. For local testing, add `127.0.0.1 www.localhost demo.localhost` to `/etc/hosts`, then configure `SITE_URL=https://www.localhost:8444` and `DEMO_PUBLIC_URL=https://demo.localhost:8444` in `.env`.
+
+```bash
+make up-admin-sim   # website + simulator
+make down-admin
+make up-admin       # website + Kite-backed demo
+```
+
+The admin demo uses the Kite-backed feed, is read-only, and may be unavailable outside feed/session hours. Prometheus, Alertmanager, and Kite login are protected by the portal username and password. Grafana and OpenBB are off by default. Enable Grafana with `docker compose -f docker-compose.admin.yml --profile grafana up -d`; set `GRAFANA_INTERNAL_URL=http://grafana:3000/grafana` to expose its links through stock_home and the demo proxy. Enable OpenBB with `docker compose -f docker-compose.admin.yml --profile openbb up -d` and set `OPENBB_INTERNAL_URL=http://openbb:6900`.
+
+### Public HTTPS
+
+To get browser-trusted HTTPS, create DNS A/AAAA records for every name in `CERT_DOMAINS`, and allow inbound ports 80 and 443 to this host. Set these values in `.env` (for the user-only stack, set only its hostname in `CERT_DOMAINS`):
+
+```dotenv
+HTTP_PORT=80
+HTTPS_PORT=443
+HTTPS_REDIRECT_PORT=
+CERT_DOMAINS=www.example.com demo.example.com
+TLS_EMAIL=ops@example.com
+SITE_URL=https://www.example.com
+DEMO_PUBLIC_URL=https://demo.example.com
+```
+
+For the admin stack use `ADMIN_HTTP_PORT=80`, `ADMIN_HTTPS_PORT=443`, and leave `ADMIN_HTTPS_REDIRECT_PORT` empty instead of setting the user-stack port variables above.
+
+Start the chosen stack first so Nginx can serve the ACME HTTP-01 challenge, then request the certificate and reload Nginx:
+
+```bash
+docker compose --profile tls run --rm certbot issue
+docker compose exec -T nginx nginx -s reload
+```
+
+For the admin stack, use `docker compose -f docker-compose.admin.yml --profile tls run --rm certbot issue` and `docker compose -f docker-compose.admin.yml exec -T nginx nginx -s reload`.
+
+Renew every few weeks with `./renew-certs.sh user` or `./renew-certs.sh admin`; schedule the selected host command with cron or a systemd timer. It copies renewed files into the shared certificate volume and reloads Nginx without mounting the Docker socket into Certbot. Let’s Encrypt cannot issue a trusted certificate before DNS and public port forwarding are ready.
+
+Run `make check test` for config and rule tests.
 
 ## 13. Home page (stock-home)
 

@@ -1,0 +1,11 @@
+**
+!website/
+!website/**
+website/web/node_modules
+website/web/.next
+website/web/out
+website/ui/dist/*
+website/dist
+website/stock_website
+!stock-observability-proposal/
+!stock-observability-proposal/*.md

@@ -5,6 +5,15 @@ rule_files:
 
 evaluation_interval: 15s
 
+group_eval_order:
+  - stock_fast
+  - stock_slow
+  - stock_price
+  - stock_circuit
+  - stock_flow
+  - stock_market
+  - stock_infra
+
 tests:
   - name: wide bid-ask spread on the 5 minute average
     interval: 15s
@@ -14,17 +23,26 @@ tests:
       - series: 'stock_orderbook_spread_bps{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '2x20 80x40'
       - series: 'stock_orderbook_spread_bps{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '3x60'
+        values: '50x60'
     alert_rule_test:
       - eval_time: 6m
         alertname: StockWideSpread
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: TCS, sector: IT, instrument_type: EQ, tier: core, severity: warning, category: flow, layer: condition}
+            exp_annotations:
+              summary: TCS bid-ask spread averages 50.0 bps
+              description: The 5 minute average bid-ask spread of NSE:TCS is at least 50 bps; liquidity is thin.
       - eval_time: 12m
         alertname: StockWideSpread
         exp_alerts:
           - exp_labels: {<<: &infy {job: stock_core, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core}, severity: warning, category: flow, layer: condition}
             exp_annotations:
               summary: INFY bid-ask spread averages 80.0 bps
-              description: The 5 minute average bid-ask spread of NSE:INFY exceeds 50 bps; liquidity is thin.
+              description: The 5 minute average bid-ask spread of NSE:INFY is at least 50 bps; liquidity is thin.
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: TCS, sector: IT, instrument_type: EQ, tier: core, severity: warning, category: flow, layer: condition}
+            exp_annotations:
+              summary: TCS bid-ask spread averages 50.0 bps
+              description: The 5 minute average bid-ask spread of NSE:TCS is at least 50 bps; liquidity is thin.
 
   - name: crossed order book only while the market is open
     interval: 15s
@@ -52,7 +70,7 @@ tests:
       - series: 'stock_orderbook_imbalance_ratio{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '-0.9x40'
       - series: 'stock_orderbook_imbalance_ratio{job="stock_core",instance="se",exchange="NSE",symbol="TCS",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '0.5x40'
+        values: '0.6x40'
     alert_rule_test:
       - eval_time: 1m
         alertname: StockOrderBookImbalance
@@ -62,4 +80,8 @@ tests:
           - exp_labels: {<<: *infy, severity: info, category: flow, layer: condition}
             exp_annotations:
               summary: INFY top 5 depth imbalance is -0.90
-              description: Quantity in the top 5 bid versus ask levels of NSE:INFY has been heavily one-sided for 2 minutes (1 = all bids, -1 = all asks).
+              description: Quantity in the top 5 bid versus ask levels of NSE:INFY has been heavily one-sided for 3 minutes (1 = all bids, -1 = all asks).
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: TCS, sector: IT, instrument_type: EQ, tier: core, severity: info, category: flow, layer: condition}
+            exp_annotations:
+              summary: TCS top 5 depth imbalance is 0.60
+              description: Quantity in the top 5 bid versus ask levels of NSE:TCS has been heavily one-sided for 3 minutes (1 = all bids, -1 = all asks).

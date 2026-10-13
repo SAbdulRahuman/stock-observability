@@ -1,0 +1,193 @@
+# promtool test rules prometheus/tests/so_mvp_alerts_test.yml
+rule_files:
+  - ../rules/stock_recording.rules.yml
+  - ../rules/stock_alerts.rules.yml
+
+evaluation_interval: 15s
+
+group_eval_order:
+  - stock_fast
+  - stock_slow
+  - stock_price
+  - stock_circuit
+  - stock_flow
+  - stock_market
+  - stock_infra
+
+tests:
+  - name: missing and invalid prices are detected per expected instrument and recover
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x32'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="MISSING",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x32'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="INVALID",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x32'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="VALID",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x32'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INVALID",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '0x10 100x22'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="VALID",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100x32'
+    alert_rule_test:
+      - eval_time: 2m15s
+        alertname: StockPriceDataInvalid
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: INVALID, sector: IT, instrument_type: EQ, tier: core, severity: critical, category: data_quality, layer: incident}
+            exp_annotations:
+              summary: Missing or non-positive last price for INVALID
+              description: No valid positive stock_last_price is available for NSE:INVALID during the active session.
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: MISSING, sector: IT, instrument_type: EQ, tier: core, severity: critical, category: data_quality, layer: incident}
+            exp_annotations:
+              summary: Missing or non-positive last price for MISSING
+              description: No valid positive stock_last_price is available for NSE:MISSING during the active session.
+      - eval_time: 3m
+        alertname: StockPriceDataInvalid
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: MISSING, sector: IT, instrument_type: EQ, tier: core, severity: critical, category: data_quality, layer: incident}
+            exp_annotations:
+              summary: Missing or non-positive last price for MISSING
+              description: No valid positive stock_last_price is available for NSE:MISSING during the active session.
+
+  - name: stale per-symbol ticks alert only during the active session and recovers
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x20 0x20'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '121x20 1x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: StockTickStale
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core, severity: warning, category: data_freshness, layer: condition}
+            exp_annotations:
+              summary: INFY has received no tick for 121s
+              description: NSE:INFY has no recent tick during the active market session.
+      - eval_time: 6m
+        alertname: StockTickStale
+
+  - name: price movement detects both directions and resolves when the return clears
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x48'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="UP",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x48'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="DOWN",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x48'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="UP",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100x20 102x16 100x12'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="DOWN",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100x20 98x16 100x12'
+    alert_rule_test:
+      - eval_time: 4m45s
+        alertname: StockSignificantPriceMovement
+      - eval_time: 8m
+        alertname: StockSignificantPriceMovement
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: DOWN, sector: IT, instrument_type: EQ, tier: core, direction: down, severity: warning, category: market_movement, layer: condition}
+            exp_annotations:
+              summary: DOWN down 5m return -2.00%
+              description: NSE:DOWN moved at least 2% over five minutes. This is an observation, not a prediction or trading recommendation.
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: UP, sector: IT, instrument_type: EQ, tier: core, direction: up, severity: warning, category: market_movement, layer: condition}
+            exp_annotations:
+              summary: UP up 5m return 2.00%
+              description: NSE:UP moved at least 2% over five minutes. This is an observation, not a prediction or trading recommendation.
+      - eval_time: 10m
+        alertname: StockSignificantPriceMovement
+
+  - name: relative volume boundary and combined price-volume alert require matching fresh inputs
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x56'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="VOL",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x56'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="SURGE",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x56'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="NO_RVOL",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x56'
+      - series: 'stock:relative_volume:ratio{job="stock_core",instance="se",exchange="NSE",symbol="VOL",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '2.99x8 3x48'
+      - series: 'stock:relative_volume:ratio{job="stock_core",instance="se",exchange="NSE",symbol="SURGE",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '2x56'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="SURGE",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100x20 102x36'
+      - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="NO_RVOL",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '100x20 102x36'
+    alert_rule_test:
+      - eval_time: 4m45s
+        alertname: StockRelativeVolumeHigh
+      - eval_time: 5m30s
+        alertname: StockRelativeVolumeHigh
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: VOL, sector: IT, instrument_type: EQ, tier: core, severity: warning, category: volume_anomaly, layer: condition}
+            exp_annotations:
+              summary: VOL relative volume is 3.00x
+              description: NSE:VOL volume is at least 3x its time-adjusted 14-session baseline.
+      - eval_time: 8m
+        alertname: StockPriceVolumeSurge
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: SURGE, sector: IT, instrument_type: EQ, tier: core, severity: warning, category: market_movement, layer: condition}
+            exp_annotations:
+              summary: SURGE 5m move and relative-volume surge
+              description: NSE:SURGE moved at least 2% over five minutes while trading at least 2x its time-adjusted volume baseline.
+
+  - name: stale and missing-price alerts are suppressed while the market is closed
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '0x20'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="CLOSED",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '300x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: StockTickStale
+      - eval_time: 3m
+        alertname: StockPriceDataInvalid
+
+  - name: realized volatility fires at the inclusive one-percent boundary
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x44'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="EDGE",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x44'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="LOW",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x44'
+      - series: 'stock:return_1m:percent{job="stock_core",instance="se",exchange="NSE",symbol="EDGE",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '-1 1 -1 1 -1 1 -1 1 -1 1 -1 1 -1 1 -1 1 -1 1 -1 1 -1 1 -1 1 -1 1 -1 1 -1 1 -1 1 -1 1 -1 1 -1 1 -1 1 -1 1 -1 1'
+      - series: 'stock:return_1m:percent{job="stock_core",instance="se",exchange="NSE",symbol="LOW",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '-0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99 -0.99 0.99'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: StockHighVolatility
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: EDGE, sector: IT, instrument_type: EQ, tier: core, severity: warning, category: flow, layer: condition}
+            exp_annotations:
+              summary: EDGE 5m realized volatility is 1.00%
+              description: The 5-minute unannualized standard deviation of overlapping one-minute returns for NSE:EDGE is at least 1%.
+
+  - name: intraday drawdown fires at exactly five percent
+    interval: 15s
+    input_series:
+      - series: 'stock_market_open{job="stock_core",instance="se"}'
+        values: '1x20'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="EDGE",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x20'
+      - series: 'stock:intraday_drawdown:percent{job="stock_core",instance="se",exchange="NSE",symbol="EDGE",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '-5x20'
+      - series: 'stock:intraday_drawdown:percent{job="stock_core",instance="se",exchange="NSE",symbol="LOW",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '-4.99x20'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="LOW",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: StockIntradayDrawdown
+        exp_alerts:
+          - exp_labels: {job: stock_core, instance: se, exchange: NSE, symbol: EDGE, sector: IT, instrument_type: EQ, tier: core, severity: warning, category: price, layer: condition}
+            exp_annotations:
+              summary: EDGE drawdown from day high -5.00%
+              description: NSE:EDGE has given up at least 5% from today's high.

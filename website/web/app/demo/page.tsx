@@ -5,15 +5,15 @@ import { Card } from "@/components/ui/card";
 
 export const metadata: Metadata = {
   title: "Live demo",
-  description: "Explore the iSee Ticks product home and Grafana dashboards on a live, simulated NSE feed.",
+  description: "Explore the iSee Ticks product home and Grafana dashboards on a live NSE market feed.",
 };
 
 const tour = [
   { title: "Home", body: "Index cards, breadth, top movers and active alerts update every few seconds." },
   { title: "Top movers & sectors", body: "Scan gainers, losers and volume leaders, then compare sector indices." },
   { title: "Stock explorer", body: "Open any symbol for price history, depth and the KPIs computed for it." },
-  { title: "Alerts", body: "See which rules fire on the simulated market and how Alertmanager groups them." },
-  { title: "Grafana", body: "Follow a dashboard link to the underlying time series under /grafana." },
+  { title: "Alerts", body: "See which rules fire on the market feed and how Alertmanager groups them." },
+  { title: "Grafana", body: "When enabled by the deployment owner, follow a dashboard link to the underlying time series." },
 ];
 
 export default function DemoPage() {
@@ -21,8 +21,8 @@ export default function DemoPage() {
     <div className="mx-auto max-w-4xl px-4 py-16">
       <h1 className="text-4xl font-bold tracking-tight">Live demo</h1>
       <p className="mt-4 text-lg text-muted-foreground">
-        The full stack runs on one small cloud VM: exporter, Prometheus, Alertmanager, Grafana and the product home, each as a
-        native binary under systemd.
+        The admin deployment runs stock_exporter, Prometheus, Alertmanager and the product home behind one HTTPS entry point.
+        Grafana is optional and may be enabled by the deployment owner.
       </p>
       <div className="mt-8 flex flex-wrap items-center gap-4">
         <DemoLink />
@@ -30,10 +30,10 @@ export default function DemoPage() {
       </div>
       <TickerStrip className="mt-10" />
       <Card className="mt-6 border-warning/30 bg-warning/10 p-5 text-sm">
-        <p className="font-semibold">Simulated market data</p>
+        <p className="font-semibold">Live market data</p>
         <p className="mt-1 text-muted-foreground">
-          The demo uses the built-in market simulator, not a live exchange feed. Prices, alerts and forecasts are synthetic and
-          are not investment advice.
+          Data depends on the Kite session and exchange hours; the feed can be delayed or unavailable. This read-only demo is
+          for observability education, not investment advice.
         </p>
       </Card>
       <h2 className="mt-14 text-2xl font-bold tracking-tight">What to try</h2>

@@ -1,6 +1,14 @@
 PROM_SRC ?= ../prometheus
 AM_SRC   ?= ../alertmanager
 
+-include .env
+HTTP_PORT ?= 8080
+HTTPS_PORT ?= 8443
+ADMIN_HTTP_PORT ?= 8081
+ADMIN_HTTPS_PORT ?= 8444
+PORTAL_USERNAME ?= admin
+export HTTP_PORT HTTPS_PORT ADMIN_HTTP_PORT ADMIN_HTTPS_PORT PORTAL_USERNAME
+
 .PHONY: all
 all: check test
 
@@ -82,17 +90,45 @@ e2e: tools
 	$(MAKE) -C ../stock_exporter build
 	tests/e2e_local.sh
 
-.PHONY: up-sim
+.PHONY: init-secrets check-ports check-admin-ports up-sim up-admin up-admin-sim down-admin
+init-secrets:
+	mkdir -p secrets
+	chmod 700 secrets
+	test -s secrets/portal_password || openssl rand -hex 24 > secrets/portal_password
+	test -f secrets/kite_api_secret || install -m 600 /dev/null secrets/kite_api_secret
+	password=$$(cat secrets/portal_password); printf '%s:%s\n' "$(PORTAL_USERNAME)" "$$(printf '%s' "$$password" | openssl passwd -apr1 -stdin)" > secrets/portal.htpasswd; unset password
+	chmod 600 secrets/portal_password
+	chmod 644 secrets/portal.htpasswd secrets/kite_api_secret
+
+check-ports:
+	python3 check-ports.py "$${HTTP_PORT:-8080}" "$${HTTPS_PORT:-8443}"
+
+check-admin-ports:
+	python3 check-ports.py "$${ADMIN_HTTP_PORT:-8081}" "$${ADMIN_HTTPS_PORT:-8444}"
+
 up-sim:
+	$(MAKE) init-secrets check-ports
 	docker compose -f docker-compose.yml -f docker-compose.sim.yml up -d --build
 
 .PHONY: up
 up:
+	$(MAKE) init-secrets check-ports
 	docker compose up -d --build
+
+up-admin:
+	$(MAKE) init-secrets check-admin-ports
+	docker compose -f docker-compose.admin.yml up -d --build
+
+up-admin-sim:
+	$(MAKE) init-secrets check-admin-ports
+	docker compose -f docker-compose.admin.yml -f docker-compose.sim.yml up -d --build
 
 .PHONY: down
 down:
 	docker compose down
+
+down-admin:
+	docker compose -f docker-compose.admin.yml down
 
 # --- Helm / OpenShift --------------------------------------------------------
 

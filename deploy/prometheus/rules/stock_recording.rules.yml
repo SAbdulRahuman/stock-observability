@@ -150,6 +150,13 @@ groups:
       #          stock:realized_vol_annualised:percent.
       - record: stock:volatility_15m:percent
         expr: stddev_over_time(stock:return_1m:percent{tier="core"}[15m])
+      # stock:realized_volatility_5m:percent
+      #   What:  Unannualized population standard deviation of rolling 1m returns over 5m, in percentage points.
+      #   How:   stddev_over_time(stock:return_1m:percent{tier="core"}[5m]); returns are sampled every 5s and overlap.
+      #   Debug: This is a short-window realized-volatility measure, not an annualized estimate or five independent
+      #          1m bars. It needs enough fresh returns and feeds the SO-113 StockHighVolatility alert.
+      - record: stock:realized_volatility_5m:percent
+        expr: stddev_over_time(stock:return_1m:percent{tier="core"}[5m])
       # stock:volume_1m_avg_1h:shares
       #   What:  Baseline volume: average of the rolling 1-minute volume over the last hour, in shares.
       #   How:   avg_over_time(stock:volume_1m:shares{tier="core"}[1h]), every 15s (~720 samples of the 5s series).

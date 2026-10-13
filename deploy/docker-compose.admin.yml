@@ -1,0 +1,159 @@
+# Standalone admin deployment: iSee Ticks website plus the complete observability stack.
+name: stock-observability-admin
+
+services:
+  stock_exporter:
+    build: ../stock_exporter
+    restart: unless-stopped
+    command:
+      - --feed.source=kite
+      - --kite.api-key=${KITE_API_KEY:-}
+      - --kite.api-secret-file=/run/secrets/kite_api_secret
+      - --kite.token-file=/var/lib/stock_exporter/kite_session.json
+      - --stock.watchlist-file=/etc/stock_exporter/watchlist.yml
+      - --market.holidays-file=/etc/stock_exporter/holidays.yml
+      - --collector.textfile.directory=/etc/stock_exporter/textfile
+    secrets: [kite_api_secret]
+    volumes:
+      - exporter-data:/var/lib/stock_exporter
+      - ./stock_exporter/textfile:/etc/stock_exporter/textfile:ro
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.14.0}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+      - --web.external-url=/prometheus/
+      - --web.route-prefix=/prometheus/
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    depends_on: [stock_exporter, alertmanager]
+
+  alertmanager:
+    image: ${ALERTMANAGER_IMAGE:-prom/alertmanager:v0.34.1}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.external-url=/alertmanager/
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./alertmanager/templates:/etc/alertmanager/templates:ro
+      - alertmanager-data:/alertmanager
+
+  stock_home:
+    build: ../stock_home
+    restart: unless-stopped
+    command:
+      - --prometheus.url=http://prometheus:9090/prometheus
+      - --alertmanager.url=http://alertmanager:9093/alertmanager
+      - --grafana.url=${GRAFANA_INTERNAL_URL:-}
+      - --exporter.url=http://stock_exporter:9101
+      - --market.holidays-file=/etc/stock-home/holidays.yml
+      - --openbb.url=${OPENBB_INTERNAL_URL:-}
+    volumes:
+      - ../stock_exporter/examples/holidays-nse-2026.yml:/etc/stock-home/holidays.yml:ro
+    depends_on: [prometheus, alertmanager, stock_exporter]
+
+  stock_website:
+    build:
+      context: ..
+      dockerfile: website/Dockerfile
+      args:
+        SITE_URL: ${SITE_URL:-https://www.localhost:8444}
+        NPM_STRICT_SSL: ${NPM_STRICT_SSL:-true}
+    restart: unless-stopped
+    command:
+      - --web.listen-address=:8090
+      - --web.metrics-address=
+      - --demo.listen-address=:8091
+      - --demo.home-url=http://stock_home:8080
+      - --demo.grafana-url=${GRAFANA_INTERNAL_URL:-}
+      - --demo.public-url=${DEMO_PUBLIC_URL:-https://demo.localhost:8444}
+      - --demo.simulated=false
+      - --db.path=/data/site.db
+    volumes:
+      - website-data:/data
+    depends_on: [stock_home]
+
+  nginx:
+    image: ${NGINX_IMAGE:-stock-observability-nginx:local}
+    build:
+      context: ./nginx
+      args:
+        NGINX_BASE_IMAGE: ${NGINX_BASE_IMAGE:-nginxinc/nginx-unprivileged:1.28-alpine-slim}
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_HTTP_PORT:-8081}:8080"
+      - "${ADMIN_HTTPS_PORT:-8444}:8443"
+    environment:
+      HTTPS_REDIRECT_PORT: ${ADMIN_HTTPS_REDIRECT_PORT-:8444}
+      NGINX_ENVSUBST_FILTER: ^HTTPS_REDIRECT_PORT$
+      PORTAL_USERNAME: ${PORTAL_USERNAME:-admin}
+    volumes:
+      - ./nginx/admin.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./secrets/portal.htpasswd:/etc/nginx/auth/htpasswd:ro
+      - acme-webroot:/var/www/certbot:ro
+      - nginx-certs:/etc/nginx/certs
+    depends_on: [stock_home, prometheus, alertmanager, stock_exporter, stock_website]
+
+  certbot:
+    image: ${CERTBOT_IMAGE:-certbot/certbot:v4.0.0}
+    profiles: [tls]
+    entrypoint: ["/bin/sh", "/scripts/certbot.sh"]
+    command: ["issue"]
+    environment:
+      CERT_DOMAINS: ${CERT_DOMAINS:-}
+      TLS_EMAIL: ${TLS_EMAIL:-}
+    volumes:
+      - certbot-data:/etc/letsencrypt
+      - acme-webroot:/var/www/certbot
+      - nginx-certs:/certs
+      - ./certbot:/scripts:ro
+
+  quantlab:
+    build: ./quantlab
+    restart: unless-stopped
+    command: ["--prometheus=http://prometheus:9090", "--listen=:9108"]
+    depends_on: [prometheus]
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:13.2.3}
+    profiles: [grafana]
+    restart: unless-stopped
+    environment:
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+
+  openbb:
+    image: ${OPENBB_IMAGE:-aseeni/openbb:ae02687}
+    profiles: [openbb]
+    restart: unless-stopped
+    environment:
+      HOME: /home/openbb
+      OPENBB_API_HOST: 0.0.0.0
+      OPENBB_API_PORT: "6900"
+      OPENBB_API_AUTH: "false"
+    expose: ["6900"]
+
+secrets:
+  kite_api_secret:
+    file: ./secrets/kite_api_secret
+
+volumes:
+  exporter-data:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:
+  certbot-data:
+  acme-webroot:
+  nginx-certs:
+  website-data:

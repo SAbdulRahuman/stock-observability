@@ -5,6 +5,15 @@ rule_files:
 
 evaluation_interval: 15s
 
+group_eval_order:
+  - stock_fast
+  - stock_slow
+  - stock_price
+  - stock_circuit
+  - stock_flow
+  - stock_market
+  - stock_infra
+
 tests:
   - name: circuit proximity and hit, including broad-tier symbols
     interval: 15s
@@ -12,31 +21,31 @@ tests:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
         values: '1x40'
       - series: 'stock_circuit_upper_limit_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '110x40'
+        values: '100x40'
       - series: 'stock_circuit_lower_limit_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '90x40'
       - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
-        values: '100x4 108x10 110x20'
+        values: '100x4 99x10 100x20'
       - series: 'stock_circuit_upper_limit_price{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
         values: '110x40'
       - series: 'stock_circuit_lower_limit_price{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
-        values: '90x40'
+        values: '100x40'
       - series: 'stock_last_price{job="stock_broad",instance="se",exchange="NSE",symbol="ZZZ",sector="unknown",instrument_type="EQ",tier="broad"}'
-        values: '100x4 91x36'
+        values: '100x4 101x36'
     alert_rule_test:
       - eval_time: 3m
         alertname: StockNearUpperCircuit
         exp_alerts:
           - exp_labels: {<<: &infy {job: stock_core, instance: se, exchange: NSE, symbol: INFY, sector: IT, instrument_type: EQ, tier: core}, severity: warning, category: circuit, layer: condition}
             exp_annotations:
-              summary: INFY is 1.85% from its upper circuit
+              summary: INFY is 1.00% from its upper circuit
               description: NSE:INFY (core tier) is approaching its upper price band.
       - eval_time: 3m
         alertname: StockNearLowerCircuit
         exp_alerts:
           - exp_labels: {<<: &zzz {job: stock_broad, instance: se, exchange: NSE, symbol: ZZZ, sector: unknown, instrument_type: EQ, tier: broad}, severity: warning, category: circuit, layer: condition}
             exp_annotations:
-              summary: ZZZ is 1.10% from its lower circuit
+              summary: ZZZ is 1.00% from its lower circuit
               description: NSE:ZZZ (broad tier) is approaching its lower price band.
       - eval_time: 3m
         alertname: StockCircuitHit
@@ -45,7 +54,7 @@ tests:
         exp_alerts:
           - exp_labels: {<<: *infy, band: upper, severity: critical, category: circuit, layer: incident}
             exp_annotations:
-              summary: INFY hit its upper circuit at 110
+              summary: INFY hit its upper circuit at 100
               description: NSE:INFY is locked at its upper circuit; trading is one-sided.
       - eval_time: 5m
         alertname: StockNearUpperCircuit
@@ -93,6 +102,8 @@ tests:
     input_series:
       - series: 'stock_market_open{job="stock_core",instance="se"}'
         values: '1x30'
+      - series: 'stock_tick_age_seconds{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
+        values: '1x30'
       - series: 'stock_last_price{job="stock_core",instance="se",exchange="NSE",symbol="INFY",sector="IT",instrument_type="EQ",tier="core"}'
         values: '100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100 102 100'
     alert_rule_test:
@@ -101,5 +112,5 @@ tests:
         exp_alerts:
           - exp_labels: {<<: *infy, severity: warning, category: flow, layer: condition}
             exp_annotations:
-              summary: INFY 1m-return volatility is 1.98%
-              description: Standard deviation of one-minute returns of NSE:INFY over 15 minutes exceeds 0.5%.
+              summary: INFY 5m realized volatility is 1.97%
+              description: The 5-minute unannualized standard deviation of overlapping one-minute returns for NSE:INFY is at least 1%.
