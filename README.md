@@ -55,14 +55,15 @@ Releases are built by [.github/workflows/release.yml](.github/workflows/release.
 
 ## Repository layout
 
-This repository lives at [SAbdulRahuman/stock-observability](https://github.com/SAbdulRahuman/stock-observability). `stock_exporter`, `stock_home` and `deploy` are tracked here directly. The upstream projects are git submodules that point to forks in the [stock-observability](https://github.com/stock-observability) org, each pinned to a commit:
+This repository lives at [SAbdulRahuman/stock-observability](https://github.com/SAbdulRahuman/stock-observability). `stock_exporter`, `stock_home` and `deploy` are tracked here directly. Most upstream projects are git submodules that point to forks in the [stock-observability](https://github.com/stock-observability) org, each pinned to a commit. Lightweight Charts is pinned directly to its upstream repository:
 
-| Submodule | Fork of | Branch |
+| Submodule | Source | Branch |
 |---|---|---|
 | alertmanager | prometheus/alertmanager | main |
 | blackbox_exporter | prometheus/blackbox_exporter | master |
 | client_golang | prometheus/client_golang | main |
 | grafana | grafana/grafana (shallow) | main |
+| lightweight-charts | tradingview/lightweight-charts (upstream) | master |
 | node_exporter | prometheus/node_exporter | master |
 | prometheus | prometheus/prometheus | main |
 | proposals | prometheus/proposals | main |
@@ -73,7 +74,7 @@ git clone --recurse-submodules git@github.com:SAbdulRahuman/stock-observability.
 git submodule update --init --recursive      # after a plain clone or a pull that moved a pin
 ```
 
-Each submodule has two remotes: `origin` (the org fork) and `upstream` (the original project).
+Org-fork submodules have two remotes: `origin` (the org fork) and `upstream` (the original project). `lightweight-charts` uses `origin` for the upstream TradingView repository.
 
 Move a component to a newer upstream commit:
 

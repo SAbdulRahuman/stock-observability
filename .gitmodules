@@ -66,3 +66,6 @@
 	path = OpenBB/openbb-brightquery
 	url = https://github.com/openbq-org/openbb-brightquery.git
 	branch = main
+[submodule "lightweight-charts"]
+	path = lightweight-charts
+	url = git@github.com:tradingview/lightweight-charts.git
