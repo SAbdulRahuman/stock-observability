@@ -16,6 +16,8 @@ package store
 import (
 	"testing"
 	"time"
+
+	"github.com/seenimo/stock_exporter/internal/daily"
 )
 
 func TestNewReference(t *testing.T) {
@@ -65,5 +67,36 @@ func TestNewReference(t *testing.T) {
 	st.SetInstruments([]Instrument{{Token: 1}})
 	if st.Snapshot()[0].HasReference {
 		t.Fatal("reference of a removed instrument must be dropped")
+	}
+}
+
+func TestObserverReceivesMarketStateUpdates(t *testing.T) {
+	st := New()
+	instrument := Instrument{Token: 1, Exchange: "NSE", Symbol: "INFY"}
+	st.SetInstruments([]Instrument{instrument})
+	var changes []Change
+	st.SetObserver(func(change Change) {
+		changes = append(changes, change)
+	})
+
+	if !st.UpdateQuote(1, Quote{LastPrice: 100}) ||
+		!st.UpdateCircuit(1, Circuit{Upper: 110}) ||
+		!st.UpdateReference(1, Reference{High52W: 120}) ||
+		!st.UpdateDaily(1, daily.Indicators{Valid: true}) {
+		t.Fatal("failed to update known instrument")
+	}
+	st.SetPortfolio(Portfolio{UpdatedAt: time.Now()})
+
+	want := []ChangeKind{ChangeQuote, ChangeCircuit, ChangeReference, ChangeDaily, ChangePortfolio}
+	if len(changes) != len(want) {
+		t.Fatalf("observer received %d updates, want %d", len(changes), len(want))
+	}
+	for i, kind := range want {
+		if changes[i].Kind != kind {
+			t.Errorf("update %d kind = %q, want %q", i, changes[i].Kind, kind)
+		}
+	}
+	if changes[0].Instrument != instrument {
+		t.Errorf("quote update instrument = %+v, want %+v", changes[0].Instrument, instrument)
 	}
 }

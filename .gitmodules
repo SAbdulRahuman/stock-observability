@@ -69,3 +69,8 @@
 [submodule "lightweight-charts"]
 	path = lightweight-charts
 	url = git@github.com:tradingview/lightweight-charts.git
+[submodule "questdb"]
+	path = questdb
+	url = git@github.com:questdb/questdb.git
+	branch = master
+	shallow = true

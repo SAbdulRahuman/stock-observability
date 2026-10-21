@@ -502,6 +502,8 @@ make up-admin       # website + Kite-backed demo
 
 The admin demo uses the Kite-backed feed, is read-only, and may be unavailable outside feed/session hours. Prometheus, Alertmanager, and Kite login are protected by the portal username and password. Grafana and OpenBB are off by default. Enable Grafana with `docker compose -f docker-compose.admin.yml --profile grafana up -d`; set `GRAFANA_INTERNAL_URL=http://grafana:3000/grafana` to expose its links through stock_home and the demo proxy. Enable OpenBB with `docker compose -f docker-compose.admin.yml --profile openbb up -d` and set `OPENBB_INTERNAL_URL=http://openbb:6900`.
 
+The admin stack also runs QuestDB and stores stock-exporter market-state updates in `stock_quotes`, `stock_circuits`, `stock_references`, `stock_daily_indicators`, `stock_daily_signals`, and `stock_portfolio`. These writes run independently of Prometheus scraping; `/metrics` continues to use the exporter's in-memory state. QuestDB data uses the persistent `questdb-data` volume, and QuestDB is internal to the Compose network rather than published on a host port. The user stack is unchanged.
+
 ### Public HTTPS
 
 To get browser-trusted HTTPS, create DNS A/AAAA records for every name in `CERT_DOMAINS`, and allow inbound ports 80 and 443 to this host. Set these values in `.env` (for the user-only stack, set only its hostname in `CERT_DOMAINS`):

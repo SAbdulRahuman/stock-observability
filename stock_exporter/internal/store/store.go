@@ -114,6 +114,28 @@ type Entry struct {
 	HasDaily     bool
 }
 
+// ChangeKind identifies a market-state update published by Store.
+type ChangeKind string
+
+const (
+	ChangeQuote     ChangeKind = "quote"
+	ChangeCircuit   ChangeKind = "circuit"
+	ChangeReference ChangeKind = "reference"
+	ChangeDaily     ChangeKind = "daily"
+	ChangePortfolio ChangeKind = "portfolio"
+)
+
+// Change contains one accepted market-state update.
+type Change struct {
+	Kind       ChangeKind
+	Instrument Instrument
+	Quote      Quote
+	Circuit    Circuit
+	Reference  Reference
+	Daily      daily.Indicators
+	Portfolio  Portfolio
+}
+
 // Reference holds levels derived from up to one year of daily candles.
 // SMA50D/SMA200D are 0 when fewer than 50/200 candles are available. Cross is +1 when the
 // latest candle moved SMA50 above SMA200 (golden cross), -1 below (death cross), else 0.
@@ -171,6 +193,7 @@ type Store struct {
 	portfolio   Portfolio
 	hasPortf    bool
 	createdAt   time.Time
+	observer    func(Change)
 }
 
 // New returns an empty store.
@@ -187,6 +210,13 @@ func New() *Store {
 
 // CreatedAt is the time the store was created.
 func (s *Store) CreatedAt() time.Time { return s.createdAt }
+
+// SetObserver registers a non-blocking observer for accepted market-state updates.
+func (s *Store) SetObserver(observer func(Change)) {
+	s.mu.Lock()
+	s.observer = observer
+	s.mu.Unlock()
+}
 
 // SetInstruments replaces the tracked universe and drops state of removed instruments.
 func (s *Store) SetInstruments(ins []Instrument) {
@@ -249,44 +279,68 @@ func (s *Store) Tokens() []uint32 {
 // UpdateQuote stores a tick. Ticks for unknown tokens are ignored.
 func (s *Store) UpdateQuote(token uint32, q Quote) bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.instruments[token]; !ok {
+	instrument, ok := s.instruments[token]
+	if !ok {
+		s.mu.Unlock()
 		return false
 	}
 	s.quotes[token] = q
+	observer := s.observer
+	s.mu.Unlock()
+	if observer != nil {
+		observer(Change{Kind: ChangeQuote, Instrument: instrument, Quote: q})
+	}
 	return true
 }
 
 // UpdateCircuit stores circuit limits. Unknown tokens are ignored.
 func (s *Store) UpdateCircuit(token uint32, c Circuit) bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.instruments[token]; !ok {
+	instrument, ok := s.instruments[token]
+	if !ok {
+		s.mu.Unlock()
 		return false
 	}
 	s.circuits[token] = c
+	observer := s.observer
+	s.mu.Unlock()
+	if observer != nil {
+		observer(Change{Kind: ChangeCircuit, Instrument: instrument, Circuit: c})
+	}
 	return true
 }
 
 // UpdateReference stores reference levels. Unknown tokens are ignored.
 func (s *Store) UpdateReference(token uint32, r Reference) bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.instruments[token]; !ok {
+	instrument, ok := s.instruments[token]
+	if !ok {
+		s.mu.Unlock()
 		return false
 	}
 	s.refs[token] = r
+	observer := s.observer
+	s.mu.Unlock()
+	if observer != nil {
+		observer(Change{Kind: ChangeReference, Instrument: instrument, Reference: r})
+	}
 	return true
 }
 
 // UpdateDaily stores the completed-session indicators. Unknown tokens are ignored.
 func (s *Store) UpdateDaily(token uint32, d daily.Indicators) bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.instruments[token]; !ok {
+	instrument, ok := s.instruments[token]
+	if !ok {
+		s.mu.Unlock()
 		return false
 	}
 	s.daily[token] = d
+	observer := s.observer
+	s.mu.Unlock()
+	if observer != nil {
+		observer(Change{Kind: ChangeDaily, Instrument: instrument, Daily: d})
+	}
 	return true
 }
 
@@ -353,9 +407,20 @@ type Portfolio struct {
 // SetPortfolio replaces the portfolio.
 func (s *Store) SetPortfolio(p Portfolio) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.portfolio = p
+	s.portfolio = clonePortfolio(p)
 	s.hasPortf = true
+	observer := s.observer
+	s.mu.Unlock()
+	if observer != nil {
+		observer(Change{Kind: ChangePortfolio, Portfolio: clonePortfolio(p)})
+	}
+}
+
+func clonePortfolio(p Portfolio) Portfolio {
+	p.Holdings = append([]Holding(nil), p.Holdings...)
+	p.Positions = append([]Position(nil), p.Positions...)
+	p.Margins = append([]Margin(nil), p.Margins...)
+	return p
 }
 
 // Portfolio returns the portfolio and whether it was ever set.

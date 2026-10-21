@@ -67,6 +67,7 @@ This repository lives at [SAbdulRahuman/stock-observability](https://github.com/
 | node_exporter | prometheus/node_exporter | master |
 | prometheus | prometheus/prometheus | main |
 | proposals | prometheus/proposals | main |
+| questdb | questdb/questdb (upstream) | master |
 | test-infra | prometheus/test-infra | master |
 
 ```bash

@@ -2,11 +2,18 @@
 name: stock-observability-admin
 
 services:
+  questdb:
+    image: ${QUESTDB_IMAGE:-questdb/questdb:9.2.3}
+    restart: unless-stopped
+    volumes:
+      - questdb-data:/var/lib/questdb
+
   stock_exporter:
     build: ../stock_exporter
     restart: unless-stopped
     command:
       - --feed.source=kite
+      - --questdb.url=http://questdb:9000
       - --kite.api-key=${KITE_API_KEY:-}
       - --kite.api-secret-file=/run/secrets/kite_api_secret
       - --kite.token-file=/var/lib/stock_exporter/kite_session.json
@@ -17,6 +24,7 @@ services:
     volumes:
       - exporter-data:/var/lib/stock_exporter
       - ./stock_exporter/textfile:/etc/stock_exporter/textfile:ro
+    depends_on: [questdb]
 
   prometheus:
     image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.14.0}
@@ -150,6 +158,7 @@ secrets:
 
 volumes:
   exporter-data:
+  questdb-data:
   prometheus-data:
   alertmanager-data:
   grafana-data:

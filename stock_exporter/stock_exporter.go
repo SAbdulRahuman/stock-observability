@@ -40,6 +40,7 @@ import (
 	"github.com/seenimo/stock_exporter/collector"
 	"github.com/seenimo/stock_exporter/internal/kite"
 	"github.com/seenimo/stock_exporter/internal/market"
+	"github.com/seenimo/stock_exporter/internal/questdb"
 	"github.com/seenimo/stock_exporter/internal/sim"
 	"github.com/seenimo/stock_exporter/internal/store"
 	"github.com/seenimo/stock_exporter/internal/watchlist"
@@ -171,6 +172,7 @@ type options struct {
 	holidaysFile  string
 	timezone      string
 	forceOpen     bool
+	questdbURL    string
 
 	kiteAPIKey         string
 	kiteAPISecretFile  string
@@ -253,6 +255,14 @@ func start(ctx context.Context, o options, b *bootstrap.Bootstrap) (collector.De
 	cal := market.NewCalendar(loc, holidays, o.forceOpen)
 	st := store.New()
 	deps := collector.Deps{Store: st, Calendar: cal, Now: time.Now}
+	if o.questdbURL != "" {
+		writer, err := questdb.New(o.questdbURL, b.Logger)
+		if err != nil {
+			return collector.Deps{}, err
+		}
+		st.SetObserver(writer.Observe)
+		go writer.Run(ctx)
+	}
 
 	switch o.source {
 	case "sim":
@@ -318,6 +328,7 @@ func main() {
 	kingpin.Flag("market.holidays-file", "YAML file with exchange holidays.").Default("").StringVar(&o.holidaysFile)
 	kingpin.Flag("market.timezone", "Exchange timezone.").Default("Asia/Kolkata").StringVar(&o.timezone)
 	kingpin.Flag("market.force-open", "Report the market as always open (testing and demos only).").Default("false").BoolVar(&o.forceOpen)
+	kingpin.Flag("questdb.url", "QuestDB HTTP base URL for parallel market-state storage; empty disables QuestDB writes.").Default("").StringVar(&o.questdbURL)
 	kingpin.Flag("kite.api-key", "Kite Connect API key.").Default("").StringVar(&o.kiteAPIKey)
 	kingpin.Flag("kite.api-secret-file", "File containing the Kite Connect API secret.").Default("").StringVar(&o.kiteAPISecretFile)
 	kingpin.Flag("kite.credentials-file", "JSON file with api_key and api_secret, editable at runtime via /kite/config (mode 0600). Excludes --kite.api-key.").Default("").StringVar(&o.kiteCredsFile)
